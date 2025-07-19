@@ -9,7 +9,7 @@ KP = 2.0
 KD = 0.1# เพิ่มค่าพารามิเตอร์ Derivative
 TOLERANCE = 0.1
 CONTROL_INTERVAL = 0.1
-MAX_WHEEL_SPEED = 80
+MAX_WHEEL_SPEED = 150
 
 current_x = 0.0
 previous_error = 0.0    # สำหรับคำนวณ Derivative
