@@ -4,12 +4,12 @@ import csv
 import math
 
 # CONFIG
-TARGET_X = 2.0
-KP = 2.0
-KD = 0.1# เพิ่มค่าพารามิเตอร์ Derivative
-TOLERANCE = 0.1
+TARGET_X = 2.1
+KP = 2
+KD = 0.1 #เพิ่มค่าพารามิเตอร์ Derivative
+TOLERANCE = 0.01
 CONTROL_INTERVAL = 0.1
-MAX_WHEEL_SPEED = 150
+MAX_WHEEL_SPEED = 80
 
 current_x = 0.0
 previous_error = 0.0    # สำหรับคำนวณ Derivative
