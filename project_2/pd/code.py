@@ -1,13 +1,13 @@
 from robomaster import robot
 import time
 import csv
-
+import math
 
 # CONFIG
 TARGET_X = 2.0
 KP = 2.0
-KD = 0.4# เพิ่มค่าพารามิเตอร์ Derivative
-TOLERANCE = 0.01
+KD = 0.1# เพิ่มค่าพารามิเตอร์ Derivative
+TOLERANCE = 0.1
 CONTROL_INTERVAL = 0.1
 MAX_WHEEL_SPEED = 80
 
@@ -16,7 +16,7 @@ previous_error = 0.0    # สำหรับคำนวณ Derivative
 start_time = time.time()
 
 # เปิดไฟล์ CSV สำหรับเขียนข้อมูล และเขียน header
-csv_file = open(f"project_2/pd_p_{KP}_d_{KD}.csv", mode="w", newline="")
+csv_file = open(f"project_2/pd_p_{KP}_d_{int(KD)}_{int(math.floor(KD * 10))}.csv", mode="w", newline="")
 csv_writer = csv.writer(csv_file)
 csv_writer.writerow(["elapsed_time", "current_x", "error", "derivative", "speed"])
 
