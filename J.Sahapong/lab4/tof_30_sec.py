@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # Open CSV file for writing
     try:
-        csv_file = open("J.Sahapong/lab4/data/tof_paper_1.csv", "w", newline="")
+        csv_file = open("J.Sahapong/lab4/data/test_kim.csv", "w", newline="")
         csv_writer = csv.writer(csv_file)
         # Write CSV header for ToF data
         csv_writer.writerow(
@@ -77,7 +77,6 @@ if __name__ == "__main__":
         exit()
 
     print("Starting ToF sensor data collection...")
-    # Subscribe to ToF distance data at a frequency of 5 Hz
     ep_sensor.sub_distance(freq=20, callback=tof_data_handler)
     print("ToF subscription active. Data will be logged.")
 
