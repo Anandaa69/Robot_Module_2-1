@@ -8,7 +8,7 @@ from scipy.ndimage import median_filter
 from scipy.signal import butter, filtfilt
 
 # CONFIG
-FILTER_MODE = "median_filter"  # raw, moving_average, median_filter, low_pass
+FILTER_MODE = "raw"  # raw, moving_average, median_filter, low_pass
 WINDOW_SIZE = 5                # สำหรับ Moving Average และ Median
 STOP_THRESHOLD = 40.0          # cm
 SPEED = 0.25                   # m/s

@@ -61,7 +61,7 @@ if __name__ == "__main__":
 
     # Open CSV file for writing
     try:
-        csv_file = open("J.Sahapong/lab4/data/test_kim.csv", "w", newline="")
+        csv_file = open("J.Sahapong/lab4/data/test_acer_ni5.csv", "w", newline="")
         csv_writer = csv.writer(csv_file)
         # Write CSV header for ToF data
         csv_writer.writerow(
