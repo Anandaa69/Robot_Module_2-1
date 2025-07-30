@@ -4,13 +4,14 @@ import csv
 from datetime import datetime
 import time
 import numpy as np
+import math
 from scipy.ndimage import median_filter
 from scipy.signal import butter, filtfilt
 
 # CONFIG
 file_name = 'tof_40_raw.csv'
 chod = 70 # 7 cm
-FILTER_MODE = "raw"  # raw, moving_average, median_filter, low_pass
+FILTER_MODE = "low_pass"  # raw, moving_average, median_filter, low_pass
 WINDOW_SIZE = 5              # สำหรับ Moving Average และ Median
 STOP_THRESHOLD = 400.0 + chod        # cm
 SPEED = 0.25                   # m/s
@@ -25,6 +26,23 @@ tof_buffer = []
 latest_filtered_tof = None
 t_detect = None
 t_stop_command = None
+t_start = None  # เพิ่มตัวแปรเวลาเริ่มต้น
+lpf_filter = None  # สำหรับ Low-Pass Filter instance
+
+# === Low-Pass Filter Class ===
+
+class LowPassFilter:
+    def __init__(self, cutoff_freq, sample_rate):
+        self.dt = 1.0 / sample_rate
+        self.alpha = (2 * math.pi * cutoff_freq * self.dt) / (2 * math.pi * cutoff_freq * self.dt + 1)
+        self.last_output = None
+    
+    def filter(self, new_value):
+        if self.last_output is None:
+            self.last_output = new_value
+        else:
+            self.last_output = self.alpha * new_value + (1 - self.alpha) * self.last_output
+        return self.last_output
 
 # === Filter Functions ===
 
@@ -48,11 +66,13 @@ def butterworth_lpf(cutoff_freq, sampling_freq, order=4):
     return b, a
 
 def apply_lpf(data):
-    if len(data) < WINDOW_SIZE:
-        return data[-1]
-    b, a = butterworth_lpf(CUTOFF_FREQ, SAMPLING_FREQ)
-    filtered = filtfilt(b, a, data[-WINDOW_SIZE:])
-    return filtered[-1]
+    """Simple Low-Pass Filter using LowPassFilter class"""
+    global lpf_filter
+    if lpf_filter is None:
+        lpf_filter = LowPassFilter(CUTOFF_FREQ, SAMPLING_FREQ)
+    
+    # ใช้ค่าล่าสุดกับ filter
+    return lpf_filter.filter(data[-1])
 
 # === Filtering Handler ===
 
@@ -78,7 +98,8 @@ def write_tof_data_to_csv(raw_tof, filtered_tof, timestamp_iso):
             filtered_tof,
             t_detect,
             t_stop_command,
-            t_stop_command - t_detect if t_detect and t_stop_command else None
+            t_stop_command - t_detect if t_detect and t_stop_command else None,
+            t_detect - t_start if t_detect and t_start else None  # เวลารวมตั้งแต่เริ่มจนตรวจจับ
         ])
 
 # === Callback ===
@@ -99,7 +120,15 @@ def tof_data_handler(sub_info):
         t_detect = time.time()
         ep_chassis.drive_speed(x=0.0, y=0, z=0)
         t_stop_command = time.time()
-        print(f"🛑 Object detected! Response time = {t_stop_command - t_detect:.4f} sec")
+        
+        response_time = t_stop_command - t_detect
+        total_time = t_detect - t_start if t_start else 0
+        
+        print(f"🛑 Object detected! Filtered TOF: {filtered_tof:.2f} cm")
+        print(f"⏱️ Detection time: {t_detect:.4f} sec")
+        print(f"🚀 Stop command time: {t_stop_command:.4f} sec")
+        print(f"⏳ Response time = {response_time:.4f} sec")
+        print(f"🕐 Total time from start = {total_time:.4f} sec")
 
 # === Main Script ===
 
@@ -110,7 +139,9 @@ if __name__ == "__main__":
     ep_chassis = ep_robot.chassis
     ep_gimbal = ep_robot.gimbal
 
+    print("✅ Recalibrating gimbal...")
     ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
+    print("✅ Gimbal recalibrated.")
 
     try:
         csv_file = open(f"J.Sahapong/lab4/data/{file_name}", "w", newline="")
@@ -121,7 +152,8 @@ if __name__ == "__main__":
             "filtered_tof",
             "t_detect",
             "t_stop_command",
-            "response_time"
+            "response_time",
+            "total_time_from_start"  # เพิ่มคอลัมน์เวลารวม
         ])
     except IOError as e:
         print(f"Error opening CSV file: {e}")
@@ -129,6 +161,16 @@ if __name__ == "__main__":
         exit()
 
     print("✅ Start robot movement and ToF sensing...")
+    print(f"🎯 Stop threshold: {STOP_THRESHOLD:.1f} mm")
+    print(f"🚀 Speed: {SPEED} m/s")
+    print(f"🔍 Filter mode: {FILTER_MODE}")
+    
+    # สร้าง Low-Pass Filter instance
+    if FILTER_MODE == "low_pass":
+        lpf_filter = LowPassFilter(CUTOFF_FREQ, SAMPLING_FREQ)
+        print(f"📊 Low-Pass Filter: fc={CUTOFF_FREQ}Hz, fs={SAMPLING_FREQ}Hz, alpha={lpf_filter.alpha:.4f}")
+    
+    t_start = time.time()  # บันทึกเวลาเริ่มต้น
     ep_chassis.drive_speed(x=SPEED, y=0, z=0)
     ep_sensor.sub_distance(freq=SAMPLING_FREQ, callback=tof_data_handler)
 
