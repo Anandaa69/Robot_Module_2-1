@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# BEST 25hz sensor distance + 10cm use median_filter window = 5
 
 import robomaster
 from robomaster import robot
@@ -26,7 +27,7 @@ from scipy.signal import butter, filtfilt
 
 # --- CONFIG ---
 file_name = 'tof_calibrated_data.csv' # เปลี่ยนชื่อไฟล์ให้สื่อถึงการใช้ค่าสอบเทียบ
-FILTER_MODE = "low_pass"            # raw, moving_average, median_filter, low_pass
+FILTER_MODE = "median_filter"            # raw, moving_average, median_filter, low_pass
 WINDOW_SIZE = 5                     # สำหรับ Moving Average และ Median
 
 # --- ค่า Calibration Factors ที่ได้จาก Linear Regression ---
@@ -45,7 +46,7 @@ CALIBRATION_Y_INTERCEPT = 3.8409
 # ถ้า calibrated_tof เป็น cm, STOP_THRESHOLD ก็ควรเป็น cm
 # ถ้า calibrated_tof เป็น mm, STOP_THRESHOLD ก็ควรเป็น mm
 # ตัวอย่าง: ถ้าต้องการให้หยุดที่ 40 cm (จากเซ็นเซอร์)
-STOP_THRESHOLD = 50.0 # cm (ค่านี้จะนำไปเปรียบเทียบกับ calibrated_tof)
+STOP_THRESHOLD = 50 # cm (ค่านี้จะนำไปเปรียบเทียบกับ calibrated_tof)
 # ถ้า 400.0 ในโค้ดเก่าหมายถึง 400 mm (40 cm) และ chod คือระยะชดเชย
 # ตอนนี้เราไม่ต้องมี chod แล้ว เพราะค่าเซ็นเซอร์ถูกแปลงเป็นระยะจริงแล้ว
 # และ STOP_THRESHOLD คือระยะจริงที่คุณต้องการให้หุ่นยนต์หยุด
@@ -53,7 +54,7 @@ STOP_THRESHOLD = 50.0 # cm (ค่านี้จะนำไปเปรีย�
 
 SPEED = 0.25                  # m/s
 DURATION = 30                 # วินาที
-SAMPLING_FREQ = 20            # Hz สำหรับ LPF
+SAMPLING_FREQ = 25            # Hz สำหรับ LPF
 CUTOFF_FREQ = 1.0             # Hz สำหรับ LPF
 # -----------------
 
