@@ -9,7 +9,7 @@ Kd = 0.08
 
 # === Movement Parameters ===
 SIDE_LENGTH = 0.5       # ด้านของสี่เหลี่ยม (เมตร)
-BASE_WALK_SPEED = 0.5   # ความเร็วพื้นฐานในการเดิน (m/s)
+BASE_WALK_SPEED = 0.8   # ความเร็วพื้นฐานในการเดิน (m/s)
 TURN_SPEED = 45         # ความเร็วในการหมุน (degrees/s)
 MOVEMENT_TIMEOUT = 8    # Timeout สำหรับการเคลื่อนไหวแต่ละครั้ง (วินาที)
 
@@ -186,18 +186,18 @@ try:
     time.sleep(2)
     
     # === เดินสี่เหลี่ยมจัตุรัสด้วย PID-Enhanced Movement ===
-    
-    for side in range(1, 5):  # 4 ด้าน
-        print(f"\n--- SIDE {side} ---")
+    move_forward_with_pid(ep_chassis, SIDE_LENGTH, 1)
+    # for side in range(1, 5):  # 4 ด้าน
+    #     print(f"\n--- SIDE {side} ---")
         
-        # เดินไปข้างหน้าด้วย PID control
-        move_forward_with_pid(ep_chassis, SIDE_LENGTH, side)
-        print_current_position()
+    #     # เดินไปข้างหน้าด้วย PID control
+    #     move_forward_with_pid(ep_chassis, SIDE_LENGTH, side)
+    #     print_current_position()
         
-        if side < 4:  # ไม่หมุนหลังด้านสุดท้าย
-            # หมุนซ้าย 90 องศาเพื่อเตรียมเดินด้านต่อไป
-            turn_left_90_with_feedback(ep_chassis)
-            print_current_position()
+    #     if side < 4:  # ไม่หมุนหลังด้านสุดท้าย
+    #         # หมุนซ้าย 90 องศาเพื่อเตรียมเดินด้านต่อไป
+    #         turn_left_90_with_feedback(ep_chassis)
+    #         print_current_position()
     
     # คำนวณความแม่นยำสุดท้าย
     final_x = current_x
