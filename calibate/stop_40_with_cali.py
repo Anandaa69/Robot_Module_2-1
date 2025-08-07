@@ -187,7 +187,7 @@ def tof_data_handler(sub_info):
     # ทั้ง filtered_tof_cm และ STOP_THRESHOLD ควรมีหน่วยเป็น cm
     if filtered_tof_cm <= STOP_THRESHOLD and t_detect is None:
         t_detect = time.time()
-        ep_chassis.drive_speed(x=0.0, y=0, z=0)
+        ep_chassis.drive_speed(x=0.0, y=0, z=0,timeout=0.75)
         t_stop_command = time.time()
         
         response_time = t_stop_command - t_detect
