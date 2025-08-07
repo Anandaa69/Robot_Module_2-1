@@ -156,4 +156,4 @@ if __name__ == "__main__":
     main()
     
     # หรือใช้ฟังก์ชันการค้นหาแบบละเอียด
-    # advanced_heart_detection()
+    advanced_heart_detection()
