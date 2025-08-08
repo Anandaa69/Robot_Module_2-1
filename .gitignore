@@ -1,2 +1,4 @@
 venv\
 .venv
+plot_venv
+.plot_venv
