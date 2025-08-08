@@ -6,16 +6,16 @@ from datetime import datetime
 # -------------------------
 # เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
 # -------------------------
-KP = 3
+KP = 2
 KI = 0.3
-KD = 11
+KD = 10
 # BEST PID = 1.6 0.3 3
 
 KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
 KD_str = str(KD).replace('.', '-')
 
-log_filename = f"F:\Coder\Year2-1\Robot_Module\J.Thanet\Draw_square\data/robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}.csv"
+log_filename = f"F:\Coder\Year2-1\Robot_Module\J.Thanet\Draw_square\data/robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp_ver.csv"
 with open(log_filename, mode='w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(["time", "x", "y", "z", "pid_output", "target_distance", "relative_position"])
@@ -88,22 +88,23 @@ def sub_position_handler(position_info):
     print("chassis position: x:{0}, y:{1}, z:{2}".format(current_x, current_y, current_z))
 
 # -------------------------
-# Movement Function with PID and Ramp-up
+# Movement Function with PID and Improved Ramp-up
 # -------------------------
 def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
     global last_pid_output, current_target, current_relative
     
-    pid = PID(Kp=KP, Ki=KI, Kd=KP)
+    pid = PID(Kp=KP, Ki=KI, Kd=KD, setpoint=target_distance)  # ใช้ KD แทน KP
     
     start_time = time.time()
     last_time = start_time
     target_reached = False
     
     # -------------------------
-    # NEW: Ramp-up parameters
+    # Ramp-up parameters
     # -------------------------
-    ramp_up_time = 0.3  # เวลาในการเร่งความเร็ว (หน่วยเป็นวินาที)
-    max_speed = 0.5     # ความเร็วสูงสุดที่ต้องการ (หน่วย m/s)
+    ramp_up_time = 0.4   # เพิ่มเวลา ramp-up เล็กน้อย
+    min_speed = 0.1      # ความเร็วเริ่มต้น
+    max_speed = 1.5      # ความเร็วสูงสุด (เหมือนโค้ดเดิม)
     
     if axis == 'x':
         start_position = current_x
@@ -130,51 +131,30 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
             relative_position = abs(current_position - start_position)
             current_relative = relative_position
 
-            # -------------------------
-            # NEW: Ramp-up Logic
-            # -------------------------
-            # คำนวณความเร็วเป้าหมาย (target_speed) โดยค่อยๆ เพิ่มขึ้น
-            if elapsed_time < ramp_up_time:
-                # ถ้ายังอยู่ในช่วง ramp-up, คำนวณความเร็วตามสัดส่วน
-                target_speed = (elapsed_time / ramp_up_time) * max_speed
-            else:
-                # ถ้าพ้นช่วง ramp-up แล้ว ใช้ความเร็วสูงสุด
-                target_speed = max_speed
-            
-            # -------------------------
-            # PID Logic (ควบคุมความเร็ว)
-            # -------------------------
-            # PID จะพยายามควบคุมให้ความเร็วปัจจุบันตรงกับ target_speed
-            current_speed = (current_position - pid.prev_error) / dt if dt > 0 else 0 # Crude speed estimate
-            
-            # ผมขอเปลี่ยนหลักการ PID เล็กน้อยเพื่อให้ควบคุมความเร็ว แทนที่จะควบคุมตำแหน่ง
-            # แต่ถ้ายังอยากควบคุมตำแหน่งอยู่ ให้ใช้ PID ตัวเดิมแต่เปลี่ยนการคำนวณ output
-            
-            # เราสามารถใช้ PID สองชั้น (cascaded PID) ได้ คือ
-            # PID ชั้นนอกควบคุมตำแหน่ง -> ได้ความเร็วที่ต้องการ
-            # PID ชั้นในควบคุมความเร็ว -> ได้แรงบิด/power ที่ต้องการ
-            
-            # เนื่องจากโค้ดเดิมใช้ PID ควบคุมตำแหน่ง ผมจะยังคงใช้หลักการเดิม แต่ปรับการส่งค่า
-            # PID output (แรงบิด/power) ให้มี ramp-up ในช่วงแรก
-            
-            # (ทางเลือกที่ 1) ใช้ PID เดิม แต่จำกัด output ในช่วงแรก
-            # ซึ่งก็คือการทำให้ PID output ในช่วงแรกมีค่าไม่เกินค่า ramp up
-            
-            pid.setpoint = target_distance
+            # คำนวณ PID output
             output = pid.compute(relative_position, dt)
             
-            # NEW: ค่อยๆ เพิ่ม speed ตาม ramp_up_time
+            # -------------------------
+            # Improved Ramp-up Logic
+            # -------------------------
+            # คำนวณ ramp-up multiplier
             if elapsed_time < ramp_up_time:
-                # Interpolate speed to ramp up smoothly
-                speed = (elapsed_time / ramp_up_time) * max_speed
+                # เริ่มจาก min_speed และค่อยๆ เพิ่มไป max_speed
+                ramp_multiplier = min_speed + (elapsed_time / ramp_up_time) * (1.0 - min_speed)
             else:
-                # After ramp up, use PID output but cap it
-                speed = max(min(output, max_speed), -max_speed)
-                
+                ramp_multiplier = 1.0
+            
+            # นำ PID output มาคูณกับ ramp_multiplier
+            ramped_output = output * ramp_multiplier
+            
+            # จำกัดความเร็วสูงสุด
+            speed = max(min(ramped_output, max_speed), -max_speed)
+            
             last_pid_output = speed
             
             ep_chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
+            # เงื่อนไขหยุด - เหมือนโค้ดเดิม
             if abs(relative_position - target_distance) < 0.02:
                 print(f"Target reached. Final position: {current_position:.2f}")
                 ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1)
@@ -228,13 +208,13 @@ if __name__ == '__main__':
         
         print("=== Side 3: Moving forward (X will decrease) ===")
         time.sleep(0.5)
-        move_forward_with_pid(ep_chassis, 0.6, 'x', direction=-1) # Direction corrected to -1
+        move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)  # กลับไปใช้ direction=1
         
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 4: Moving forward (Y will decrease) ===")
         time.sleep(0.5)
-        move_forward_with_pid(ep_chassis, 0.6, 'y', direction=-1) # Direction corrected to -1
+        move_forward_with_pid(ep_chassis, 0.6, 'y', direction=1)  # กลับไปใช้ direction=1
         
         rotate_90_degrees(ep_chassis)
 
