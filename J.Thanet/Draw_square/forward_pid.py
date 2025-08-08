@@ -54,7 +54,7 @@ if __name__ == '__main__':
     target_x = 1.2
 
     # Setup PID
-    pid = PID(Kp=2.5, Ki=0.1, Kd=4, setpoint=target_x)
+    pid = PID(Kp=2, Ki=0.1, Kd=5, setpoint=target_x)
 
     # Control loop
     last_time = time.time()
