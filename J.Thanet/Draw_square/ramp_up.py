@@ -88,15 +88,23 @@ def sub_position_handler(position_info):
     print("chassis position: x:{0}, y:{1}, z:{2}".format(current_x, current_y, current_z))
 
 # -------------------------
-# Movement Function with PID
+# Movement Function with PID and Ramp-up
 # -------------------------
 def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
     global last_pid_output, current_target, current_relative
-    pid = PID(Kp=KP, Ki=KI, Kd=KP, setpoint=target_distance)
     
-    last_time = time.time()
+    pid = PID(Kp=KP, Ki=KI, Kd=KP)
+    
+    start_time = time.time()
+    last_time = start_time
     target_reached = False
-
+    
+    # -------------------------
+    # NEW: Ramp-up parameters
+    # -------------------------
+    ramp_up_time = 0.3  # เวลาในการเร่งความเร็ว (หน่วยเป็นวินาที)
+    max_speed = 0.5     # ความเร็วสูงสุดที่ต้องการ (หน่วย m/s)
+    
     if axis == 'x':
         start_position = current_x
     else:
@@ -112,6 +120,8 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
             dt = now - last_time
             last_time = now
             
+            elapsed_time = now - start_time
+            
             if axis == 'x':
                 current_position = current_x
             else:
@@ -120,11 +130,48 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
             relative_position = abs(current_position - start_position)
             current_relative = relative_position
 
+            # -------------------------
+            # NEW: Ramp-up Logic
+            # -------------------------
+            # คำนวณความเร็วเป้าหมาย (target_speed) โดยค่อยๆ เพิ่มขึ้น
+            if elapsed_time < ramp_up_time:
+                # ถ้ายังอยู่ในช่วง ramp-up, คำนวณความเร็วตามสัดส่วน
+                target_speed = (elapsed_time / ramp_up_time) * max_speed
+            else:
+                # ถ้าพ้นช่วง ramp-up แล้ว ใช้ความเร็วสูงสุด
+                target_speed = max_speed
+            
+            # -------------------------
+            # PID Logic (ควบคุมความเร็ว)
+            # -------------------------
+            # PID จะพยายามควบคุมให้ความเร็วปัจจุบันตรงกับ target_speed
+            current_speed = (current_position - pid.prev_error) / dt if dt > 0 else 0 # Crude speed estimate
+            
+            # ผมขอเปลี่ยนหลักการ PID เล็กน้อยเพื่อให้ควบคุมความเร็ว แทนที่จะควบคุมตำแหน่ง
+            # แต่ถ้ายังอยากควบคุมตำแหน่งอยู่ ให้ใช้ PID ตัวเดิมแต่เปลี่ยนการคำนวณ output
+            
+            # เราสามารถใช้ PID สองชั้น (cascaded PID) ได้ คือ
+            # PID ชั้นนอกควบคุมตำแหน่ง -> ได้ความเร็วที่ต้องการ
+            # PID ชั้นในควบคุมความเร็ว -> ได้แรงบิด/power ที่ต้องการ
+            
+            # เนื่องจากโค้ดเดิมใช้ PID ควบคุมตำแหน่ง ผมจะยังคงใช้หลักการเดิม แต่ปรับการส่งค่า
+            # PID output (แรงบิด/power) ให้มี ramp-up ในช่วงแรก
+            
+            # (ทางเลือกที่ 1) ใช้ PID เดิม แต่จำกัด output ในช่วงแรก
+            # ซึ่งก็คือการทำให้ PID output ในช่วงแรกมีค่าไม่เกินค่า ramp up
+            
+            pid.setpoint = target_distance
             output = pid.compute(relative_position, dt)
-            last_pid_output = output
-
-            max_speed = 1.5
-            speed = max(min(output, max_speed), -max_speed)
+            
+            # NEW: ค่อยๆ เพิ่ม speed ตาม ramp_up_time
+            if elapsed_time < ramp_up_time:
+                # Interpolate speed to ramp up smoothly
+                speed = (elapsed_time / ramp_up_time) * max_speed
+            else:
+                # After ramp up, use PID output but cap it
+                speed = max(min(output, max_speed), -max_speed)
+                
+            last_pid_output = speed
             
             ep_chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
@@ -144,7 +191,6 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
 def rotate_90_degrees(ep_chassis):
     """Rotate 90 degrees clockwise"""
     print("=== Rotation: 90 degrees ===")
-    # ep_chassis.unsub_position()
     time.sleep(0.5)
     
     print("Now turning 90 degrees...")
@@ -175,23 +221,20 @@ if __name__ == '__main__':
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 2: Moving along +Y axis ===")
-        # ep_chassis.sub_position(freq=20, callback=sub_position_handler)
         time.sleep(0.5)
         move_forward_with_pid(ep_chassis, 0.6, 'y', direction=1)
         
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 3: Moving forward (X will decrease) ===")
-        # ep_chassis.sub_position(freq=20, callback=sub_position_handler)
         time.sleep(0.5)
-        move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)
+        move_forward_with_pid(ep_chassis, 0.6, 'x', direction=-1) # Direction corrected to -1
         
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 4: Moving forward (Y will decrease) ===")
-        # ep_chassis.sub_position(freq=20, callback=sub_position_handler)
         time.sleep(0.5)
-        move_forward_with_pid(ep_chassis, 0.6, 'y', direction=1)
+        move_forward_with_pid(ep_chassis, 0.6, 'y', direction=-1) # Direction corrected to -1
         
         rotate_90_degrees(ep_chassis)
 
