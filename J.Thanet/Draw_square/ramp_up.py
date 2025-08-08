@@ -6,12 +6,12 @@ from datetime import datetime
 # -------------------------
 # เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
 # -------------------------
-KP = 5
-KI = 5
-KD = 5
-RAMP_UP_TIME = 0  # เวลาที่ใช้ในการ ramp-up
+KP = 1.9
+KI = 0.3
+KD = 9.5
+RAMP_UP_TIME = 0.55  # เวลาที่ใช้ในการ ramp-up
 ROTATE = 2.115
-# BEST PID = 2.1 0.3 10 ramp 0
+# BEST PID = 2.3 0.3 10 ramp 0
 
 KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
