@@ -1,0 +1,138 @@
+from robomaster import robot
+import time
+
+# -------------------------
+# PID Controller Function
+# -------------------------
+class PID:
+    def __init__(self, Kp, Ki, Kd, setpoint=0):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.setpoint = setpoint
+        self.prev_error = 0
+        self.integral = 0
+        self.integral_max = 1.0 # Limit integral term
+
+    def compute(self, current, dt):
+        error = self.setpoint - current
+        self.integral += error * dt
+        
+        # Anti-windup: limit the integral term
+        if self.integral > self.integral_max:
+            self.integral = self.integral_max
+        elif self.integral < -self.integral_max:
+            self.integral = -self.integral_max
+            
+        derivative = (error - self.prev_error) / dt if dt > 0 else 0
+        output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
+        self.prev_error = error
+        return output
+
+    # เพิ่มฟังก์ชัน reset() เพื่อใช้รีเซ็ต PID controller
+    def reset(self):
+        self.integral = 0
+        self.prev_error = 0
+
+# -------------------------
+# Callback and Main Logic
+# -------------------------
+current_x = 0.0
+current_y = 0.0
+
+def sub_position_handler(position_info):
+    global current_x, current_y # แก้ไข: เพิ่ม current_y ใน global
+    current_x = position_info[0]
+    current_y = position_info[1] # แก้ไข: อ่านค่าตำแหน่งแกน Y ด้วย
+    x, y, z = position_info
+    # print("chassis position: x:{0}, y:{1}, z:{2}".format(x, y, z))
+
+if __name__ == '__main__':
+    # Connect to robot
+    ep_robot = robot.Robot()
+    ep_robot.initialize(conn_type="ap")
+    ep_chassis = ep_robot.chassis
+
+    # Reset position to 0 before starting
+    ep_chassis.move(x=0, y=0, z=0, xy_speed=0.5).wait_for_completed()
+    ep_chassis.sub_position(freq=20, callback=sub_position_handler)
+    time.sleep(1)
+
+    # Target distance (meters)
+    target_distance = 0.6
+
+    # Setup PID
+    pid = PID(Kp=2, Ki=0.1, Kd=6, setpoint=target_distance)
+
+    # ----------------------------------
+    # ส่วนคำสั่งสำหรับการเดินตรงครั้งที่ 1 (แกน X)
+    # ----------------------------------
+    last_time = time.time()
+    target_reached = False
+    
+    try:
+        while not target_reached:
+            now = time.time()
+            dt = now - last_time
+            last_time = now
+            output = pid.compute(current_x, dt)
+
+            max_speed = 1.5
+            speed = max(min(output, max_speed), -max_speed)
+
+            ep_chassis.drive_speed(x=speed, y=0, z=0, timeout=1)
+
+            if abs(current_x - target_distance) < 0.02:
+                print("Target reached. Final position: {:.2f}".format(current_x))
+                ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                target_reached = True
+                
+    except KeyboardInterrupt:
+        print("Program interrupted by user.")
+    
+    # ----------------------------------
+    # ส่วนคำสั่งสำหรับการหมุน
+    # ----------------------------------
+    time.sleep(1) 
+    print("Now turning 90 degrees...")
+    ep_chassis.move(x=0, y=0, z=-90, z_speed=45).wait_for_completed(timeout=5)
+    ep_chassis.stop()
+    
+    # ----------------------------------
+    # ส่วนคำสั่งสำหรับการเดินตรงครั้งที่ 2 (แกน Y)
+    # ----------------------------------
+    time.sleep(0.5)
+    ep_chassis.move(x=0, y=0, z=0).wait_for_completed()
+    ep_chassis.sub_position(freq=20, callback=sub_position_handler)
+    time.sleep(0.5)
+    target_reached = False
+    current_y = 0.0
+    pid.reset() # แก้ไข: รีเซ็ต PID ก่อนเริ่มลูปใหม่
+    
+    try:
+        while not target_reached:
+            now = time.time()
+            dt = now - last_time
+            last_time = now
+            # แก้ไข: คำนวณ output จากค่า current_y
+            output = pid.compute(current_y, dt)
+
+            max_speed = 1.5
+            speed = max(min(output, max_speed), -max_speed)
+
+            # แก้ไข: สั่งให้หุ่นยนต์เดินด้วยความเร็วแกน y
+            ep_chassis.drive_speed(x=speed, y=0, z=0, timeout=1)
+
+            print(current_y)
+            # แก้ไข: ตรวจสอบเงื่อนไขจาก current_y
+            if abs(current_y - target_distance) < 0.02:
+                print("Target reached. Final position: {:.2f}".format(current_y))
+                ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                target_reached = True
+                
+    except KeyboardInterrupt:
+        print("Program interrupted by user.")
+
+    # ปิดการทำงานเมื่อเสร็จสิ้น
+    ep_chassis.unsub_position() # แก้ไข: unsubscribe เพียงครั้งเดียวตอนสุดท้าย
+    ep_robot.close()

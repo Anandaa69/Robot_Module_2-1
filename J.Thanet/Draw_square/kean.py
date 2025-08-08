@@ -124,7 +124,7 @@ def save_path_to_csv_per_round(round_num):
 
 # -------------------- ฟังก์ชันหลัก --------------------
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")  # เริ่มเชื่อมต่อ RoboMaster
     ep_chassis = ep_robot.chassis
