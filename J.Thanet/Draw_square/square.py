@@ -37,7 +37,8 @@ current_x = 0.0
 def sub_position_handler(position_info):
     global current_x
     current_x = position_info[0]
-    # print("Current X: {:.2f}".format(current_x)) # Comment out to reduce print spam
+    x, y, z = position_info
+    print("chassis position: x:{0}, y:{1}, z:{2}".format(x, y, z))
 
 if __name__ == '__main__':
     # Connect to robot
@@ -48,18 +49,16 @@ if __name__ == '__main__':
     # Reset position to 0 before starting
     ep_chassis.move(x=0, y=0, z=0, xy_speed=0.5).wait_for_completed()
     ep_chassis.sub_position(freq=20, callback=sub_position_handler)
-    time.sleep(1) # Give it time to get the first position reading
+    time.sleep(1)
 
     # Target distance (meters)
     target_x = 0.6
 
     # Setup PID
-    pid = PID(Kp=2, Ki=0.1, Kd=6, setpoint=target_x)
+    pid = PID(Kp=1.8, Ki=0.1, Kd=4, setpoint=target_x)
 
-    # Control loop
+    # Control loop for forward movement
     last_time = time.time()
-    
-    # Add a variable to track if we've reached the target
     target_reached = False
     
     try:
@@ -67,30 +66,31 @@ if __name__ == '__main__':
             now = time.time()
             dt = now - last_time
             last_time = now
-
-            # Compute PID output based on current position
             output = pid.compute(current_x, dt)
 
-            # Cap the speed to avoid overshooting and instability
             max_speed = 1.5
             speed = max(min(output, max_speed), -max_speed)
 
-            # Send speed command directly
             ep_chassis.drive_speed(x=speed, y=0, z=0, timeout=1)
 
-            # Condition to stop: close enough to the target
             if abs(current_x - target_x) < 0.02:
                 print("Target reached. Final position: {:.2f}".format(current_x))
-                ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1) # Stop the robot
-                target_reached = True # Exit the loop
+                ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                target_reached = True
                 
     except KeyboardInterrupt:
         print("Program interrupted by user.")
-    finally:
-        # Stop the robot and unsubscribe
-        ep_chassis.drive_speed(x=0, y=0, z=0, timeout=1)
-        ep_chassis.unsub_position()
+    
+    # ----------------------------------
+    # ส่วนคำสั่งสำหรับการหมุน
+    # ----------------------------------
+    # เพิ่มเวลาหน่วงเล็กน้อยเพื่อให้คำสั่ง drive_speed หยุดทำงานสมบูรณ์
+    time.sleep(0.5) 
+    
+    print("Now turning 90 degrees...")
+    
+    # ปรับลดความเร็ว z_speed เพื่อเพิ่มความแม่นยำ และเพิ่ม timeout ให้มีระยะเวลาพอสมควร
+    ep_chassis.move(x=0, y=0, z=-93, z_speed=45).wait_for_completed(timeout=5)
 
-    time.sleep(0.5)
-    ep_chassis.move(x=0, y=0, z=-135, z_speed=90).wait_for_completed()
+    # ย้ายการปิดระบบมาไว้ตรงนี้
     ep_robot.close()
