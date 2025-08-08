@@ -71,7 +71,7 @@ if __name__ == '__main__':
     ep_camera = ep_robot.camera
 
 
-
+    ep_gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
     ep_camera.start_video_stream(display=False)
     result = ep_vision.sub_detect_info(name="marker", callback=on_detect_marker)
 
