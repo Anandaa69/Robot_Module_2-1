@@ -6,12 +6,12 @@ from datetime import datetime
 # -------------------------
 # เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
 # -------------------------
-KP = 2.1
-KI = 0.3
-KD = 10
-RAMP_UP_TIME = 0.7  # เวลาที่ใช้ในการ ramp-up
+KP = 5
+KI = 5
+KD = 5
+RAMP_UP_TIME = 0  # เวลาที่ใช้ในการ ramp-up
 ROTATE = 2.115
-# BEST PID = 1.6 0.3 3
+# BEST PID = 2.1 0.3 10 ramp 0
 
 KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
@@ -174,7 +174,7 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
 def rotate_90_degrees(ep_chassis):
     """Rotate 90 degrees clockwise"""
     print("=== Rotation: 90 degrees ===")
-    time.sleep(0.5)
+    time.sleep(0.25)
     
     print("Now turning 90 degrees...")
     rotation_time = ROTATE
@@ -182,7 +182,7 @@ def rotate_90_degrees(ep_chassis):
     time.sleep(rotation_time + 0.5)
     
     ep_chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
-    time.sleep(0.5)
+    time.sleep(0.25)
     print("Rotation completed!")
 
 # -------------------------
@@ -195,7 +195,7 @@ if __name__ == '__main__':
 
     ep_chassis.move(x=0, y=0, z=0, xy_speed=0.5).wait_for_completed()
     ep_chassis.sub_position(freq=20, callback=sub_position_handler)
-    time.sleep(0.5)
+    time.sleep(0.25)
 
     try:
         print("=== Side 1: Moving along +X axis ===")
@@ -204,19 +204,19 @@ if __name__ == '__main__':
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 2: Moving along +Y axis ===")
-        time.sleep(0.5)
+        time.sleep(0.25)
         move_forward_with_pid(ep_chassis, 0.6, 'y', direction=1)
         
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 3: Moving forward (X will decrease) ===")
-        time.sleep(0.5)
+        time.sleep(0.25)
         move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)  # กลับไปใช้ direction=1
         
         rotate_90_degrees(ep_chassis)
         
         print("=== Side 4: Moving forward (Y will decrease) ===")
-        time.sleep(0.5)
+        time.sleep(0.25)
         move_forward_with_pid(ep_chassis, 0.6, 'y', direction=1)  # กลับไปใช้ direction=1
         
         rotate_90_degrees(ep_chassis)
