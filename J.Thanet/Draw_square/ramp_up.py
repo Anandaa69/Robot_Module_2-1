@@ -6,16 +6,18 @@ from datetime import datetime
 # -------------------------
 # เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
 # -------------------------
-KP = 2
+KP = 3
 KI = 0.3
-KD = 10
+KD = 11
+RAMP_UP_TIME = 0.3  # เวลาที่ใช้ในการ ramp-up
 # BEST PID = 1.6 0.3 3
 
 KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
 KD_str = str(KD).replace('.', '-')
+RAMP_UP_TIME_str = str(RAMP_UP_TIME).replace('.', '-')
 
-log_filename = f"F:\Coder\Year2-1\Robot_Module\J.Thanet\Draw_square\data/robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp_ver.csv"
+log_filename = f"F:\Coder\Year2-1\Robot_Module\J.Thanet\Draw_square\data/robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp{RAMP_UP_TIME_str}.csv"
 with open(log_filename, mode='w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(["time", "x", "y", "z", "pid_output", "target_distance", "relative_position"])
@@ -102,7 +104,7 @@ def move_forward_with_pid(ep_chassis, target_distance, axis, direction=1):
     # -------------------------
     # Ramp-up parameters
     # -------------------------
-    ramp_up_time = 0.4   # เพิ่มเวลา ramp-up เล็กน้อย
+    ramp_up_time = RAMP_UP_TIME   # เพิ่มเวลา ramp-up เล็กน้อย
     min_speed = 0.1      # ความเร็วเริ่มต้น
     max_speed = 1.5      # ความเร็วสูงสุด (เหมือนโค้ดเดิม)
     
