@@ -6,10 +6,11 @@ from datetime import datetime
 # -------------------------
 # เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
 # -------------------------
-KP = 3
+KP = 2.1
 KI = 0.3
-KD = 11
-RAMP_UP_TIME = 0.3  # เวลาที่ใช้ในการ ramp-up
+KD = 10
+RAMP_UP_TIME = 0.7  # เวลาที่ใช้ในการ ramp-up
+ROTATE = 2.115
 # BEST PID = 1.6 0.3 3
 
 KP_str = str(KP).replace('.', '-')
@@ -176,7 +177,7 @@ def rotate_90_degrees(ep_chassis):
     time.sleep(0.5)
     
     print("Now turning 90 degrees...")
-    rotation_time = 2.15
+    rotation_time = ROTATE
     ep_chassis.drive_speed(x=0, y=0, z=45, timeout=rotation_time)
     time.sleep(rotation_time + 0.5)
     
