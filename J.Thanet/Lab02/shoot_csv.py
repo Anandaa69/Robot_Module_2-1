@@ -74,20 +74,20 @@ def calculate_target_angles(target_distance, target_spacing):
     }
 
 if __name__ == '__main__':
-    KP = 160
-    KI = 3.0
-    KD = 4
+    KP = 140
+    KI = 2
+    KD = 3
 
-    # KP = 160
-    # KI = 3.0
-    # KD = 4
+    # KP = 140
+    # KI = 2
+    # KD = 3
 
     KP_str = str(KP).replace('.', '-')
     KI_str = str(KI).replace('.', '-')
     KD_str = str(KD).replace('.', '-')
     
     # Initialize CSV file with headers
-    csv_filename = f"F:/Coder/Year2-1/Robot_Module/J.Thanet/Lab02/data/robo_track_{datetime.now().strftime('%H%M')}_P{KP_str}_I{KI_str}_D{KD_str}.csv"
+    csv_filename = f"F:/Coder/Year2-1/Robot_Module/J.Thanet/Lab02/data/rec_track_{datetime.now().strftime('%H%M')}_P{KP_str}_I{KI_str}_D{KD_str}.csv"
     csv_headers = [
         'timestamp', 'target_name', 'iteration', 'markers_found', 
         'marker_id', 'marker_x', 'marker_y', 'marker_w', 'marker_h',
@@ -189,7 +189,7 @@ if __name__ == '__main__':
 
                 print(f"Tracking Marker ID {current_target_info.info} | Error X: {error_x:.3f}, Y: {error_y:.3f}")
 
-                if abs(error_x) <= 0.01 and abs(error_y) <= 0.01:
+                if abs(error_x) <= 0.015 and abs(error_y) <= 0.015:
                     ep_robot.gimbal.drive_speed(0, 0)
                     time.sleep(0.15)  # Let gimbal stabilize
                     
