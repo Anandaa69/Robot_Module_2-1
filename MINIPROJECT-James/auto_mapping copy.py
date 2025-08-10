@@ -287,6 +287,7 @@ class GraphMapper:
             # In a full implementation, you'd check the back wall too
             return True
     
+
     def move_to_direction(self, target_direction, movement_controller):
         """Turn robot to face target direction and move forward"""
         print(f"🎯 Attempting to move from {self.currentDirection} to {target_direction}")
@@ -316,8 +317,12 @@ class GraphMapper:
         # Update current direction
         self.currentDirection = target_direction
         
-        # Move forward
-        movement_controller.move_forward_with_pid(0.6, 'x', direction=1)
+        # ===== FIX: ใช้แกนและทิศทางที่ถูกต้องตาม target_direction =====
+        axis, direction = self.get_movement_axis_and_direction(target_direction)
+        print(f"🧭 Moving on {axis}-axis with direction {direction}")
+        
+        # Move forward with correct axis and direction
+        movement_controller.move_forward_with_pid(0.6, axis, direction=direction)
         
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
@@ -328,7 +333,30 @@ class GraphMapper:
         
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
-    
+
+
+    def get_movement_axis_and_direction(self, target_direction):
+        """Get the correct axis and direction for movement based on target direction
+        
+        Returns:
+            tuple: (axis, direction) where axis is 'x' or 'y' and direction is always 1
+            
+        Note: หุ่นยนต์เดินไปข้างหน้าเสมอ (direction=1) การเปลี่ยนทิศทางขึ้นอยู่กับการหมุน
+            direction=-1 จะใช้เมื่อต้องการถอยหลังเท่านั้น
+        """
+        movement_map = {
+            'north': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y
+            'south': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y  
+            'east': ('x', 1),    # เดินไปข้างหน้า tracking แกน X
+            'west': ('x', 1)     # เดินไปข้างหน้า tracking แกน X
+        }
+        
+        if target_direction not in movement_map:
+            print(f"❌ Unknown target direction: {target_direction}")
+            return ('x', 1)  # fallback
+        
+        return movement_map[target_direction]
+
     def find_next_exploration_direction(self):
         """Find the next direction to explore based on priority"""
         current_node = self.get_current_node()
