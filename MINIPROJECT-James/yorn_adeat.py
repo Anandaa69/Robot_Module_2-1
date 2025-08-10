@@ -43,10 +43,10 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 2.1
+        self.KP = 1.9
         self.KI = 0.3
         self.KD = 10
-        self.RAMP_UP_TIME = 0.7
+        self.RAMP_UP_TIME = 0.5
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
@@ -76,7 +76,8 @@ class MovementController:
         else:
             start_position = self.current_y
 
-        print(f"🚀 Moving {target_distance}m on {axis}-axis, direction: {direction}")
+        direction_text = "FORWARD" if direction == 1 else "BACKWARD"
+        print(f"🚀 Moving {direction_text} {target_distance}m on {axis}-axis, direction: {direction}")
         
         try:
             while not target_reached:
@@ -105,16 +106,16 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.3)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
                 else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.3)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
 
-                print(abs(relative_position - target_distance))
                 # Stop condition
                 if abs(relative_position - target_distance) < 0.02:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
                     target_reached = True
+                    time.sleep(0.2)
                     break
                     
         except KeyboardInterrupt:
@@ -138,6 +139,25 @@ class MovementController:
         time.sleep(self.ROTATE_LEFT_TIME + 0.3)
         time.sleep(0.25)
         print("✅ Left rotation completed!")
+    
+    def reverse_from_dead_end(self):
+        """Reverse robot from dead end position"""
+        global ROBOT_FACE
+        print("🔙 DEAD END DETECTED - Reversing...")
+        
+        # Determine current axis based on robot face
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
+        
+        print(f"🔙 Reversing 0.6m on {axis_test}-axis")
+        
+        # Move backward using negative direction
+        self.move_forward_with_pid(0.6, axis_test, direction=-1)
+        
+        print("✅ Reverse from dead end completed!")
     
     def cleanup(self):
         """Clean up position subscription"""
@@ -240,7 +260,7 @@ class GraphMapper:
                     node.neighbors[direction] = self.nodes[neighbor_id]
     
     def update_unexplored_exits(self, node):
-        """FIXED: Update unexplored exits based on ALL possible directions"""
+        """Update unexplored exits based on ALL possible directions, not just current facing"""
         node.unexploredExits = []
         
         # Check all four absolute directions regardless of current robot facing
@@ -272,7 +292,7 @@ class GraphMapper:
         wall_status[current_mapping['left']] = node.wallLeft  
         wall_status[current_mapping['right']] = node.wallRight
         
-        # For the back direction, check if we have a neighbor there
+        # For the back direction (opposite of front), assume no wall if we came from there
         back_direction = None
         if current_mapping['front'] == 'north': back_direction = 'south'
         elif current_mapping['front'] == 'south': back_direction = 'north'
@@ -280,6 +300,7 @@ class GraphMapper:
         elif current_mapping['front'] == 'west': back_direction = 'east'
         
         if back_direction:
+            # Check if we have a neighbor in the back direction (meaning we came from there)
             back_neighbor_pos = possible_directions[back_direction] 
             back_neighbor_id = self.get_node_id(back_neighbor_pos)
             if back_neighbor_id in self.nodes:
@@ -291,7 +312,6 @@ class GraphMapper:
         print(f"🔍 Wall status mapping: {wall_status}")
         
         # Check each direction for unexplored exits
-        open_directions = []
         for direction, target_pos in possible_directions.items():
             target_node_id = self.get_node_id(target_pos)
             
@@ -306,23 +326,12 @@ class GraphMapper:
             
             print(f"   📍 Direction {direction}: blocked={is_blocked}, explored={already_explored}, target_exists={target_exists}")
             
-            # Count open directions (not blocked by wall)
-            if not is_blocked:
-                open_directions.append(direction)
-            
             # Add to unexplored exits if: not blocked AND not explored AND target doesn't exist
             if not is_blocked and not already_explored and not target_exists:
                 node.unexploredExits.append(direction)
                 print(f"   ✅ Added {direction} to unexplored exits")
         
         print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        print(f"🚪 Open directions: {open_directions}")
-        
-        # FIXED: Dead end detection - a node is a dead end if it has only one open direction
-        # and that direction leads back to where we came from
-        node.isDeadEnd = len(open_directions) <= 1
-        if node.isDeadEnd:
-            print(f"💀 Node {node.id} marked as DEAD END (only {len(open_directions)} open direction(s))")
         
         # Update frontier queue
         if node.unexploredExits and node.id not in self.frontierQueue:
@@ -331,6 +340,24 @@ class GraphMapper:
         elif not node.unexploredExits and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
+            
+        # Update dead end status
+        all_blocked = all(wall_status.get(direction, True) for direction in ['north', 'south', 'east', 'west'])
+        node.isDeadEnd = all_blocked
+        
+        # NEW: Check if this is a dead end (all directions blocked)
+        if all_blocked:
+            print(f"🚫 DEAD END DETECTED at {node.id} - all directions blocked!")
+    
+    def is_dead_end(self, node=None):
+        """Check if current node or given node is a dead end"""
+        if node is None:
+            node = self.get_current_node()
+        
+        if not node:
+            return False
+        
+        return node.isDeadEnd
     
     def get_next_position(self, direction):
         """Calculate next position based on current position and direction"""
@@ -345,8 +372,21 @@ class GraphMapper:
             return (x - 1, y)
         return self.currentPosition
     
+    def get_previous_position(self, direction):
+        """Calculate previous position based on current position and direction robot came from"""
+        x, y = self.currentPosition
+        if direction == 'north':
+            return (x, y - 1)  # came from south
+        elif direction == 'south':
+            return (x, y + 1)  # came from north
+        elif direction == 'east':
+            return (x - 1, y)  # came from west
+        elif direction == 'west':
+            return (x + 1, y)  # came from east
+        return self.currentPosition
+    
     def can_move_to_direction_absolute(self, target_direction):
-        """FIXED: Check if robot can move to target direction based on absolute direction"""
+        """Check if robot can move to target direction based on absolute direction"""
         current_node = self.get_current_node()
         if not current_node:
             return False
@@ -378,10 +418,10 @@ class GraphMapper:
         elif target_direction == current_mapping['right']:
             return not current_node.wallRight
         else:
-            # For back direction, check if target node exists (we came from there)
+            # For back direction or other directions, check if target node exists
             target_pos = possible_directions[target_direction]
             target_node_id = self.get_node_id(target_pos)
-            return target_node_id in self.nodes
+            return target_node_id in self.nodes  # Can go if we've been there before
     
     def can_move_to_direction(self, target_direction):
         """Check if robot can move to target direction (no wall blocking)"""
@@ -409,52 +449,85 @@ class GraphMapper:
             # For back direction, assume it's possible (we came from there)
             return True
     
+    def handle_dead_end(self, movement_controller):
+        """Handle dead end situation by reversing instead of turning around"""
+        global ROBOT_FACE
+        
+        print(f"🚫 === DEAD END HANDLER ACTIVATED ===")
+        current_node = self.get_current_node()
+        
+        if current_node:
+            print(f"📍 Dead end at position: {current_node.position}")
+            print(f"🧱 Walls: Front={current_node.wallFront}, Left={current_node.wallLeft}, Right={current_node.wallRight}")
+        
+        # Use the new reverse method instead of turning around
+        movement_controller.reverse_from_dead_end()
+        
+        # Update position after reversing (move back in opposite direction)
+        reverse_direction_map = {
+            'north': 'south',
+            'south': 'north',
+            'east': 'west',
+            'west': 'east'
+        }
+        
+        reverse_direction = reverse_direction_map[self.currentDirection]
+        self.currentPosition = self.get_next_position(reverse_direction)
+        
+        print(f"🔙 Reversed to position: {self.currentPosition}")
+        print(f"🧭 Still facing: {self.currentDirection}")
+        
+        # Robot face doesn't change since we only moved backward
+        print(f"🤖 Robot face unchanged: {ROBOT_FACE}")
+        
+        return True
+    
     def move_to_direction(self, target_direction, movement_controller):
         global ROBOT_FACE
-        """FIXED: Turn robot to face target direction and move forward"""
+        """Turn robot to face target direction and move forward"""
         print(f"🎯 Attempting to move from {self.currentDirection} to {target_direction}")
         
         # Check if movement is possible BEFORE moving
-        if not self.can_move_to_direction_absolute(target_direction):
+        if not self.can_move_to_direction(target_direction):
             print(f"❌ BLOCKED! Cannot move to {target_direction} - wall detected!")
             return False
         
-        # Calculate rotation needed - FIXED LOGIC
+        # Calculate rotation needed
         direction_order = ['north', 'east', 'south', 'west']
         current_idx = direction_order.index(self.currentDirection)
         target_idx = direction_order.index(target_direction)
         
         # Calculate shortest rotation
         diff = (target_idx - current_idx) % 4
-
-        # FIXED: Movement axis calculation
+        
+        if diff == 1:  # Turn right
+            movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 1
+        elif diff == 3:  # Turn left (3 rights = 1 left)
+            movement_controller.rotate_90_degrees_left()
+            ROBOT_FACE += 1
+        elif diff == 2:  # Turn around (180°) - MODIFIED FOR DEAD END
+            # Check if this is a dead end situation
+            current_node = self.get_current_node()
+            if current_node and self.is_dead_end(current_node):
+                print("🚫 Dead end detected - using reverse instead of turn around")
+                return self.handle_dead_end(movement_controller)
+            else:
+                # Normal turn around for non-dead-end situations
+                movement_controller.rotate_90_degrees_right()
+                movement_controller.rotate_90_degrees_right()
+                ROBOT_FACE += 2
+        # diff == 0 means no rotation needed
+        
+        # Update current direction
+        self.currentDirection = target_direction
+        
         axis_test = 'x'
         if ROBOT_FACE % 2 == 0:
             axis_test = 'y'
         elif ROBOT_FACE % 2 == 1:
             axis_test = 'x'
-        
-        print(f'🧭 Movement axis: {axis_test} (ROBOT_FACE: {ROBOT_FACE})')
-
-        print(f"🔄 Direction change: {self.currentDirection} -> {target_direction} (diff: {diff})")
-        
-        if diff == 1:  # Turn right (clockwise)
-            print("🔄 Turning RIGHT (clockwise)")
-            movement_controller.rotate_90_degrees_right()
-            ROBOT_FACE += 1
-        elif diff == 3:  # Turn left (counter-clockwise) 
-            print("🔄 Turning LEFT (counter-clockwise)")
-            movement_controller.rotate_90_degrees_left()
-            ROBOT_FACE += 1
-        elif diff == 2:  # Turn around (180°)
-            print("🔄 Turning AROUND (180°)")
-            movement_controller.move_forward_with_pid(0.6, axis_test, direction=-1)
-        else:
-            print("🔄 No rotation needed")
-        # diff == 0 means no rotation needed
-        
-        # Update current direction
-        self.currentDirection = target_direction
+        print(f'-------------------------{axis_test}-------------------------')
         
         # Move forward
         movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
@@ -481,6 +554,11 @@ class GraphMapper:
         if not current_node:
             return None
         
+        # Check if this is a dead end first
+        if self.is_dead_end(current_node):
+            print(f"🚫 Current node is a dead end - no exploration directions available")
+            return None
+        
         # ENHANCED: First check if there are any unexplored exits at current node
         if current_node.unexploredExits:
             # Prioritize based on current robot facing direction
@@ -500,7 +578,7 @@ class GraphMapper:
                 
                 # Check if this direction is unexplored and not blocked by wall
                 if (actual_direction in current_node.unexploredExits and 
-                    self.can_move_to_direction_absolute(actual_direction)):
+                    self.can_move_to_direction(actual_direction)):
                     return actual_direction
             
             # If no priority direction works, try any unexplored exit
@@ -648,7 +726,7 @@ class GraphMapper:
             print(f"   🧱 Walls: L:{node.wallLeft} R:{node.wallRight} F:{node.wallFront}")
             print(f"   🔍 Unexplored exits: {node.unexploredExits}")
             print(f"   ✅ Explored directions: {node.exploredDirections}")
-            print(f"   💀 Is dead end: {node.isDeadEnd}")
+            print(f"   🎯 Is dead end: {node.isDeadEnd}")
             
             if node.sensorReadings:
                 print(f"   📡 Sensor readings:")
@@ -669,7 +747,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 38.0
+        self.WALL_THRESHOLD = 35.0
         
         self.readings = {
             'front': [],
@@ -782,7 +860,7 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.5)
     
-    speed = 490
+    speed = 540
     scan_results = {}
     
     # Scan front (0°)
@@ -852,13 +930,15 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     return scan_results
 
 def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
-    """Main autonomous exploration algorithm with backtracking - NO RE-SCANNING"""
-    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH SMART BACKTRACKING ===")
+    """Main autonomous exploration algorithm with backtracking and dead end handling"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH SMART BACKTRACKING & DEAD END REVERSAL ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     print("⚡ OPTIMIZATION: Previously scanned nodes will NOT be re-scanned!")
+    print("🔙 NEW: Dead ends will trigger REVERSE movement instead of turn-around!")
     
     nodes_explored = 0
     scanning_iterations = 0
+    dead_end_reversals = 0
     
     while nodes_explored < max_nodes:
         print(f"\n{'='*50}")
@@ -874,6 +954,21 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
             print("🔍 NEW NODE - Performing full scan...")
             scan_results = scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper)
             scanning_iterations += 1
+            
+            # Check if this scan revealed a dead end
+            if graph_mapper.is_dead_end(current_node):
+                print(f"🚫 DEAD END DETECTED after scanning!")
+                print(f"🔙 Initiating reverse maneuver...")
+                
+                success = graph_mapper.handle_dead_end(movement_controller)
+                if success:
+                    dead_end_reversals += 1
+                    print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
+                    nodes_explored += 1  # Count the dead end node
+                    continue
+                else:
+                    print(f"❌ Failed to reverse from dead end!")
+                    break
         else:
             print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
             # Just update the graph structure without scanning
@@ -895,7 +990,7 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
             print(f"\n🎯 Next exploration direction from current node: {next_direction}")
             
             # Double-check wall detection before moving
-            can_move = graph_mapper.can_move_to_direction_absolute(next_direction)
+            can_move = graph_mapper.can_move_to_direction(next_direction)
             print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
             
             if can_move:
@@ -966,15 +1061,17 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
     print(f"📊 PERFORMANCE SUMMARY:")
     print(f"   🗺️ Total nodes visited: {nodes_explored}")
     print(f"   🔍 Physical scans performed: {scanning_iterations}")
+    print(f"   🔙 Dead end reversals: {dead_end_reversals}")
     print(f"   ⚡ Scans saved by caching: {nodes_explored - scanning_iterations}")
     print(f"   📈 Efficiency gain: {((nodes_explored - scanning_iterations) / nodes_explored * 100):.1f}% less scanning")
+    print(f"   🎯 Dead end handling: {dead_end_reversals} reversals performed")
     
     graph_mapper.print_graph_summary()
     
     # Generate final exploration report
-    generate_exploration_report(graph_mapper, nodes_explored)
+    generate_exploration_report(graph_mapper, nodes_explored, dead_end_reversals)
 
-def generate_exploration_report(graph_mapper, nodes_explored):
+def generate_exploration_report(graph_mapper, nodes_explored, dead_end_reversals=0):
     """Generate comprehensive exploration report"""
     print(f"\n{'='*60}")
     print("📋 FINAL EXPLORATION REPORT")
@@ -990,7 +1087,8 @@ def generate_exploration_report(graph_mapper, nodes_explored):
     print(f"   🏁 Total nodes explored: {total_nodes}")
     print(f"   🎯 Node visits: {nodes_explored}")
     print(f"   🔍 Fully scanned nodes: {fully_scanned_nodes}")
-    print(f"   💀 Dead ends found: {dead_ends}")
+    print(f"   🚫 Dead ends found: {dead_ends}")
+    print(f"   🔙 Dead end reversals performed: {dead_end_reversals}")
     print(f"   🚀 Remaining frontiers: {frontier_nodes}")
     
     # Efficiency metrics
@@ -1026,7 +1124,7 @@ def generate_exploration_report(graph_mapper, nodes_explored):
     for node in graph_mapper.nodes.values():
         if hasattr(node, 'sensorReadings') and node.sensorReadings:
             for direction, distance in node.sensorReadings.items():
-                if distance <= 40.0:  # Wall threshold
+                if distance <= 35.0:  # Wall threshold
                     total_walls += 1
                 else:
                     total_openings += 1
@@ -1043,6 +1141,14 @@ def generate_exploration_report(graph_mapper, nodes_explored):
     print(f"   Physical scans performed: {fully_scanned_nodes}")
     print(f"   Cached data reused: {cached_scans}")
     print(f"   Time saved: ~{cached_scans * 3:.1f} seconds (approx 3s per scan)")
+    
+    # Dead end handling summary
+    if dead_end_reversals > 0:
+        print(f"\n🔙 DEAD END HANDLING:")
+        print(f"   Dead ends encountered: {dead_ends}")
+        print(f"   Reversals performed: {dead_end_reversals}")
+        print(f"   Time saved vs turn-around: ~{dead_end_reversals * 2:.1f} seconds")
+        print(f"   Success rate: {(dead_end_reversals/max(dead_ends,1)*100):.1f}%")
     
     print(f"\n{'='*60}")
     print("✅ EXPLORATION REPORT COMPLETE")
@@ -1066,14 +1172,15 @@ if __name__ == '__main__':
         print("✅ Recalibrating gimbal...")
         ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
         ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.5)
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         print("⚡ SMART BACKTRACKING: Previously scanned nodes will reuse cached data!")
+        print("🔙 DEAD END HANDLING: Reverse movement instead of turn-around!")
         
-        # Start autonomous exploration with smart backtracking (no re-scanning)
+        # Start autonomous exploration with smart backtracking and dead end reversal
         explore_autonomously(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, max_nodes=7*7)
+                           graph_mapper, movement_controller, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
