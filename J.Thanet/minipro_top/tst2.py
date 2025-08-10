@@ -37,7 +37,7 @@ class GraphNode:
         self.marker = False
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
-        self.detected_marker_ids = []  # เก็บ id marker ที่เจอใน node นี้ (optional)
+        self.detected_marker_ids = []  # เก็บ id marker ที่เจอใน node นี้
         
     def to_dict(self):
         """Convert node to dictionary for display"""
@@ -269,6 +269,125 @@ class ToFSensorHandler:
         avg_distance = self.get_average_distance(direction)
         return avg_distance <= self.WALL_THRESHOLD and avg_distance > 0
 
+class MarkerInfo:
+    """ข้อมูล Marker ที่ตรวจพบ"""
+    def __init__(self, x, y, w, h, marker_id):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._id = marker_id
+
+    @property
+    def id(self):
+        return self._id
+
+class MarkerVisionHandler:
+    def __init__(self, graph_mapper):
+        self.graph_mapper = graph_mapper
+        self.markers = []  # เก็บ marker ที่ detect ล่าสุด
+        self.marker_detected = False  # ตัวแปรสถานะการเจอ marker
+        self.detection_count = 0  # นับจำนวนครั้งที่เจอ marker
+    
+    def on_detect_marker(self, marker_info):
+        """Callback function สำหรับ marker detection (ปรับปรุงแล้ว)"""
+        number = len(marker_info)
+        self.markers.clear()
+        
+        if number > 0:
+            self.marker_detected = True
+            self.detection_count += 1
+            
+            # เก็บข้อมูล markers ทั้งหมด
+            for i in range(number):
+                x, y, w, h, marker_id = marker_info[i]
+                self.markers.append(MarkerInfo(x, y, w, h, marker_id))
+                print(f"🔖 Marker detected: ID={marker_id}, pos=({x:.3f},{y:.3f}), size=({w:.3f},{h:.3f})")
+            
+            # อัปเดต node ปัจจุบัน
+            current_node = self.graph_mapper.get_current_node()
+            if current_node:
+                current_node.marker = True
+                current_node.lastVisited = datetime.now().isoformat()
+                current_node.detected_marker_ids = [m.id for m in self.markers]
+                print(f"✅ Updated node {current_node.id} with {len(self.markers)} markers")
+        else:
+            # ไม่เจอ marker - ไม่ต้องเปลี่ยนสถานะ
+            pass
+    
+    def draw_markers_on_image(self, img):
+        """วาดกรอบและข้อมูล marker บนภาพ (ไม่ใช้แล้ว)"""
+        return img
+    
+    def get_detection_summary(self):
+        """ข้อมูลสรุปการตรวจจับ marker"""
+        return {
+            'detected': self.marker_detected,
+            'count': len(self.markers),
+            'total_detections': self.detection_count,
+            'marker_ids': [m.id for m in self.markers] if self.markers else []
+        }
+
+def simple_marker_detection_sequence(vision, marker_handler, duration=10):
+    """การตรวจจับ marker แบบง่าย - ไม่มี video stream"""
+    print(f"\n🔖 === เริ่มการตรวจจับ Marker (ระยะเวลา {duration} วินาที) ===")
+    
+    # Subscribe marker detection
+    print("🔍 เริ่ม marker detection...")
+    result = vision.sub_detect_info(name="marker", callback=marker_handler.on_detect_marker)
+    
+    if not result:
+        print("❌ ไม่สามารถเริ่ม marker detection ได้")
+        return {'detected': False, 'count': 0, 'total_detections': 0, 'marker_ids': []}
+    
+    start_time = time.time()
+    last_status_time = time.time()
+    
+    print("📡 กำลังตรวจจับ marker (ไม่แสดงภาพ)...")
+    
+    try:
+        while time.time() - start_time < duration:
+            # แสดงสถานะทุกๆ 2 วินาที
+            if time.time() - last_status_time >= 2:
+                summary = marker_handler.get_detection_summary()
+                remaining_time = duration - (time.time() - start_time)
+                print(f"📊 เวลาเหลือ: {remaining_time:.1f}s | "
+                      f"Detected: {summary['detected']} | "
+                      f"Markers: {summary['count']} | "
+                      f"Total: {summary['total_detections']}")
+                
+                # หากเจอ marker แล้วให้แสดงรายละเอียด
+                if summary['detected']:
+                    print(f"   🆔 Marker IDs: {summary['marker_ids']}")
+                
+                last_status_time = time.time()
+            
+            # หยุดชั่วคราว
+            time.sleep(0.1)
+    
+    except KeyboardInterrupt:
+        print("⚡ ผู้ใช้หยุดการตรวจจับ")
+    except Exception as e:
+        print(f"❌ เกิดข้อผิดพลาดในการตรวจจับ marker: {e}")
+    
+    finally:
+        # ปิด marker detection
+        print("🛑 หยุด marker detection...")
+        try:
+            vision.unsub_detect_info(name="marker")
+        except:
+            pass
+        
+        # แสดงผลสรุป
+        summary = marker_handler.get_detection_summary()
+        print(f"\n📊 สรุปผลการตรวจจับ:")
+        print(f"   🔖 พบ marker: {summary['detected']}")
+        print(f"   📊 จำนวน marker ปัจจุบัน: {summary['count']}")
+        print(f"   🎯 จำนวนครั้งที่ตรวจพบ: {summary['total_detections']}")
+        print(f"   🆔 Marker IDs: {summary['marker_ids']}")
+        
+        return summary
+
 def graph_mapping_scan_sequence(gimbal, chassis, sensor, tof_handler, graph_mapper):
     """ลำดับการสแกนและสร้าง Graph Mapping"""
     print("\n🗺️  === เริ่มการสแกนและสร้าง Graph Mapping ===")
@@ -348,50 +467,6 @@ def graph_mapping_scan_sequence(gimbal, chassis, sensor, tof_handler, graph_mapp
     
     return scan_results
 
-class MarkerVisionHandler:
-    def __init__(self, graph_mapper):
-        self.graph_mapper = graph_mapper
-        self.markers = []  # เก็บ marker ที่ detect ล่าสุด
-        self.marker = False  # เพิ่ม self.marker
-    
-    def marker_callback(self, event, info):
-        if event != vision.EVENT_MARKER:
-            return
-        
-        print(f"🔍 Marker callback triggered! Event: {event}, Info length: {len(info) if info else 0}")
-        
-        # เคลียร์ markers เก่า
-        self.markers.clear()
-        
-        # เก็บ markers ใหม่จาก info
-        for m in info:
-            self.markers.append(m)
-            print(f"   📍 Found marker ID: {m.id} at position ({m.x:.3f}, {m.y:.3f}), size: {m.w:.3f}x{m.h:.3f}")
-        
-        # เมื่อเจอ marker ให้เปลี่ยน self.marker เป็น True
-        if len(self.markers) > 0:
-            self.marker = True
-            print(f"🔖 Marker detected! self.marker = {self.marker}")
-        # ถ้าไม่เจอ marker ก็ไม่ต้องเปลี่ยนค่าอะไร
-        
-        current_node = self.graph_mapper.get_current_node()
-        if current_node and len(self.markers) > 0:
-            current_node.marker = True
-            current_node.lastVisited = datetime.now().isoformat()
-            current_node.detected_marker_ids = [m.id for m in self.markers]
-            print(f"🔖 Marker detected at node {current_node.id} position {current_node.position}, marker IDs: {current_node.detected_marker_ids}")
-    
-    def draw_markers_on_image(self, img):
-        if img is None:
-            return
-        
-        h, w, _ = img.shape
-        for m in self.markers:
-            pt1 = (int((m.x - m.w / 2) * w), int((m.y - m.h / 2) * h))
-            pt2 = (int((m.x + m.w / 2) * w), int((m.y + m.h / 2) * h))
-            cv2.rectangle(img, pt1, pt2, (0, 255, 0), 2)
-            cv2.putText(img, f"ID:{m.id}", (pt1[0], pt1[1]-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-
 if __name__ == '__main__':
     print("🤖 กำลังเชื่อมต่อหุ่นยนต์...")
     ep_robot = robot.Robot()
@@ -419,77 +494,26 @@ if __name__ == '__main__':
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         print(f"🎯 ใช้ Calibration: slope={tof_handler.CALIBRATION_SLOPE}, intercept={tof_handler.CALIBRATION_Y_INTERCEPT}")
         
-        # เริ่มสตรีมกล้อง และ subscribe marker detection
-        print("📷 กำลังเริ่มกล้องและ marker detection...")
-        ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)  # กลับไปใช้ 720P สำหรับ marker detection
-        time.sleep(1)  # รอให้กล้องเริ่มทำงาน
-        
-        # Subscribe marker detection
-        ep_vision.sub_detect_info(name="marker", callback=marker_handler.marker_callback)
-        print("✅ Marker detection เริ่มทำงานแล้ว")
-        
-        # ทดสอบ marker detection ก่อนสแกน ToF
-        print("\n🔍 ทดสอบ marker detection ก่อน...")
-        for test_i in range(50):
-            try:
-                img = ep_camera.read_cv2_image(timeout=0.2)
-                if img is not None:
-                    marker_handler.draw_markers_on_image(img)
-                    cv2.imshow("Pre-scan Marker Test", img)
-                    
-                    if len(marker_handler.markers) > 0:
-                        print(f"✅ เจอ marker! จำนวน: {len(marker_handler.markers)}")
-                        for m in marker_handler.markers:
-                            print(f"   - Marker ID: {m.id}, pos: ({m.x:.2f}, {m.y:.2f})")
-                        break
-                    elif test_i % 10 == 0:
-                        print(f"   ยังไม่เจอ marker... ({test_i+1}/50)")
-                        
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-                    
-            except Exception as e:
-                print(f"Camera error: {e}")
-                break
-        
-        print(f"🔖 Pre-scan marker status: {marker_handler.marker}")
-        
         # เริ่มสแกน Map Node ปัจจุบัน
         scan_results = graph_mapping_scan_sequence(ep_gimbal, ep_chassis, ep_sensor, tof_handler, graph_mapper)
         
-        # แสดงภาพพร้อมกรอบ Marker (แค่ไม่กี่วินาที)
-        print("\n📷 เริ่มแสดงภาพพร้อมกรอบ Marker...")
-        start_time = time.time()
-        loop_count = 0
-        
-        while time.time() - start_time < 5:  # รันแค่ 5 วินาที
-            try:
-                img = ep_camera.read_cv2_image(timeout=0.1)
-                if img is not None:
-                    marker_handler.draw_markers_on_image(img)
-                    cv2.imshow("Marker Detection", img)
-                    loop_count += 1
-                    
-                    # แสดงสถานะทุก 50 loops
-                    if loop_count % 50 == 0:
-                        print(f"Loop {loop_count}: marker_handler.marker = {marker_handler.marker}")
-                        
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
-                    
-            except Exception as e:
-                print(f"Camera error: {e}")
-                break
-        
-        print(f"📷 จบการแสดงภาพ (รันไป {loop_count} loops)")
+        # เริ่นระบบตรวจจับ marker แบบง่าย
+        marker_summary = simple_marker_detection_sequence(ep_vision, marker_handler, duration=10)
         
         # แสดงผลสรุป Graph
         graph_mapper.print_graph_summary()
-        print(f"\n🔖 Final marker status: marker_handler.marker = {marker_handler.marker}")
+        
+        # แสดงสรุป marker detection
+        print(f"\n🔖 ===== สรุปผลการตรวจจับ MARKER =====")
+        print(f"🔍 พบ marker: {marker_summary['detected']}")
+        print(f"📊 จำนวน marker: {marker_summary['count']}")
+        print(f"🎯 ตรวจพบทั้งหมด: {marker_summary['total_detections']} ครั้ง")
+        print(f"🆔 Marker IDs: {marker_summary['marker_ids']}")
     
     finally:
         print("\n🛑 ปิดการทำงานและเชื่อมต่อหุ่นยนต์...")
-        ep_vision.unsub_detect_info(name="marker")
-        ep_camera.stop_video_stream()
+        try:
+            ep_vision.unsub_detect_info(name="marker")
+        except:
+            pass
         ep_robot.close()
-        cv2.destroyAllWindows()
