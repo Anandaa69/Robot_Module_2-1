@@ -61,8 +61,11 @@ def navigate_maze(ep_chassis):
     
     try:
         while not sensors.maze_solved:
-            # อัปเดตค่าเซ็นเซอร์จำลอง
+            # อัปเดตค่าเซ็นเซอร์จำลองในทุกรอบลูป
             sensors.update_sensors(current_distance)
+            
+            # แสดงค่าเซ็นเซอร์ปัจจุบันเพื่อดูสถานะ
+            print(f"Distance - Front: {sensors.distance_front:.2f}m, Right: {sensors.distance_right:.2f}m, Left: {sensors.distance_left:.2f}m")
             
             # เงื่อนไขการตัดสินใจตามหลักการเดินชิดกำแพงขวา
             
@@ -117,3 +120,4 @@ if __name__ == '__main__':
         # ปิดการเชื่อมต่อเมื่อจบการทำงาน
         ep_robot.close()
         print("ปิดการเชื่อมต่อกับหุ่นยนต์เรียบร้อย")
+
