@@ -7,7 +7,7 @@ KP = 2.1
 KI = 0.3
 KD = 10
 RAMP_UP_TIME = 0.5  # เวลาที่ใช้ในการ ramp-up
-ROTATE = 2.11
+ROTATE = 2.11 #MOVE RIGT
 ROTATE_LEFT = 1.9
 # BEST PID = 2.1 0.3 10 ramp 0.7 - 0.5
 
@@ -15,11 +15,6 @@ KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
 KD_str = str(KD).replace('.', '-')
 RAMP_UP_TIME_str = str(RAMP_UP_TIME).replace('.', '-')
-
-log_filename = f"F:/Coder/Year2-1/Robot_Module/J.Thanet/Draw_square/data/test_robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp{RAMP_UP_TIME_str}.csv"
-with open(log_filename, mode='w', newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow(["time", "x", "y", "z", "pid_output", "target_distance", "relative_position"])
 
 # -------------------------
 # PID Controller Function
@@ -52,12 +47,12 @@ class PID:
 # -------------------------
 # Callback Variables
 # -------------------------
-current_x = 0.0
-current_y = 0.0
-current_z = 0.0
-last_pid_output = None
-current_target = None
-current_relative = None
+# current_x = 0.0
+# current_y = 0.0
+# current_z = 0.0
+# last_pid_output = None
+# current_target = None
+# current_relative = None
 
 # -------------------------
 # Position Callback
@@ -67,19 +62,6 @@ def sub_position_handler(position_info):
     current_x = position_info[0]
     current_y = position_info[1]
     current_z = position_info[2]
-
-    # บันทึกลง CSV ทุกครั้งที่มีข้อมูลตำแหน่งใหม่
-    with open(log_filename, mode='a', newline='') as f:
-        writer = csv.writer(f)
-        writer.writerow([
-            time.time(),
-            current_x,
-            current_y,
-            current_z,
-            last_pid_output if last_pid_output is not None else "",
-            current_target if current_target is not None else "",
-            current_relative if current_relative is not None else ""
-        ])
 
     print("chassis position: x:{0}, y:{1}, z:{2}".format(current_x, current_y, current_z))
 
@@ -225,4 +207,3 @@ if __name__ == '__main__':
             pass
         time.sleep(0.5)
         ep_robot.close()
-        print(f"Data saved to {log_filename}")
