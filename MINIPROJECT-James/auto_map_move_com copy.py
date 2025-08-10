@@ -6,6 +6,8 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 
+ROBOT_FACE = 1 # 0 1
+
 # ===== PID Controller =====
 class PID:
     def __init__(self, Kp, Ki, Kd, setpoint=0):
@@ -43,12 +45,12 @@ class MovementController:
         self.KP = 2.1
         self.KI = 0.3
         self.KD = 10
-        self.RAMP_UP_TIME = 0.5
+        self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=20, callback=self.position_handler)
+        self.chassis.sub_position(freq=10, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -57,7 +59,7 @@ class MovementController:
         self.current_z = position_info[2]
         # print(f"Position: x:{self.current_x:.3f}, y:{self.current_y:.3f}, z:{self.current_z:.3f}")
     
-    def move_forward_with_pid(self, target_distance, axis='x', direction=1):
+    def move_forward_with_pid(self, target_distance, axis, direction=1):
         """Move forward using PID control"""
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -103,12 +105,12 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
                 else:
-                    self.chassis.drive_speed(x=0, y=speed * direction, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.02:
+                if abs(relative_position - target_distance) < 0.025:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
                     target_reached = True
@@ -123,8 +125,8 @@ class MovementController:
         print("🔄 Rotating 90° RIGHT...")
         time.sleep(0.25)
         self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
+        time.sleep(self.ROTATE_TIME + 0.3)
+        # self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
         time.sleep(0.25)
         print("✅ Right rotation completed!")
 
@@ -133,8 +135,8 @@ class MovementController:
         print("🔄 Rotating 90° LEFT...")
         time.sleep(0.25)
         self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
+        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
+        # self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
         time.sleep(0.25)
         print("✅ Left rotation completed!")
     
@@ -287,8 +289,8 @@ class GraphMapper:
             # In a full implementation, you'd check the back wall too
             return True
     
-
     def move_to_direction(self, target_direction, movement_controller):
+        global ROBOT_FACE
         """Turn robot to face target direction and move forward"""
         print(f"🎯 Attempting to move from {self.currentDirection} to {target_direction}")
         
@@ -307,8 +309,10 @@ class GraphMapper:
         
         if diff == 1:  # Turn right
             movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 1
         elif diff == 3:  # Turn left (3 rights = 1 left)
             movement_controller.rotate_90_degrees_left()
+            ROBOT_FACE += 1
         elif diff == 2:  # Turn around (180°)
             movement_controller.rotate_90_degrees_right()
             movement_controller.rotate_90_degrees_right()
@@ -317,12 +321,14 @@ class GraphMapper:
         # Update current direction
         self.currentDirection = target_direction
         
-        # ===== FIX: ใช้แกนและทิศทางที่ถูกต้องตาม target_direction =====
-        axis, direction = self.get_movement_axis_and_direction(target_direction)
-        print(f"🧭 Moving on {axis}-axis with direction {direction}")
-        
-        # Move forward with correct axis and direction
-        movement_controller.move_forward_with_pid(0.6, axis, direction=direction)
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
+        print(f'-------------------------{axis_test}-------------------------')
+        # Move forward
+        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
         
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
@@ -333,30 +339,7 @@ class GraphMapper:
         
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
-
-
-    def get_movement_axis_and_direction(self, target_direction):
-        """Get the correct axis and direction for movement based on target direction
-        
-        Returns:
-            tuple: (axis, direction) where axis is 'x' or 'y' and direction is always 1
-            
-        Note: หุ่นยนต์เดินไปข้างหน้าเสมอ (direction=1) การเปลี่ยนทิศทางขึ้นอยู่กับการหมุน
-            direction=-1 จะใช้เมื่อต้องการถอยหลังเท่านั้น
-        """
-        movement_map = {
-            'north': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y
-            'south': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y  
-            'east': ('x', 1),    # เดินไปข้างหน้า tracking แกน X
-            'west': ('x', 1)     # เดินไปข้างหน้า tracking แกน X
-        }
-        
-        if target_direction not in movement_map:
-            print(f"❌ Unknown target direction: {target_direction}")
-            return ('x', 1)  # fallback
-        
-        return movement_map[target_direction]
-
+    
     def find_next_exploration_direction(self):
         """Find the next direction to explore based on priority"""
         current_node = self.get_current_node()
@@ -433,7 +416,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 30.0  # INCREASED from 25cm to 30cm for better detection
+        self.WALL_THRESHOLD = 35.0  # INCREASED from 25cm to 30cm for better detection
         
         self.readings = {
             'front': [],
