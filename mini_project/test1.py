@@ -49,13 +49,16 @@ def navigate_maze(ep_chassis):
     ควบคุมหุ่นยนต์ให้เคลื่อนที่ในเขาวงกตด้วยหลักการเดินชิดกำแพง
     """
     sensors = MockSensors()
-    maze_solved = False
     current_distance = 0.0
     
     # ตั้งค่าความเร็วคงที่สำหรับการเคลื่อนที่ไปข้างหน้า
     forward_speed = 0.5  # m/s
     rotate_speed = 30    # deg/s
-
+    
+    # ค่าเกณฑ์สำหรับเซ็นเซอร์ (Thresholds)
+    FRONT_THRESHOLD = 0.5 # เมตร
+    RIGHT_THRESHOLD = 0.4 # เมตร
+    
     print("=== เริ่มต้นการนำทางในเขาวงกต ===")
     print("หุ่นยนต์จะใช้หลักการเดินชิดกำแพงขวา")
     
@@ -67,33 +70,35 @@ def navigate_maze(ep_chassis):
             # แสดงค่าเซ็นเซอร์ปัจจุบันเพื่อดูสถานะ
             print(f"Distance - Front: {sensors.distance_front:.2f}m, Right: {sensors.distance_right:.2f}m, Left: {sensors.distance_left:.2f}m")
             
-            # เงื่อนไขการตัดสินใจตามหลักการเดินชิดกำแพงขวา
+            # เงื่อนไขการตัดสินใจตามหลักการเดินชิดกำแพงขวาที่ถูกต้อง
             
-            # 1. ถ้าทางขวามีทางเปิด (ระยะห่าง > 0.4 เมตร) ให้เลี้ยวขวา
-            if sensors.distance_right > 0.4:
+            # ตรวจสอบลำดับความสำคัญ: ขวา -> หน้า -> ซ้าย -> ถอย
+            
+            # 1. ถ้าทางขวามีทางเปิด (ระยะห่าง > RIGHT_THRESHOLD) ให้เลี้ยวขวา
+            if sensors.distance_right > RIGHT_THRESHOLD:
                 print("เจอทางเปิดด้านขวา -> เลี้ยวขวา")
                 ep_chassis.drive_speed(x=0, y=0, z=-rotate_speed, timeout=1.5) # หมุนตามเข็มนาฬิกา
                 time.sleep(1.5)
             
-            # 2. ถ้าข้างหน้ามีทางเปิด (ระยะห่าง > 0.5 เมตร) ให้เดินตรงไป
-            elif sensors.distance_front > 0.5:
+            # 2. ถ้าข้างหน้ามีทางเปิด (ระยะห่าง > FRONT_THRESHOLD) ให้เดินตรงไป
+            elif sensors.distance_front > FRONT_THRESHOLD:
                 print("ข้างหน้ามีทางว่าง -> เดินตรงไป")
                 ep_chassis.drive_speed(x=forward_speed, y=0, z=0, timeout=1.0)
                 time.sleep(1.0)
                 current_distance += forward_speed * 1.0
             
-            # 3. ถ้าทางขวาและข้างหน้าเป็นทางตัน ให้เลี้ยวซ้าย
+            # 3. ถ้าทั้งทางขวาและข้างหน้าเป็นทางตัน (ระยะห่าง < thresholds) ให้เลี้ยวซ้าย
             elif sensors.distance_left > 0.4:
                 print("ทางตัน -> เลี้ยวซ้าย")
                 ep_chassis.drive_speed(x=0, y=0, z=rotate_speed, timeout=1.5) # หมุนทวนเข็มนาฬิกา
                 time.sleep(1.5)
             
-            # 4. ถ้าทุกทิศทางตัน ให้หมุนกลับ
+            # 4. ถ้าทุกทิศทางตัน (ทางซ้ายก็ตันด้วย) ให้หมุนกลับ
             else:
                 print("ทางตันทุกทิศทาง -> หมุนกลับหลัง")
                 ep_chassis.drive_speed(x=0, y=0, z=rotate_speed * 2, timeout=3.0) # หมุน 180 องศา
                 time.sleep(3.0)
-                
+            
             # หยุดหุ่นยนต์ชั่วครู่
             ep_chassis.drive_speed(x=0, y=0, z=0)
             time.sleep(0.5)
