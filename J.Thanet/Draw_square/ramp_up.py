@@ -3,22 +3,19 @@ import time
 import csv
 from datetime import datetime
 
-# -------------------------
-# เตรียมไฟล์ CSV สำหรับบันทึกข้อมูล
-# -------------------------
 KP = 2.1
-KI = 0.0
-KD = 5
-RAMP_UP_TIME = 0  # เวลาที่ใช้ในการ ramp-up
+KI = 0.3
+KD = 10
+RAMP_UP_TIME = 0.5  # เวลาที่ใช้ในการ ramp-up
 ROTATE = 2.115
-# BEST PID = 2.1 0.3 10 ramp 0.7
+# BEST PID = 2.1 0.3 10 ramp 0.7 - 0.5
 
 KP_str = str(KP).replace('.', '-')
 KI_str = str(KI).replace('.', '-')
 KD_str = str(KD).replace('.', '-')
 RAMP_UP_TIME_str = str(RAMP_UP_TIME).replace('.', '-')
 
-log_filename = f"D:\downsyndrome\year2_1\Robot_Module_2-1\J.Thanet\Draw_square\data/robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp{RAMP_UP_TIME_str}.csv"
+log_filename = f"F:/Coder/Year2-1/Robot_Module/J.Thanet/Draw_square/data/test_robot_log_{datetime.now().strftime('%H_%M_%S')}_P{KP_str}_I{KI_str}_D{KD_str}_ramp{RAMP_UP_TIME_str}.csv"
 with open(log_filename, mode='w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(["time", "x", "y", "z", "pid_output", "target_distance", "relative_position"])
@@ -50,11 +47,6 @@ class PID:
         output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
         self.prev_error = error
         return output
-    
-    def reset(self):
-        """Reset PID controller state"""
-        self.prev_error = 0
-        self.integral = 0
 
 # -------------------------
 # Callback Variables
