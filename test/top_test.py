@@ -3,7 +3,6 @@ import cv2
 import robomaster
 from robomaster import robot, vision, gimbal, blaster, camera
 import math
-import csv
 from datetime import datetime
 
 class PIDController:
@@ -26,16 +25,11 @@ class PIDController:
 
         error = self.setpoint - current_value
         self.integral += error * dt
-        
-        # Clamp integral to prevent windup
-        self.integral = max(-10, min(10, self.integral))
-        
+        self.integral = max(-10, min(10, self.integral))  # Clamp
         derivative = (error - self.prev_error) / dt
 
         output = self.kp * error + self.ki * self.integral + self.kd * derivative
-        
-        # Clamp output to reasonable range
-        output = max(-100, min(100, output))
+        output = max(-100, min(100, output))  # Clamp output
 
         self.prev_error = error
         self.last_time = current_time
@@ -78,27 +72,6 @@ if __name__ == '__main__':
     KI = 0
     KD = 0
 
-    # KP = 140
-    # KI = 2
-    # KD = 3
-
-    KP_str = str(KP).replace('.', '-')
-    KI_str = str(KI).replace('.', '-')
-    KD_str = str(KD).replace('.', '-')
-    
-    # Initialize CSV file with headers
-    csv_filename = f"F:/Coder/Year2-1/Robot_Module/J.Thanet/Lab02/data/rec_track_{datetime.now().strftime('%H%M')}_P{KP_str}_I{KI_str}_D{KD_str}.csv"
-    csv_headers = [
-        'timestamp', 'target_name', 'iteration', 'markers_found', 
-        'marker_id', 'marker_x', 'marker_y', 'marker_w', 'marker_h',
-        'error_x', 'error_y', 'yaw_speed', 'pitch_speed', 
-        'locked', 'fired', 'elapsed_time'
-    ]
-    
-    with open(csv_filename, 'w', newline='', encoding='utf-8') as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(csv_headers)
-    
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
 
@@ -132,9 +105,9 @@ if __name__ == '__main__':
         current_yaw_target_angle = target_angles[target_name] * 1.0
 
         ep_robot.gimbal.moveto(pitch=-10, yaw=current_yaw_target_angle).wait_for_completed()
-        time.sleep(0.5) # Wait for gimbal to settle properly
+        time.sleep(0.5)  # Wait for gimbal to settle properly
 
-        for i in range(300): # Limit tracking time
+        for i in range(300):  # Limit tracking time
             current_target_info = None
             temp_markers = g_processed_markers
             temp_markers.sort(key=lambda m: m.x)
@@ -165,28 +138,6 @@ if __name__ == '__main__':
                 
                 ep_robot.gimbal.drive_speed(yaw_speed=yaw_speed, pitch_speed=pitch_speed)
                 
-                # บันทึกข้อมูลลง CSV (ยังไม่ยิง)
-                with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
-                    writer = csv.writer(csvfile)
-                    writer.writerow([
-                        datetime.now().strftime('%H:%M:%S.%f'),
-                        target_name,
-                        i,
-                        len(temp_markers),
-                        current_target_info.info,
-                        current_target_info.x,
-                        current_target_info.y,
-                        current_target_info.w,
-                        current_target_info.h,
-                        error_x,
-                        error_y,
-                        yaw_speed,
-                        pitch_speed,
-                        int(locked),
-                        0,  # fired = 0
-                        round(time.time() - aim_start_time, 3)
-                    ])
-
                 print(f"Tracking Marker ID {current_target_info.info} | Error X: {error_x:.3f}, Y: {error_y:.3f}")
 
                 if abs(error_x) <= 0.015 and abs(error_y) <= 0.015:
@@ -195,28 +146,6 @@ if __name__ == '__main__':
                     
                     print(f"เป้าหมาย {target_name.upper()} ล็อคแล้ว! ทำการยิงเลเซอร์")
                     ep_robot.blaster.fire(fire_type=blaster.INFRARED_FIRE, times=1)
-                    
-                    # บันทึก fired = 1
-                    with open(csv_filename, 'a', newline='', encoding='utf-8') as csvfile:
-                        writer = csv.writer(csvfile)
-                        writer.writerow([
-                            datetime.now().strftime('%H:%M:%S.%f'),
-                            target_name,
-                            i,
-                            len(temp_markers),
-                            current_target_info.info,
-                            current_target_info.x,
-                            current_target_info.y,
-                            current_target_info.w,
-                            current_target_info.h,
-                            error_x,
-                            error_y,
-                            0,
-                            0,
-                            1,
-                            1,
-                            round(time.time() - aim_start_time, 3)
-                        ])
                     
                     time.sleep(0.15)
                     locked = True
@@ -231,7 +160,6 @@ if __name__ == '__main__':
             ep_robot.gimbal.drive_speed(0, 0)
 
     print(f"\n--- ลำดับการทำงานเสร็จสิ้น ---")
-    print(f"ข้อมูลถูกบันทึกลงไฟล์: {csv_filename}")
     ep_robot.vision.unsub_detect_info(name="marker")
     ep_robot.camera.stop_video_stream()
     ep_robot.close()
