@@ -51,7 +51,7 @@ class MovementController:
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=10, callback=self.position_handler)
+        self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -105,12 +105,12 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.3)
                 else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.3)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.025:
+                if abs(relative_position - target_distance) < 0.017:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
                     target_reached = True
@@ -425,7 +425,16 @@ class GraphMapper:
         
         # Calculate shortest rotation
         diff = (target_idx - current_idx) % 4
+
+        # FIXED: Movement axis calculation
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
         
+        print(f'🧭 Movement axis: {axis_test} (ROBOT_FACE: {ROBOT_FACE})')
+
         print(f"🔄 Direction change: {self.currentDirection} -> {target_direction} (diff: {diff})")
         
         if diff == 1:  # Turn right (clockwise)
@@ -438,23 +447,13 @@ class GraphMapper:
             ROBOT_FACE += 1
         elif diff == 2:  # Turn around (180°)
             print("🔄 Turning AROUND (180°)")
-            movement_controller.rotate_90_degrees_right()
-            movement_controller.rotate_90_degrees_right()
-            ROBOT_FACE += 2
+            movement_controller.move_forward_with_pid(0.6, axis_test, direction=-1)
         else:
             print("🔄 No rotation needed")
         # diff == 0 means no rotation needed
         
         # Update current direction
         self.currentDirection = target_direction
-        
-        # FIXED: Movement axis calculation
-        axis_test = 'x'
-        if ROBOT_FACE % 2 == 0:
-            axis_test = 'y'
-        elif ROBOT_FACE % 2 == 1:
-            axis_test = 'x'
-        print(f'🧭 Movement axis: {axis_test} (ROBOT_FACE: {ROBOT_FACE})')
         
         # Move forward
         movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
@@ -669,7 +668,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 35.0
+        self.WALL_THRESHOLD = 38.0
         
         self.readings = {
             'front': [],
@@ -782,7 +781,7 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.5)
     
-    speed = 540
+    speed = 490
     scan_results = {}
     
     # Scan front (0°)
@@ -1026,7 +1025,7 @@ def generate_exploration_report(graph_mapper, nodes_explored):
     for node in graph_mapper.nodes.values():
         if hasattr(node, 'sensorReadings') and node.sensorReadings:
             for direction, distance in node.sensorReadings.items():
-                if distance <= 35.0:  # Wall threshold
+                if distance <= 40.0:  # Wall threshold
                     total_walls += 1
                 else:
                     total_openings += 1
@@ -1066,14 +1065,14 @@ if __name__ == '__main__':
         print("✅ Recalibrating gimbal...")
         ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
         ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(0.2)
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         print("⚡ SMART BACKTRACKING: Previously scanned nodes will reuse cached data!")
         
         # Start autonomous exploration with smart backtracking (no re-scanning)
         explore_autonomously(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, max_nodes=49)
+                           graph_mapper, movement_controller, max_nodes=7*7)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
