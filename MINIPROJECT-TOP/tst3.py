@@ -3,11 +3,11 @@ import robomaster
 from robomaster import robot
 import numpy as np
 from scipy.ndimage import median_filter
-from datetime import datetime, timedelta
+from datetime import datetime
 import json
-import heapq
 from collections import deque
-import math
+
+ROBOT_FACE = 1 # 0 1
 
 # ===== PID Controller =====
 class PID:
@@ -34,121 +34,32 @@ class PID:
         self.prev_error = error
         return output
 
-# ===== Enhanced Localization System =====
-class HybridLocalizer:
+# ===== Movement Controller =====
+class MovementController:
     def __init__(self, chassis):
         self.chassis = chassis
         self.current_x = 0.0
         self.current_y = 0.0
-        self.current_z = 0.0  # heading
+        self.current_z = 0.0
         
-        # Dead reckoning state
-        self.odometry_x = 0.0
-        self.odometry_y = 0.0
-        self.odometry_heading = 0.0
-        
-        # Drift correction
-        self.drift_correction_x = 0.0
-        self.drift_correction_y = 0.0
-        self.last_correction_time = time.time()
-        
-        # Position history for filtering
-        self.position_history = deque(maxlen=10)
+        # PID Parameters
+        self.KP = 1.5
+        self.KI = 0.3
+        self.KD = 4
+        self.RAMP_UP_TIME = 0.7
+        self.ROTATE_TIME = 2.11  # Right turn
+        self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
         self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
-        raw_x, raw_y, raw_z = position_info
-        
-        # Apply median filter
-        self.position_history.append((raw_x, raw_y, raw_z))
-        
-        if len(self.position_history) >= 3:
-            positions = list(self.position_history)
-            filtered_x = np.median([pos[0] for pos in positions[-3:]])
-            filtered_y = np.median([pos[1] for pos in positions[-3:]])
-            filtered_z = np.median([pos[2] for pos in positions[-3:]])
-        else:
-            filtered_x, filtered_y, filtered_z = raw_x, raw_y, raw_z
-        
-        # Apply drift correction
-        self.current_x = filtered_x + self.drift_correction_x
-        self.current_y = filtered_y + self.drift_correction_y
-        self.current_z = filtered_z
+        self.current_x = position_info[0]
+        self.current_y = position_info[1]
+        self.current_z = position_info[2]
     
-    def apply_landmark_correction(self, expected_pos, actual_pos):
-        """Apply correction based on landmark detection (e.g., known walls)"""
-        error_x = expected_pos[0] - actual_pos[0]
-        error_y = expected_pos[1] - actual_pos[1]
-        
-        # Gradual drift correction to avoid jumps
-        correction_factor = 0.3
-        self.drift_correction_x += error_x * correction_factor
-        self.drift_correction_y += error_y * correction_factor
-        
-        print(f"🎯 Drift correction applied: ({error_x:.3f}, {error_y:.3f})")
-    
-    def get_position(self):
-        return (self.current_x, self.current_y, self.current_z)
-    
-    def cleanup(self):
-        try:
-            self.chassis.unsub_position()
-        except:
-            pass
-
-# ===== Enhanced Movement Controller =====
-class MovementController:
-    def __init__(self, chassis, localizer):
-        self.chassis = chassis
-        self.localizer = localizer
-        
-        # PID Parameters
-        self.KP = 2.1
-        self.KI = 0.3
-        self.KD = 10
-        self.RAMP_UP_TIME = 0.5
-        self.ROTATE_TIME = 2.11
-        self.ROTATE_LEFT_TIME = 1.9
-        
-        # Auto-centering parameters
-        self.TARGET_WALL_DISTANCE = 40.0  # 40cm from walls
-        self.CENTERING_TOLERANCE = 5.0    # 5cm tolerance
-    
-    def auto_center_in_corridor(self, left_distance, right_distance):
-        """Auto-center robot in corridor when too close to walls"""
-        center_needed = False
-        move_direction = None
-        
-        if left_distance < self.TARGET_WALL_DISTANCE and left_distance > 5:
-            # Too close to left wall - move right
-            center_needed = True
-            move_direction = 'right'
-            move_distance = (self.TARGET_WALL_DISTANCE - left_distance) / 100.0  # Convert to meters
-        elif right_distance < self.TARGET_WALL_DISTANCE and right_distance > 5:
-            # Too close to right wall - move left
-            center_needed = True
-            move_direction = 'left'
-            move_distance = (self.TARGET_WALL_DISTANCE - right_distance) / 100.0
-        
-        if center_needed:
-            print(f"🎯 Auto-centering: Moving {move_direction} by {move_distance:.2f}m")
-            if move_direction == 'left':
-                self.chassis.drive_speed(x=0, y=0.3, z=0, timeout=move_distance/0.3)
-                time.sleep(move_distance/0.3 + 0.2)
-            else:  # right
-                self.chassis.drive_speed(x=0, y=-0.3, z=0, timeout=move_distance/0.3)
-                time.sleep(move_distance/0.3 + 0.2)
-            
-            self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
-            time.sleep(0.3)
-            return True
-        
-        return False
-    
-    def move_forward_with_pid(self, target_distance, axis='x', direction=1):
+    def move_forward_with_pid(self, target_distance, axis, direction=1):
         """Move forward using PID control"""
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -156,16 +67,17 @@ class MovementController:
         last_time = start_time
         target_reached = False
         
+        # Ramp-up parameters
         min_speed = 0.1
         max_speed = 1.5
         
-        start_x, start_y, _ = self.localizer.get_position()
         if axis == 'x':
-            start_position = start_x
+            start_position = self.current_x
         else:
-            start_position = start_y
+            start_position = self.current_y
 
-        print(f"🚀 Moving {target_distance}m on {axis}-axis, direction: {direction}")
+        direction_text = "FORWARD" if direction == 1 else "BACKWARD"
+        print(f"🚀 Moving {direction_text} {target_distance}m on {axis}-axis, direction: {direction}")
         
         try:
             while not target_reached:
@@ -174,11 +86,10 @@ class MovementController:
                 last_time = now
                 elapsed_time = now - start_time
                 
-                current_x, current_y, _ = self.localizer.get_position()
                 if axis == 'x':
-                    current_position = current_x
+                    current_position = self.current_x
                 else:
-                    current_position = current_y
+                    current_position = self.current_y
                 
                 relative_position = abs(current_position - start_position)
 
@@ -197,391 +108,309 @@ class MovementController:
                 if axis == 'x':
                     self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
                 else:
-                    self.chassis.drive_speed(x=0, y=speed * direction, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.02:
+                if abs(relative_position - target_distance) < 0.017:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
-                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
                     break
                     
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
-            self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
-    
-    def move_backward_with_pid(self, target_distance, axis='x'):
-        """Move backward using PID control"""
-        return self.move_forward_with_pid(target_distance, axis, direction=-1)
     
     def rotate_90_degrees_right(self):
+        """Rotate 90 degrees clockwise"""
         print("🔄 Rotating 90° RIGHT...")
-        time.sleep(0.25)
+        time.sleep(0.2)
         self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
-        time.sleep(0.25)
+        time.sleep(self.ROTATE_TIME + 0.3)
+        time.sleep(0.2)
         print("✅ Right rotation completed!")
 
     def rotate_90_degrees_left(self):
+        """Rotate 90 degrees counter-clockwise"""
         print("🔄 Rotating 90° LEFT...")
-        time.sleep(0.25)
+        time.sleep(0.2)
         self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
-        time.sleep(0.25)
+        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
+        time.sleep(0.2)
         print("✅ Left rotation completed!")
+    
+    def reverse_from_dead_end(self):
+        """Reverse robot from dead end position"""
+        global ROBOT_FACE
+        print("🔙 DEAD END DETECTED - Reversing...")
+        
+        # Determine current axis based on robot face
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
+        
+        print(f"🔙 Reversing 0.6m on {axis_test}-axis")
+        
+        # Move backward using negative direction
+        self.move_forward_with_pid(0.6, axis_test, direction=-1)
+        
+        print("✅ Reverse from dead end completed!")
 
-# ===== Enhanced Graph Node =====
+    def reverse_to_previous_node(self):
+        """NEW: Reverse 0.6m to go back to previous node without rotating"""
+        global ROBOT_FACE
+        print("🔙 BACKTRACKING - Reversing to previous node...")
+        
+        # Determine current axis based on robot face
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
+        
+        print(f"🔙 Reversing 0.6m on {axis_test}-axis for backtrack")
+        
+        # Move backward using negative direction
+        self.move_forward_with_pid(0.6, axis_test, direction=-1)
+        
+        print("✅ Reverse backtrack completed!")
+    
+    def cleanup(self):
+        """Clean up position subscription"""
+        try:
+            self.chassis.unsub_position()
+        except:
+            pass
+
+# ===== Graph Node =====
 class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
         self.position = position  # (x, y)
-        
-        # Wall detection
+
+        # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
+        self.walls = {
+            'north': False,
+            'south': False,
+            'east': False,
+            'west': False
+        }
+
+        # Legacy support (will be removed)
         self.wallLeft = False
         self.wallRight = False
         self.wallFront = False
         self.wallBack = False
-        
-        # Distance readings
-        self.leftDistance = 0.0
-        self.rightDistance = 0.0
-        self.frontDistance = 0.0
-        
-        # Neighbors and connections
+
+        # Neighbors (connected nodes)
         self.neighbors = {
             'north': None,
             'south': None,
             'east': None,
             'west': None
         }
-        
+
         # Exploration state
         self.visited = True
         self.visitCount = 1
         self.exploredDirections = []
         self.unexploredExits = []
         self.isDeadEnd = False
-        self.isFrontier = False
-        
-        # Gap information
-        self.detectedGaps = []  # List of gaps detected from this node
-        
-        # Path information
-        self.parent = None  # For pathfinding
-        self.g_cost = float('inf')  # Cost from start
-        self.h_cost = 0  # Heuristic cost
-        self.f_cost = float('inf')  # Total cost
-        
-        # Timing
+
+        # NEW: Add flag to track if node has been fully scanned
+        self.fullyScanned = False
+        self.scanTimestamp = None
+
+        # Additional info
+        self.marker = False
         self.lastVisited = datetime.now().isoformat()
-        self.firstVisited = datetime.now().isoformat()
+        self.sensorReadings = {}
         
-        # Phase information
-        self.discoveredInPhase = 1
+        # IMPORTANT: Store the ABSOLUTE direction robot was facing when first scanned
+        self.initialScanDirection = None
 
-# ===== A* Pathfinding Implementation =====
-class AStarPathfinder:
-    def __init__(self, graph_mapper):
-        self.graph = graph_mapper
-    
-    def heuristic(self, pos1, pos2):
-        """Manhattan distance heuristic"""
-        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
-    
-    def get_neighbors_for_pathfinding(self, node):
-        """Get valid neighbors for pathfinding (no walls blocking)"""
-        neighbors = []
-        x, y = node.position
-        
-        # Check all four directions
-        directions = [
-            ('north', (x, y+1)),
-            ('south', (x, y-1)),
-            ('east', (x+1, y)),
-            ('west', (x-1, y))
-        ]
-        
-        for direction, next_pos in directions:
-            node_id = self.graph.get_node_id(next_pos)
-            if node_id in self.graph.nodes:
-                next_node = self.graph.nodes[node_id]
-                # Check if path is not blocked by walls
-                if not self.is_path_blocked(node, next_node, direction):
-                    neighbors.append(next_node)
-        
-        return neighbors
-    
-    def is_path_blocked(self, from_node, to_node, direction):
-        """Check if path between nodes is blocked by walls"""
-        # This is a simplified check - in reality you might need more complex logic
-        if direction == 'north' and from_node.wallFront:
-            return True
-        elif direction == 'south' and from_node.wallBack:
-            return True
-        elif direction == 'east' and from_node.wallRight:
-            return True
-        elif direction == 'west' and from_node.wallLeft:
-            return True
-        return False
-    
-    def find_path(self, start_pos, goal_pos):
-        """Find shortest path using A* algorithm"""
-        start_id = self.graph.get_node_id(start_pos)
-        goal_id = self.graph.get_node_id(goal_pos)
-        
-        if start_id not in self.graph.nodes or goal_id not in self.graph.nodes:
-            return []
-        
-        start_node = self.graph.nodes[start_id]
-        goal_node = self.graph.nodes[goal_id]
-        
-        # Initialize
-        open_set = []
-        heapq.heappush(open_set, (0, start_id))
-        
-        # Reset costs for all nodes
-        for node in self.graph.nodes.values():
-            node.g_cost = float('inf')
-            node.f_cost = float('inf')
-            node.parent = None
-        
-        start_node.g_cost = 0
-        start_node.h_cost = self.heuristic(start_pos, goal_pos)
-        start_node.f_cost = start_node.h_cost
-        
-        closed_set = set()
-        
-        while open_set:
-            current_f, current_id = heapq.heappop(open_set)
-            
-            if current_id in closed_set:
-                continue
-                
-            current_node = self.graph.nodes[current_id]
-            closed_set.add(current_id)
-            
-            if current_id == goal_id:
-                # Reconstruct path
-                path = []
-                node = current_node
-                while node:
-                    path.append(node.position)
-                    node = node.parent
-                path.reverse()
-                return path
-            
-            for neighbor in self.get_neighbors_for_pathfinding(current_node):
-                if neighbor.id in closed_set:
-                    continue
-                
-                tentative_g = current_node.g_cost + 1  # Assume cost of 1 between adjacent nodes
-                
-                if tentative_g < neighbor.g_cost:
-                    neighbor.parent = current_node
-                    neighbor.g_cost = tentative_g
-                    neighbor.h_cost = self.heuristic(neighbor.position, goal_pos)
-                    neighbor.f_cost = neighbor.g_cost + neighbor.h_cost
-                    
-                    heapq.heappush(open_set, (neighbor.f_cost, neighbor.id))
-        
-        return []  # No path found
-
-# ===== Time Management System =====
-class TimeManager:
-    def __init__(self, total_time=600):  # 10 minutes = 600 seconds
-        self.total_time = total_time
-        self.start_time = time.time()
-        self.phase_durations = {
-            1: 180,  # Phase 1: 3 minutes
-            2: 240,  # Phase 2: 4 minutes  
-            3: 180   # Phase 3: 3 minutes
-        }
-        self.current_phase = 1
-        self.phase_start_time = self.start_time
-    
-    def get_elapsed_time(self):
-        return time.time() - self.start_time
-    
-    def get_remaining_time(self):
-        return self.total_time - self.get_elapsed_time()
-    
-    def get_phase_elapsed_time(self):
-        return time.time() - self.phase_start_time
-    
-    def get_phase_remaining_time(self):
-        return self.phase_durations[self.current_phase] - self.get_phase_elapsed_time()
-    
-    def should_advance_phase(self):
-        return self.get_phase_elapsed_time() >= self.phase_durations[self.current_phase]
-    
-    def advance_phase(self):
-        if self.current_phase < 3:
-            self.current_phase += 1
-            self.phase_start_time = time.time()
-            print(f"⏰ ADVANCING TO PHASE {self.current_phase}")
-            return True
-        return False
-    
-    def is_exploration_complete(self):
-        return self.get_elapsed_time() >= self.total_time
-    
-    def get_status(self):
-        return {
-            'current_phase': self.current_phase,
-            'total_elapsed': self.get_elapsed_time(),
-            'total_remaining': self.get_remaining_time(),
-            'phase_elapsed': self.get_phase_elapsed_time(),
-            'phase_remaining': self.get_phase_remaining_time()
-        }
-
-# ===== Enhanced Graph Mapper with Hybrid Strategy =====
-class HybridGraphMapper:
-    def __init__(self, time_manager):
+# ===== Graph Mapper =====
+class GraphMapper:
+    def __init__(self):
         self.nodes = {}
         self.currentPosition = (0, 0)
-        self.currentDirection = 'north'
-        
-        # Path tracking for backtracking
-        self.path_stack = []  # Stack for backtracking
-        self.visited_path = []  # Full path history
-        
-        # Frontier management
-        self.frontiers = []
-        self.gaps = []  # Detected gaps for phase 3
-        
-        # Phase management
-        self.time_manager = time_manager
-        self.pathfinder = AStarPathfinder(self)
-        
-        # Phase-specific states
-        self.wall_following_direction = 'left'  # Follow left wall
-        self.last_junction = None
-        
-        # Coverage tracking
-        self.total_area_explored = 0
-        self.nodes_per_phase = {1: 0, 2: 0, 3: 0}
-    
+        self.currentDirection = 'north'  # ABSOLUTE direction robot is facing
+        self.frontierQueue = []
+        self.pathStack = []
+        self.visitedNodes = set()
+        self.previous_node = None
+
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
     
-    def create_or_get_node(self, position):
+    def create_node(self, position):
         node_id = self.get_node_id(position)
         if node_id not in self.nodes:
-            self.nodes[node_id] = GraphNode(node_id, position)
-            self.nodes[node_id].discoveredInPhase = self.time_manager.current_phase
-            self.nodes_per_phase[self.time_manager.current_phase] += 1
+            node = GraphNode(node_id, position)
+            # Store the absolute direction robot was facing when node was first created
+            node.initialScanDirection = self.currentDirection
+            self.nodes[node_id] = node
+            self.visitedNodes.add(node_id)
         return self.nodes[node_id]
-    
+
     def get_current_node(self):
-        return self.create_or_get_node(self.currentPosition)
+        node_id = self.get_node_id(self.currentPosition)
+        return self.nodes.get(node_id)
     
-    def update_current_node_walls(self, left_wall, right_wall, front_wall, left_dist, right_dist, front_dist):
-        """Update current node with wall and distance information"""
+    def update_current_node_walls_absolute(self, left_wall, right_wall, front_wall):
+        """NEW: Update walls using ABSOLUTE directions"""
         current_node = self.get_current_node()
-        
-        # Update wall information
-        current_node.wallLeft = left_wall
-        current_node.wallRight = right_wall  
-        current_node.wallFront = front_wall
-        
-        # Update distance information
-        current_node.leftDistance = left_dist
-        current_node.rightDistance = right_dist
-        current_node.frontDistance = front_dist
-        
-        # Update timing
-        current_node.lastVisited = datetime.now().isoformat()
-        current_node.visitCount += 1
-        
-        # Detect gaps for Phase 3
-        self.detect_gaps(current_node)
-        
-        # Update exploration status
-        self.update_exploration_status(current_node)
-    
-    def detect_gaps(self, node):
-        """Detect potential gaps (unexplored areas) from current node"""
-        gaps_found = []
-        
-        # Check for gaps in each direction
-        directions = ['north', 'south', 'east', 'west']
-        
-        for direction in directions:
-            if not self.is_direction_blocked(node, direction):
-                next_pos = self.get_next_position(direction)
-                next_node_id = self.get_node_id(next_pos)
-                
-                if next_node_id not in self.nodes:
-                    # This is a potential gap
-                    gaps_found.append({
-                        'position': next_pos,
-                        'direction': direction,
-                        'distance_from_origin': abs(next_pos[0]) + abs(next_pos[1]),
-                        'discovered_time': datetime.now().isoformat(),
-                        'priority': self.calculate_gap_priority(next_pos)
-                    })
-        
-        # Add new gaps to global list
-        for gap in gaps_found:
-            if gap not in self.gaps:
-                self.gaps.append(gap)
-                print(f"🔍 Gap detected at {gap['position']} via {gap['direction']}")
-    
-    def calculate_gap_priority(self, gap_position):
-        """Calculate priority for gap filling (closer = higher priority)"""
-        distance = math.sqrt((gap_position[0] - self.currentPosition[0])**2 + 
-                        (gap_position[1] - self.currentPosition[1])**2)
-        return 1.0 / (distance + 1.0)  # Higher value = higher priority
-    
-    def is_direction_blocked(self, node, direction):
-        """Check if a direction is blocked by walls"""
-        direction_map = {
-            'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
-            'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
-            'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
-            'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
-        }
-        
-        current_directions = direction_map[self.currentDirection]
-        
-        if direction == current_directions['front']:
-            return node.wallFront
-        elif direction == current_directions['left']:
-            return node.wallLeft
-        elif direction == current_directions['right']:
-            return node.wallRight
-        elif direction == current_directions['back']:
-            return node.wallBack  # Assume we can check back wall
-        
-        return False
-    
-    def update_exploration_status(self, node):
-        """Update node exploration status and frontier list"""
-        # Find unexplored exits
+        if current_node:
+            # Map relative sensor readings to absolute directions
+            direction_map = {
+                'north': {'front': 'north', 'left': 'west', 'right': 'east'},
+                'south': {'front': 'south', 'left': 'east', 'right': 'west'},
+                'east': {'front': 'east', 'left': 'north', 'right': 'south'},
+                'west': {'front': 'west', 'left': 'south', 'right': 'north'}
+            }
+            
+            current_mapping = direction_map[self.currentDirection]
+            
+            # Update absolute wall information
+            current_node.walls[current_mapping['front']] = front_wall
+            current_node.walls[current_mapping['left']] = left_wall
+            current_node.walls[current_mapping['right']] = right_wall
+            
+            # Legacy support - update old format too
+            current_node.wallFront = front_wall
+            current_node.wallLeft = left_wall
+            current_node.wallRight = right_wall
+            
+            current_node.lastVisited = datetime.now().isoformat()
+            
+            # NEW: Mark node as fully scanned
+            current_node.fullyScanned = True
+            current_node.scanTimestamp = datetime.now().isoformat()
+            
+            self.update_unexplored_exits_absolute(current_node)
+            self.build_connections()
+
+    def update_unexplored_exits_absolute(self, node):
+        """FIXED: Update unexplored exits using ABSOLUTE directions"""
         node.unexploredExits = []
         
-        directions = ['north', 'south', 'east', 'west']
-        for direction in directions:
-            if not self.is_direction_blocked(node, direction):
-                if direction not in node.exploredDirections:
-                    node.unexploredExits.append(direction)
+        x, y = node.position
         
-        # Update frontier status
-        node.isFrontier = len(node.unexploredExits) > 0
+        # Define all possible directions from this node (ABSOLUTE)
+        possible_directions = {
+            'north': (x, y + 1),
+            'south': (x, y - 1),
+            'east': (x + 1, y),
+            'west': (x - 1, y)
+        }
         
-        # Update global frontier list
-        if node.isFrontier and node.id not in [f.id for f in self.frontiers]:
-            self.frontiers.append(node)
-        elif not node.isFrontier and node.id in [f.id for f in self.frontiers]:
-            self.frontiers = [f for f in self.frontiers if f.id != node.id]
+        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
+        print(f"🔍 Wall status: {node.walls}")
         
-        # Check if dead end
-        node.isDeadEnd = (node.wallFront and node.wallLeft and node.wallRight)
+        # Check each ABSOLUTE direction for unexplored exits
+        for direction, target_pos in possible_directions.items():
+            target_node_id = self.get_node_id(target_pos)
+            
+            # Check if this direction is blocked by wall
+            is_blocked = node.walls.get(direction, True)
+            
+            # Check if already explored
+            already_explored = direction in node.exploredDirections
+            
+            # Check if target node exists and is fully explored
+            target_exists = target_node_id in self.nodes
+            target_fully_explored = False
+            if target_exists:
+                target_node = self.nodes[target_node_id]
+                target_fully_explored = target_node.fullyScanned
+            
+            print(f"   📍 Direction {direction}:")
+            print(f"      🚧 Blocked: {is_blocked}")
+            print(f"      ✅ Already explored: {already_explored}")
+            print(f"      🏗️  Target exists: {target_exists}")
+            print(f"      🔍 Target fully explored: {target_fully_explored}")
+            
+            # Add to unexplored exits if:
+            # 1. Not blocked by wall AND
+            # 2. Not already explored from this node AND
+            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
+            should_explore = (not is_blocked and 
+                            not already_explored and 
+                            (not target_exists or not target_fully_explored))
+            
+            if should_explore:
+                node.unexploredExits.append(direction)
+                print(f"      ✅ ADDED to unexplored exits!")
+            else:
+                print(f"      ❌ NOT added to unexplored exits")
+        
+        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
+        
+        # Update frontier queue
+        has_unexplored = len(node.unexploredExits) > 0
+        
+        if has_unexplored and node.id not in self.frontierQueue:
+            self.frontierQueue.append(node.id)
+            print(f"🚀 Added {node.id} to frontier queue")
+        elif not has_unexplored and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
+            print(f"🧹 Removed {node.id} from frontier queue")
+        
+        # Dead end detection using absolute directions
+        blocked_count = sum(1 for blocked in node.walls.values() if blocked)
+        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
+        node.isDeadEnd = is_dead_end
+        
+        if is_dead_end:
+            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🧹 Removed dead end {node.id} from frontier queue")
+    
+    def build_connections(self):
+        """Build connections between adjacent nodes"""
+        for node_id, node in self.nodes.items():
+            x, y = node.position
+            
+            # Check all four directions
+            directions = {
+                'north': (x, y + 1),
+                'south': (x, y - 1),
+                'east': (x + 1, y),
+                'west': (x - 1, y)
+            }
+            
+            for direction, neighbor_pos in directions.items():
+                neighbor_id = self.get_node_id(neighbor_pos)
+                if neighbor_id in self.nodes:
+                    node.neighbors[direction] = self.nodes[neighbor_id]
+    
+    def get_next_position_from(self, position, direction):
+        """Helper method to calculate next position from given position and direction"""
+        x, y = position
+        if direction == 'north':
+            return (x, y + 1)
+        elif direction == 'south':
+            return (x, y - 1)
+        elif direction == 'east':
+            return (x + 1, y)
+        elif direction == 'west':
+            return (x - 1, y)
+        return position
+    
+    def is_dead_end(self, node=None):
+        """Check if current node or given node is a dead end"""
+        if node is None:
+            node = self.get_current_node()
+        
+        if not node:
+            return False
+        
+        return node.isDeadEnd
     
     def get_next_position(self, direction):
-        """Calculate next position based on direction"""
+        """Calculate next position based on current position and ABSOLUTE direction"""
         x, y = self.currentPosition
         if direction == 'north':
             return (x, y + 1)
@@ -592,156 +421,926 @@ class HybridGraphMapper:
         elif direction == 'west':
             return (x - 1, y)
         return self.currentPosition
-
-    # ===== PHASE 1: LEFT WALL FOLLOWING =====
-    def phase1_wall_following_strategy(self):
-        """Phase 1: Left wall following strategy"""
+    
+    def get_previous_position(self, direction):
+        """Calculate previous position based on current position and direction robot came from"""
+        x, y = self.currentPosition
+        if direction == 'north':
+            return (x, y - 1)  # came from south
+        elif direction == 'south':
+            return (x, y + 1)  # came from north
+        elif direction == 'east':
+            return (x - 1, y)  # came from west
+        elif direction == 'west':
+            return (x + 1, y)  # came from east
+        return self.currentPosition
+    
+    def can_move_to_direction_absolute(self, target_direction):
+        """Check if robot can move to target ABSOLUTE direction"""
         current_node = self.get_current_node()
-        
-        print("🧱 PHASE 1: Wall Following (Left Priority)")
-        
-        # Priority: Left > Front > Right > Back
-        if not current_node.wallLeft:
-            return 'left'
-        elif not current_node.wallFront:
-            return 'front'
-        elif not current_node.wallRight:
-            return 'right'
-        else:
-            return 'back'  # Need to backtrack
-    
-    # ===== PHASE 2: FRONTIER EXPLORATION =====
-    def phase2_frontier_strategy(self):
-        """Phase 2: Strategic Frontier Exploration"""
-        print("🚀 PHASE 2: Frontier Exploration")
-        
-        if not self.frontiers:
-            return None
-        
-        # Hybrid frontier selection
-        best_frontier = self.select_best_frontier()
-        
-        if best_frontier:
-            # Find path to frontier
-            path = self.pathfinder.find_path(self.currentPosition, best_frontier.position)
-            if path and len(path) > 1:
-                next_pos = path[1]  # Next step in path
-                return self.get_direction_to_position(next_pos)
-        
-        return None
-    
-    def select_best_frontier(self):
-        """Select best frontier using hybrid criteria"""
-        if not self.frontiers:
-            return None
-        
-        scored_frontiers = []
-        
-        for frontier in self.frontiers:
-            # Distance score (closer = better)
-            distance = math.sqrt((frontier.position[0] - self.currentPosition[0])**2 + 
-                            (frontier.position[1] - self.currentPosition[1])**2)
-            distance_score = 1.0 / (distance + 1.0)
-            
-            # Unexplored exits score (more exits = better)
-            exits_score = len(frontier.unexploredExits)
-            
-            # Systematic exploration bonus (prefer unvisited areas)
-            systematic_score = 1.0 / (frontier.visitCount + 1.0)
-            
-            # Combined score
-            total_score = distance_score * 0.4 + exits_score * 0.4 + systematic_score * 0.2
-            
-            scored_frontiers.append((total_score, frontier))
-        
-        # Return highest scoring frontier
-        scored_frontiers.sort(reverse=True)
-        return scored_frontiers[0][1]
-    
-    # ===== PHASE 3: GAP FILLING =====
-    def phase3_gap_filling_strategy(self):
-        """Phase 3: Fill remaining gaps"""
-        print("🔍 PHASE 3: Gap Filling")
-        
-        if not self.gaps:
-            return None
-        
-        # Sort gaps by priority (distance from current position)
-        current_gaps = []
-        for gap in self.gaps:
-            gap_id = self.get_node_id(gap['position'])
-            if gap_id not in self.nodes:  # Still unexplored
-                distance = math.sqrt((gap['position'][0] - self.currentPosition[0])**2 + 
-                                (gap['position'][1] - self.currentPosition[1])**2)
-                current_gaps.append((distance, gap))
-        
-        if current_gaps:
-            current_gaps.sort()  # Sort by distance
-            nearest_gap = current_gaps[0][1]
-            
-            # Find path to gap
-            path = self.pathfinder.find_path(self.currentPosition, nearest_gap['position'])
-            if path and len(path) > 1:
-                next_pos = path[1]
-                return self.get_direction_to_position(next_pos)
-        
-        return None
-    
-    def get_direction_to_position(self, target_pos):
-        """Get direction to reach target position from current position"""
-        dx = target_pos[0] - self.currentPosition[0]
-        dy = target_pos[1] - self.currentPosition[1]
-        
-        if dx > 0:
-            return 'east'
-        elif dx < 0:
-            return 'west'
-        elif dy > 0:
-            return 'north'
-        elif dy < 0:
-            return 'south'
-        
-        return None
-    
-    def get_next_exploration_direction(self):
-        """Get next exploration direction based on current phase"""
-        phase = self.time_manager.current_phase
-        
-        if phase == 1:
-            return self.phase1_wall_following_strategy()
-        elif phase == 2:
-            return self.phase2_frontier_strategy()
-        elif phase == 3:
-            return self.phase3_gap_filling_strategy()
-        
-        return None
-    
-    def move_to_direction(self, target_direction, movement_controller):
-        """Execute movement to target direction"""
-        if not target_direction:
+        if not current_node:
             return False
+        
+        # Check if target direction has a wall using absolute direction
+        is_blocked = current_node.walls.get(target_direction, True)
+        return not is_blocked
+    
+    def rotate_to_absolute_direction(self, target_direction, movement_controller):
+        """NEW: Rotate robot to face target ABSOLUTE direction"""
+        global ROBOT_FACE
+        print(f"🎯 Rotating from {self.currentDirection} to {target_direction}")
+        
+        if self.currentDirection == target_direction:
+            print(f"✅ Already facing {target_direction}")
+            return
+        
+        direction_order = ['north', 'east', 'south', 'west']
+        current_idx = direction_order.index(self.currentDirection)
+        target_idx = direction_order.index(target_direction)
+        
+        # Calculate shortest rotation
+        diff = (target_idx - current_idx) % 4
+        
+        if diff == 1:  # Turn right
+            movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 1
+        elif diff == 3:  # Turn left
+            movement_controller.rotate_90_degrees_left()
+            ROBOT_FACE += 1
+        elif diff == 2:  # Turn around (180°)
+            movement_controller.rotate_90_degrees_right()
+            movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 2
+        
+        # Update current direction
+        self.currentDirection = target_direction
+        print(f"✅ Now facing {self.currentDirection}")
+
+    def handle_dead_end(self, movement_controller):
+        """Handle dead end situation by reversing"""
+        print(f"🚫 === DEAD END HANDLER ACTIVATED ===")
+        current_node = self.get_current_node()
+
+        if current_node:
+            print(f"📍 Dead end at position: {current_node.position}")
+            print(f"🧱 Walls: {current_node.walls}")
+
+        # Use the reverse method
+        movement_controller.reverse_from_dead_end()
+
+        # Update position after reversing (move back in opposite direction)
+        reverse_direction_map = {
+            'north': 'south',
+            'south': 'north',
+            'east': 'west',
+            'west': 'east'
+        }
+
+        reverse_direction = reverse_direction_map[self.currentDirection]
+        self.currentPosition = self.get_next_position(reverse_direction)
+
+        print(f"🔙 Reversed to position: {self.currentPosition}")
+        print(f"🧭 Still facing: {self.currentDirection}")
+
+        return True
+    
+    def move_to_absolute_direction(self, target_direction, movement_controller):
+        """NEW: Move to target ABSOLUTE direction with proper rotation"""
+        global ROBOT_FACE
+        print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
         
         # Check if movement is possible
-        if not self.can_move_to_direction(target_direction):
-            print(f"❌ BLOCKED! Cannot move to {target_direction}")
+        if not self.can_move_to_direction_absolute(target_direction):
+            print(f"❌ BLOCKED! Cannot move to {target_direction} - wall detected!")
             return False
         
-        # Record current position for backtracking
-        self.path_stack.append(self.currentPosition)
-        self.visited_path.append(self.currentPosition)
+        # First rotate to face the target direction
+        self.rotate_to_absolute_direction(target_direction, movement_controller)
         
-        print(f"🎯 Moving from {self.currentDirection} to {target_direction}")
+        # Determine axis for movement
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
         
-        # Calculate and execute rotation
-        self.rotate_to_direction(target_direction, movement_controller)
+        print(f"🚀 Moving forward on {axis_test}-axis")
         
         # Move forward
-        axis, direction = self.get_movement_axis_and_direction(target_direction)
-        movement_controller.move_forward_with_pid(0.6, axis, direction=direction)
+        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
         
-        # Update position and direction
+        # Update position
         self.currentPosition = self.get_next_position(target_direction)
-        self.currentDirection = target_direction
         
-        # Mark direction as explored from previous node
-        if self.path__
+        # Mark this direction as explored from the previous node
+        if hasattr(self, 'previous_node') and self.previous_node:
+            if target_direction not in self.previous_node.exploredDirections:
+                self.previous_node.exploredDirections.append(target_direction)
+            
+            # Remove from unexplored exits
+            if target_direction in self.previous_node.unexploredExits:
+                self.previous_node.unexploredExits.remove(target_direction)
+                print(f"🔄 Removed {target_direction} from unexplored exits of {self.previous_node.id}")
+        
+        print(f"✅ Successfully moved to {self.currentPosition}")
+        return True
+
+    def reverse_to_absolute_direction(self, target_direction, movement_controller):
+        """NEW: Reverse to target ABSOLUTE direction for backtracking"""
+        global ROBOT_FACE
+        print(f"🔙 BACKTRACK: Reversing to ABSOLUTE direction: {target_direction}")
+        
+        # Calculate what direction we need to reverse to
+        reverse_direction_map = {
+            'north': 'south',
+            'south': 'north',
+            'east': 'west',
+            'west': 'east'
+        }
+        
+        required_facing_direction = reverse_direction_map[target_direction]
+        
+        # First rotate to face the direction OPPOSITE to where we want to go
+        self.rotate_to_absolute_direction(required_facing_direction, movement_controller)
+        
+        # Now reverse (which will move us in the target direction)
+        movement_controller.reverse_to_previous_node()
+        
+        # Update position
+        self.currentPosition = self.get_next_position(target_direction)
+        
+        print(f"✅ Successfully reversed to {self.currentPosition}, still facing {self.currentDirection}")
+        return True
+    
+    def find_next_exploration_direction(self):
+        """Find the next ABSOLUTE direction to explore"""
+        current_node = self.get_current_node()
+        if not current_node:
+            return None
+        
+        if self.is_dead_end(current_node):
+            print(f"🚫 Current node is a dead end - no exploration directions available")
+            return None
+        
+        # Return first unexplored exit (now using absolute directions)
+        if current_node.unexploredExits:
+            for unexplored_dir in current_node.unexploredExits:
+                if self.can_move_to_direction_absolute(unexplored_dir):
+                    return unexplored_dir
+        
+        return None
+    
+    def find_path_to_frontier(self, target_node_id):
+        """Find shortest path to frontier node using BFS"""
+        if target_node_id not in self.nodes:
+            return None
+        
+        # BFS to find shortest path
+        queue = deque([(self.currentPosition, [])])
+        visited = set()
+        visited.add(self.currentPosition)
+        
+        while queue:
+            current_pos, path = queue.popleft()
+            current_node_id = self.get_node_id(current_pos)
+            
+            # Check if we reached the target
+            if current_node_id == target_node_id:
+                return path
+            
+            # Explore neighbors
+            if current_node_id in self.nodes:
+                current_node = self.nodes[current_node_id]
+                x, y = current_pos
+                
+                # Check all four directions
+                directions = {
+                    'north': (x, y + 1),
+                    'south': (x, y - 1), 
+                    'east': (x + 1, y),
+                    'west': (x - 1, y)
+                }
+                
+                for direction, neighbor_pos in directions.items():
+                    neighbor_id = self.get_node_id(neighbor_pos)
+                    
+                    if (neighbor_pos not in visited and 
+                        neighbor_id in self.nodes and
+                        self.is_path_clear_absolute(current_pos, neighbor_pos, direction)):
+                        
+                        visited.add(neighbor_pos)
+                        new_path = path + [direction]
+                        queue.append((neighbor_pos, new_path))
+        
+        return None  # No path found
+    
+    def is_path_clear_absolute(self, from_pos, to_pos, direction):
+        """Check if path between two adjacent nodes is clear using absolute directions"""
+        from_node_id = self.get_node_id(from_pos)
+        to_node_id = self.get_node_id(to_pos)
+        
+        if from_node_id not in self.nodes or to_node_id not in self.nodes:
+            return False
+        
+        from_node = self.nodes[from_node_id]
+        
+        # Check if there's a wall blocking the path in absolute direction
+        is_blocked = from_node.walls.get(direction, True)
+        return not is_blocked
+    
+    def execute_path_to_frontier_with_reverse(self, path, movement_controller):
+        """NEW: Execute path using reverse movements for backtracking"""
+        print(f"🗺️ Executing REVERSE path to frontier: {path}")
+        
+        for i, step_direction in enumerate(path):
+            print(f"📍 Step {i+1}/{len(path)}: Current position: {self.currentPosition}, moving {step_direction}")
+            
+            # Use reverse movement for backtracking (more efficient)
+            success = self.reverse_to_absolute_direction(step_direction, movement_controller)
+            
+            if not success:
+                print(f"❌ Failed to reverse {step_direction} during backtracking!")
+                return False
+            
+            time.sleep(0.2)  # Brief pause between moves
+        
+        print(f"✅ Successfully reached frontier at {self.currentPosition}")
+        return True
+    
+    def find_nearest_frontier(self):
+        """Find frontier with better validation and prioritization"""
+        print("🔍 === FINDING NEAREST FRONTIER ===")
+        
+        if not self.frontierQueue:
+            print("🔄 No frontiers in queue - rebuilding...")
+            self.rebuild_frontier_queue()
+            
+            if not self.frontierQueue:
+                print("🎉 No unexplored areas found - exploration complete!")
+                return None, None, None
+        
+        # Validate and prioritize frontiers
+        valid_frontiers = []
+        
+        print(f"🔍 Checking {len(self.frontierQueue)} frontier candidates...")
+        
+        for frontier_id in self.frontierQueue[:]:
+            if frontier_id not in self.nodes:
+                print(f"❌ Removing non-existent frontier {frontier_id}")
+                continue
+                
+            frontier_node = self.nodes[frontier_id]
+            
+            # Re-validate unexplored exits
+            print(f"\n🔍 Validating frontier {frontier_id} at {frontier_node.position}:")
+            print(f"   📋 Claimed unexplored exits: {frontier_node.unexploredExits}")
+            
+            # Re-check each unexplored exit
+            valid_exits = []
+            for exit_direction in frontier_node.unexploredExits[:]:
+                target_pos = self.get_next_position_from(frontier_node.position, exit_direction)
+                target_node_id = self.get_node_id(target_pos)
+                
+                # Check if this exit is still valid
+                target_exists = target_node_id in self.nodes
+                if target_exists:
+                    target_node = self.nodes[target_node_id]
+                    target_fully_explored = target_node.fullyScanned
+                    print(f"      🎯 {exit_direction} -> {target_pos}: exists={target_exists}, fully_explored={target_fully_explored}")
+                    
+                    # Only consider it unexplored if target doesn't exist or isn't fully explored
+                    if not target_fully_explored:
+                        valid_exits.append(exit_direction)
+                        print(f"         ✅ Still valid for exploration")
+                    else:
+                        print(f"         ❌ Target already fully explored")
+                else:
+                    valid_exits.append(exit_direction)
+                    print(f"      🎯 {exit_direction} -> {target_pos}: NEW AREA - valid for exploration")
+            
+            # Update the node's unexplored exits with validated list
+            frontier_node.unexploredExits = valid_exits
+            
+            if valid_exits:
+                valid_frontiers.append(frontier_id)
+                print(f"   ✅ Frontier {frontier_id} is VALID with exits: {valid_exits}")
+            else:
+                print(f"   ❌ Frontier {frontier_id} has NO valid unexplored exits")
+        
+        # Update frontier queue with only valid frontiers
+        self.frontierQueue = valid_frontiers
+        
+        if not valid_frontiers:
+            print("🎉 No valid frontiers remaining - exploration complete!")
+            return None, None, None
+        
+        print(f"\n🎯 Found {len(valid_frontiers)} valid frontiers: {valid_frontiers}")
+        
+        # Find the nearest valid frontier
+        best_frontier = None
+        best_direction = None
+        shortest_path = None
+        min_distance = float('inf')
+        
+        for frontier_id in valid_frontiers:
+            frontier_node = self.nodes[frontier_id]
+            
+            # Find path to this frontier
+            path = self.find_path_to_frontier(frontier_id)
+            
+            if path is not None:
+                distance = len(path)
+                print(f"   📍 {frontier_id}: distance={distance}, exits={frontier_node.unexploredExits}")
+                
+                if distance < min_distance:
+                    min_distance = distance
+                    best_frontier = frontier_id
+                    best_direction = frontier_node.unexploredExits[0]  # Take first unexplored direction
+                    shortest_path = path
+            else:
+                print(f"   ❌ {frontier_id}: No path found!")
+        
+        if best_frontier:
+            print(f"\n🏆 SELECTED: {best_frontier} with direction {best_direction} (distance: {min_distance})")
+            print(f"🗺️ Path: {shortest_path}")
+        else:
+            print(f"\n❌ No reachable frontiers found!")
+        
+        return best_frontier, best_direction, shortest_path
+    
+    def rebuild_frontier_queue(self):
+        """Rebuild frontier queue with comprehensive validation"""
+        print("🔄 === REBUILDING FRONTIER QUEUE ===")
+        self.frontierQueue = []
+        
+        for node_id, node in self.nodes.items():
+            print(f"\n🔍 Checking node {node_id} at {node.position}:")
+            
+            # Re-validate unexplored exits for this node
+            valid_exits = []
+            
+            if hasattr(node, 'unexploredExits'):
+                print(f"   📋 Current unexplored exits: {node.unexploredExits}")
+                
+                for exit_direction in node.unexploredExits:
+                    target_pos = self.get_next_position_from(node.position, exit_direction)
+                    target_node_id = self.get_node_id(target_pos)
+                    
+                    # Validate this exit
+                    target_exists = target_node_id in self.nodes
+                    if target_exists:
+                        target_node = self.nodes[target_node_id]
+                        if not target_node.fullyScanned:
+                            valid_exits.append(exit_direction)
+                            print(f"      ✅ {exit_direction} -> {target_pos}: Target not fully explored")
+                        else:
+                            print(f"      ❌ {exit_direction} -> {target_pos}: Target already fully explored")
+                    else:
+                        valid_exits.append(exit_direction)
+                        print(f"      ✅ {exit_direction} -> {target_pos}: NEW AREA")
+            
+            # Update node's unexplored exits with validated list
+            node.unexploredExits = valid_exits
+            
+            # Add to frontier queue if it has valid unexplored exits
+            if valid_exits:
+                self.frontierQueue.append(node_id)
+                print(f"   🚀 ADDED to frontier queue with exits: {valid_exits}")
+            else:
+                print(f"   ❌ No valid unexplored exits - not added to frontier")
+        
+        print(f"\n✅ Frontier queue rebuilt: {len(self.frontierQueue)} frontiers found")
+        print(f"🎯 Active frontiers: {self.frontierQueue}")
+    
+    def print_graph_summary(self):
+        print("\n" + "="*60)
+        print("📊 GRAPH MAPPING SUMMARY")
+        print("="*60)
+        print(f"🤖 Current Position: {self.currentPosition}")
+        print(f"🧭 Current Direction: {self.currentDirection}")
+        print(f"🗺️  Total Nodes: {len(self.nodes)}")
+        print(f"🚀 Frontier Queue: {len(self.frontierQueue)} nodes")
+        print("-"*60)
+        
+        for node_id, node in self.nodes.items():
+            print(f"\n📍 Node: {node.id} at {node.position}")
+            print(f"   🔍 Fully Scanned: {node.fullyScanned}")
+            print(f"   🧱 Walls (absolute): {node.walls}")
+            print(f"   🔍 Unexplored exits: {node.unexploredExits}")
+            print(f"   ✅ Explored directions: {node.exploredDirections}")
+            print(f"   🎯 Is dead end: {node.isDeadEnd}")
+            
+            if node.sensorReadings:
+                print(f"   📡 Sensor readings:")
+                for direction, reading in node.sensorReadings.items():
+                    print(f"      {direction}: {reading:.2f}cm")
+        
+        print("-"*60)
+        if self.frontierQueue:
+            print(f"🚀 Next exploration targets: {self.frontierQueue}")
+        else:
+            print("🎉 EXPLORATION COMPLETE - No more frontiers!")
+        print("="*60)
+
+# ===== ToF Sensor Handler =====
+class ToFSensorHandler:
+    def __init__(self):
+        self.CALIBRATION_SLOPE = 0.0894 
+        self.CALIBRATION_Y_INTERCEPT = 3.8409
+        self.WINDOW_SIZE = 5
+        self.tof_buffer = []
+        self.WALL_THRESHOLD = 50.00
+        
+        self.readings = {
+            'front': [],
+            'left': [],
+            'right': []
+        }
+        
+        self.current_scan_direction = None
+        self.collecting_data = False
+        
+    def calibrate_tof_value(self, raw_tof_mm):
+        calibrated_cm = (self.CALIBRATION_SLOPE * raw_tof_mm) + self.CALIBRATION_Y_INTERCEPT
+        return calibrated_cm
+    
+    def apply_median_filter(self, data, window_size):
+        if len(data) == 0:
+            return 0.0 
+        if len(data) < window_size:
+            return data[-1] 
+        else:
+            filtered = median_filter(data[-window_size:], size=window_size)
+            return filtered[-1]
+    
+    def tof_data_handler(self, sub_info):
+        if not self.collecting_data or not self.current_scan_direction:
+            return
+            
+        raw_tof_mm = sub_info[0]
+        
+        if raw_tof_mm <= 0 or raw_tof_mm > 4000:
+            return
+            
+        calibrated_tof_cm = self.calibrate_tof_value(raw_tof_mm)
+        self.tof_buffer.append(calibrated_tof_cm)
+        filtered_tof_cm = self.apply_median_filter(self.tof_buffer, self.WINDOW_SIZE)
+        
+        if len(self.tof_buffer) <= 20:
+            self.readings[self.current_scan_direction].append({
+                'filtered_cm': filtered_tof_cm,
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        wall_status = "🧱 WALL" if filtered_tof_cm <= self.WALL_THRESHOLD else "🚪 OPEN"
+        print(f"[{self.current_scan_direction.upper()}] {filtered_tof_cm:.2f}cm {wall_status}")
+    
+    def start_scanning(self, direction):
+        self.current_scan_direction = direction
+        self.tof_buffer.clear()
+        if direction not in self.readings:
+            self.readings[direction] = []
+        else:
+            self.readings[direction].clear()
+        self.collecting_data = True
+        
+    def stop_scanning(self, unsub_distance_func):
+        self.collecting_data = False
+        try:
+            unsub_distance_func()
+        except:
+            pass
+    
+    def get_average_distance(self, direction):
+        if direction not in self.readings or len(self.readings[direction]) == 0:
+            return 0.0
+        
+        filtered_values = [reading['filtered_cm'] for reading in self.readings[direction]]
+        
+        if len(filtered_values) > 4:
+            q1 = np.percentile(filtered_values, 25)
+            q3 = np.percentile(filtered_values, 75)
+            iqr = q3 - q1
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            
+            filtered_values = [x for x in filtered_values if lower_bound <= x <= upper_bound]
+        
+        return np.mean(filtered_values) if filtered_values else 0.0
+    
+    def is_wall_detected(self, direction):
+        avg_distance = self.get_average_distance(direction)
+        is_wall = avg_distance <= self.WALL_THRESHOLD and avg_distance > 0
+        
+        print(f"🔍 Wall check [{direction.upper()}]: {avg_distance:.2f}cm -> {'WALL' if is_wall else 'OPEN'}")
+        
+        return is_wall
+
+# ===== Main Exploration Functions =====
+def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
+    """NEW: Scan current node and update graph with ABSOLUTE directions"""
+    print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
+    
+    current_node = graph_mapper.create_node(graph_mapper.currentPosition)
+    
+    # Check if node has been fully scanned before
+    if current_node.fullyScanned:
+        print(f"🔄 Node {current_node.id} already fully scanned - using cached data!")
+        print(f"   🧱 Cached walls (absolute): {current_node.walls}")
+        print(f"   🔍 Cached unexplored exits: {current_node.unexploredExits}")
+        if current_node.sensorReadings:
+            print(f"   📡 Cached sensor readings:")
+            for direction, reading in current_node.sensorReadings.items():
+                print(f"      {direction}: {reading:.2f}cm")
+        print("⚡ Skipping physical scan - using cached data")
+        return current_node.sensorReadings
+    
+    # Only scan if node hasn't been fully scanned before
+    print(f"🆕 First time visiting node {current_node.id} - performing full scan")
+    print(f"🧭 Robot currently facing: {graph_mapper.currentDirection}")
+    
+    # Lock wheels
+    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+    time.sleep(0.2)
+    
+    speed = 480
+    scan_results = {}
+    
+    # Scan front (0°)
+    print("🔍 Scanning FRONT (0°)...")
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.2)
+    
+    tof_handler.start_scanning('front')
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.2)
+    tof_handler.stop_scanning(sensor.unsub_distance)
+    
+    front_distance = tof_handler.get_average_distance('front')
+    front_wall = tof_handler.is_wall_detected('front')
+    scan_results['front'] = front_distance
+    
+    print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
+    
+    front_wall = tof_handler.is_wall_detected('front')
+    if front_wall  < 0.02:
+        chassis.move(x=-0.05, y=0, z=0).wait_for_completed()
+        time.sleep(0.5)
+    
+    # Scan left (physical: -90°)
+    print("🔍 Scanning LEFT (physical: -90°)...")
+    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.2)
+    
+    tof_handler.start_scanning('left')
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.2)
+    tof_handler.stop_scanning(sensor.unsub_distance)
+    
+    left_distance = tof_handler.get_average_distance('left')
+    left_wall = tof_handler.is_wall_detected('left')
+    scan_results['left'] = left_distance
+    
+    print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
+    
+    left_wall = tof_handler.is_wall_detected('left')
+    if left_wall  < 0.02:
+        print(f"⚠️ TOO CLOSE TO LEFT WALL ({left_distance:.1f}cm) - Moving right")
+        chassis.move(x=0, y=0.05, z=0).wait_for_completed()
+        time.sleep(0.5)
+
+    # Scan right (physical: 90°)
+    print("🔍 Scanning RIGHT (physical: 90°)...")
+    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.2)
+    
+    tof_handler.start_scanning('right')
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.2)
+    tof_handler.stop_scanning(sensor.unsub_distance)
+    
+    right_distance = tof_handler.get_average_distance('right')
+    right_wall = tof_handler.is_wall_detected('right')
+    scan_results['right'] = right_distance
+    
+    print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+    right_wall = tof_handler.is_wall_detected('right') 
+    if right_wall < 0.02:
+        print(f"⚠️ TOO CLOSE TO RIGHT WALL ({right_distance:.1f}cm) - Moving left")
+        chassis.move(x=0, y=-0.05, z=0).wait_for_completed()
+        time.sleep(0.5)
+    # Return to center
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.2)
+    
+    # Unlock wheels
+    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
+    time.sleep(0.2)
+    
+    # NEW: Update graph with wall information using ABSOLUTE directions
+    graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
+    current_node.sensorReadings = scan_results
+    
+    print(f"✅ Node {current_node.id} scan complete:")
+    print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
+    print(f"   🧱 Walls stored (absolute): {current_node.walls}")
+    print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    
+    return scan_results
+
+def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
+    """NEW: Main autonomous exploration using ABSOLUTE directions and reverse backtracking"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH ABSOLUTE DIRECTIONS ===")
+    print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
+    print("⚡ OPTIMIZATION: Previously scanned nodes will NOT be re-scanned!")
+    print("🔙 NEW: Backtracking uses REVERSE movement (no 180° turns)!")
+    print("🧭 ENHANCED: Uses ABSOLUTE directions (North is always North)!")
+    
+    nodes_explored = 0
+    scanning_iterations = 0
+    dead_end_reversals = 0
+    backtrack_attempts = 0
+    reverse_backtracks = 0
+    
+    while nodes_explored < max_nodes:
+        print(f"\n{'='*50}")
+        print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
+        print(f"🤖 Current position: {graph_mapper.currentPosition}")
+        print(f"🧭 Current direction (absolute): {graph_mapper.currentDirection}")
+        print(f"{'='*50}")
+        
+        # Check if current node needs scanning
+        current_node = graph_mapper.create_node(graph_mapper.currentPosition)
+        
+        if not current_node.fullyScanned:
+            print("🔍 NEW NODE - Performing full scan...")
+            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper)
+            scanning_iterations += 1
+            
+            # Check if this scan revealed a dead end
+            if graph_mapper.is_dead_end(current_node):
+                print(f"🚫 DEAD END DETECTED after scanning!")
+                print(f"🔙 Initiating reverse maneuver...")
+                
+                success = graph_mapper.handle_dead_end(movement_controller)
+                if success:
+                    dead_end_reversals += 1
+                    print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
+                    nodes_explored += 1  # Count the dead end node
+                    continue
+                else:
+                    print(f"❌ Failed to reverse from dead end!")
+                    break
+        else:
+            print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
+            # Update unexplored exits properly for revisited nodes
+            graph_mapper.update_unexplored_exits_absolute(current_node)
+            graph_mapper.build_connections()
+        
+        nodes_explored += 1
+        
+        # Print current graph state
+        graph_mapper.print_graph_summary()
+        
+        # Find next direction to explore
+        graph_mapper.previous_node = current_node
+        
+        # STEP 1: Try to find unexplored direction from current node
+        next_direction = graph_mapper.find_next_exploration_direction()
+        
+        if next_direction:
+            print(f"\n🎯 Next exploration direction (absolute): {next_direction}")
+            
+            # Double-check wall detection before moving
+            can_move = graph_mapper.can_move_to_direction_absolute(next_direction)
+            print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
+            
+            if can_move:
+                try:
+                    # Move to next direction using absolute direction system
+                    success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller)
+                    if success:
+                        print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
+                        time.sleep(0.2)
+                        continue
+                    else:
+                        print(f"❌ Movement failed - wall detected!")
+                        # Remove this direction from unexplored exits
+                        if current_node and next_direction in current_node.unexploredExits:
+                            current_node.unexploredExits.remove(next_direction)
+                        continue
+                    
+                except Exception as e:
+                    print(f"❌ Error during movement: {e}")
+                    break
+            else:
+                print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
+                # Remove this direction from unexplored exits
+                if current_node and next_direction in current_node.unexploredExits:
+                    current_node.unexploredExits.remove(next_direction)
+                continue
+        
+        # STEP 2: No local exploration possible - try smart backtracking with REVERSE
+        print(f"\n🔍 No unexplored directions from current node")
+        print(f"🔙 Attempting REVERSE BACKTRACK to nearest frontier...")
+        backtrack_attempts += 1
+        
+        frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
+        
+        if frontier_id and path is not None and frontier_direction:
+            print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
+            print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
+            print("🔙 REVERSE BACKTRACK: Using reverse movements (no 180° turns)!")
+            
+            try:
+                # Execute backtracking path using REVERSE movements
+                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller)
+                
+                if success:
+                    reverse_backtracks += 1
+                    print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
+                    print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
+                    time.sleep(0.2)
+                    
+                    # The next iteration will handle the frontier node
+                    continue
+                    
+                else:
+                    print(f"❌ Failed to execute reverse backtracking path!")
+                    break
+                    
+            except Exception as e:
+                print(f"❌ Error during reverse backtracking: {e}")
+                break
+        else:
+            # STEP 3: No frontiers found - exploration complete
+            print("🎉 No more frontiers found!")
+            
+            # FINAL CHECK: Rebuild frontier queue and try one more time
+            print("🔄 Performing final frontier scan...")
+            graph_mapper.rebuild_frontier_queue()
+            
+            if graph_mapper.frontierQueue:
+                print(f"🚀 Found {len(graph_mapper.frontierQueue)} missed frontiers - continuing...")
+                continue
+            else:
+                print("🎉 EXPLORATION DEFINITELY COMPLETE - No more areas to explore!")
+                break
+        
+        # Safety check - prevent infinite loops
+        if nodes_explored >= max_nodes:
+            print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
+            break
+    
+    print(f"\n🎉 === EXPLORATION COMPLETED ===")
+    print(f"📊 PERFORMANCE SUMMARY:")
+    print(f"   🗺️ Total nodes visited: {nodes_explored}")
+    print(f"   🔍 Physical scans performed: {scanning_iterations}")
+    print(f"   🔙 Dead end reversals: {dead_end_reversals}")
+    print(f"   🔄 Backtrack attempts: {backtrack_attempts}")
+    print(f"   🔙 Reverse backtracks: {reverse_backtracks}")
+    print(f"   ⚡ Scans saved by caching: {nodes_explored - scanning_iterations}")
+    if nodes_explored > 0:
+        print(f"   📈 Efficiency gain: {((nodes_explored - scanning_iterations) / nodes_explored * 100):.1f}% less scanning")
+    print(f"   🎯 Reverse movement efficiency: {reverse_backtracks} efficient backtracks")
+    
+    graph_mapper.print_graph_summary()
+    
+    # Generate final exploration report
+    generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks)
+
+def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0):
+    """Generate comprehensive exploration report with absolute direction info"""
+    print(f"\n{'='*60}")
+    print("📋 FINAL EXPLORATION REPORT (ABSOLUTE DIRECTIONS)")
+    print(f"{'='*60}")
+    
+    # Basic statistics
+    total_nodes = len(graph_mapper.nodes)
+    dead_ends = sum(1 for node in graph_mapper.nodes.values() if node.isDeadEnd)
+    frontier_nodes = len(graph_mapper.frontierQueue)
+    fully_scanned_nodes = sum(1 for node in graph_mapper.nodes.values() if node.fullyScanned)
+    
+    print(f"📊 STATISTICS:")
+    print(f"   🏁 Total nodes explored: {total_nodes}")
+    print(f"   🎯 Node visits: {nodes_explored}")
+    print(f"   🔍 Fully scanned nodes: {fully_scanned_nodes}")
+    print(f"   🚫 Dead ends found: {dead_ends}")
+    print(f"   🔙 Dead end reversals performed: {dead_end_reversals}")
+    print(f"   🔙 Reverse backtracks performed: {reverse_backtracks}")
+    print(f"   🚀 Remaining frontiers: {frontier_nodes}")
+    
+    # Efficiency metrics
+    revisited_nodes = nodes_explored - total_nodes
+    if revisited_nodes > 0:
+        print(f"   🔄 Node revisits (backtracking): {revisited_nodes}")
+        print(f"   ⚡ Scans saved by caching: {revisited_nodes}")
+        print(f"   📈 Scanning efficiency: {(revisited_nodes / nodes_explored * 100):.1f}% improvement")
+    
+    # Map boundaries
+    if graph_mapper.nodes:
+        positions = [node.position for node in graph_mapper.nodes.values()]
+        min_x = min(pos[0] for pos in positions)
+        max_x = max(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        max_y = max(pos[1] for pos in positions)
+        
+        print(f"\n🗺️ MAP BOUNDARIES:")
+        print(f"   X range: {min_x} to {max_x} (width: {max_x - min_x + 1})")
+        print(f"   Y range: {min_y} to {max_y} (height: {max_y - min_y + 1})")
+    
+    # Wall statistics using absolute directions
+    wall_stats = {'north': 0, 'south': 0, 'east': 0, 'west': 0}
+    opening_stats = {'north': 0, 'south': 0, 'east': 0, 'west': 0}
+    
+    for node in graph_mapper.nodes.values():
+        if hasattr(node, 'walls') and node.walls:
+            for direction, is_wall in node.walls.items():
+                if is_wall:
+                    wall_stats[direction] += 1
+                else:
+                    opening_stats[direction] += 1
+    
+    print(f"\n🧱 WALL ANALYSIS (ABSOLUTE DIRECTIONS):")
+    total_walls = sum(wall_stats.values())
+    total_openings = sum(opening_stats.values())
+    
+    print(f"   Total walls detected: {total_walls}")
+    print(f"   Total openings detected: {total_openings}")
+    if (total_walls + total_openings) > 0:
+        print(f"   Wall density: {total_walls/(total_walls+total_openings)*100:.1f}%")
+    
+    print(f"   Walls by direction:")
+    for direction in ['north', 'south', 'east', 'west']:
+        total_dir = wall_stats[direction] + opening_stats[direction]
+        if total_dir > 0:
+            wall_pct = wall_stats[direction] / total_dir * 100
+            print(f"      {direction.upper()}: {wall_stats[direction]} walls, {opening_stats[direction]} openings ({wall_pct:.1f}% walls)")
+    
+    # Movement efficiency summary
+    print(f"\n🔙 MOVEMENT EFFICIENCY:")
+    print(f"   Dead end reversals: {dead_end_reversals}")
+    print(f"   Reverse backtracks: {reverse_backtracks}")
+    print(f"   Total reverse movements: {dead_end_reversals + reverse_backtracks}")
+    print(f"   Time saved vs 180° turns: ~{(dead_end_reversals + reverse_backtracks) * 2:.1f} seconds")
+    
+    # Unexplored areas
+    if graph_mapper.frontierQueue:
+        print(f"\n🔍 UNEXPLORED AREAS:")
+        for frontier_id in graph_mapper.frontierQueue:
+            node = graph_mapper.nodes[frontier_id]
+            print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
+    
+    print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
+    print(f"   🧭 Consistent navigation regardless of robot orientation")
+    print(f"   🔙 Efficient reverse movements for backtracking")
+    print(f"   📍 Accurate wall mapping using global coordinates")
+    print(f"   🎯 Reliable frontier detection and path planning")
+    
+    print(f"\n{'='*60}")
+    print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
+    print(f"{'='*60}")
+
+if __name__ == '__main__':
+    print("🤖 Connecting to robot...")
+    ep_robot = robot.Robot()
+    ep_robot.initialize(conn_type="ap")
+    
+    ep_gimbal = ep_robot.gimbal
+    ep_chassis = ep_robot.chassis
+    ep_sensor = ep_robot.sensor
+    
+    # Initialize components
+    tof_handler = ToFSensorHandler()
+    graph_mapper = GraphMapper()
+    movement_controller = MovementController(ep_chassis)
+    
+    try:
+        print("✅ Recalibrating gimbal...")
+        ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
+        ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
+        time.sleep(1)
+        
+        print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
+        print("🧭 ABSOLUTE DIRECTIONS: North is always North, regardless of robot facing!")
+        print("🔙 REVERSE BACKTRACKING: Efficient movement without 180° turns!")
+        print("⚡ SMART CACHING: Previously scanned nodes reuse cached data!")
+        
+        # Start autonomous exploration with absolute directions
+        explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
+                        graph_mapper, movement_controller, max_nodes=49)
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted by user")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        try:
+            ep_sensor.unsub_distance()
+            movement_controller.cleanup()
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 Connection closed")
