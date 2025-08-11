@@ -358,12 +358,15 @@ class MarkerVisionHandler:
         if event != vision.EVENT_MARKER:
             return
         
+        print(f"🔍 Marker callback triggered! Event: {event}, Info length: {len(info) if info else 0}")
+        
         # เคลียร์ markers เก่า
         self.markers.clear()
         
         # เก็บ markers ใหม่จาก info
         for m in info:
             self.markers.append(m)
+            print(f"   📍 Found marker ID: {m.id} at position ({m.x:.3f}, {m.y:.3f}), size: {m.w:.3f}x{m.h:.3f}")
         
         # เมื่อเจอ marker ให้เปลี่ยน self.marker เป็น True
         if len(self.markers) > 0:
@@ -416,9 +419,40 @@ if __name__ == '__main__':
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         print(f"🎯 ใช้ Calibration: slope={tof_handler.CALIBRATION_SLOPE}, intercept={tof_handler.CALIBRATION_Y_INTERCEPT}")
         
-        # เริ่มสตรีมกล้อง และ subscribe marker
-        ep_camera.start_video_stream(display=False, resolution=camera.STREAM_360P)  # ลดความละเอียดเพื่อความเร็ว
+        # เริ่มสตรีมกล้อง และ subscribe marker detection
+        print("📷 กำลังเริ่มกล้องและ marker detection...")
+        ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)  # กลับไปใช้ 720P สำหรับ marker detection
+        time.sleep(1)  # รอให้กล้องเริ่มทำงาน
+        
+        # Subscribe marker detection
         ep_vision.sub_detect_info(name="marker", callback=marker_handler.marker_callback)
+        print("✅ Marker detection เริ่มทำงานแล้ว")
+        
+        # ทดสอบ marker detection ก่อนสแกน ToF
+        print("\n🔍 ทดสอบ marker detection ก่อน...")
+        for test_i in range(50):
+            try:
+                img = ep_camera.read_cv2_image(timeout=0.2)
+                if img is not None:
+                    marker_handler.draw_markers_on_image(img)
+                    cv2.imshow("Pre-scan Marker Test", img)
+                    
+                    if len(marker_handler.markers) > 0:
+                        print(f"✅ เจอ marker! จำนวน: {len(marker_handler.markers)}")
+                        for m in marker_handler.markers:
+                            print(f"   - Marker ID: {m.id}, pos: ({m.x:.2f}, {m.y:.2f})")
+                        break
+                    elif test_i % 10 == 0:
+                        print(f"   ยังไม่เจอ marker... ({test_i+1}/50)")
+                        
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+                    
+            except Exception as e:
+                print(f"Camera error: {e}")
+                break
+        
+        print(f"🔖 Pre-scan marker status: {marker_handler.marker}")
         
         # เริ่มสแกน Map Node ปัจจุบัน
         scan_results = graph_mapping_scan_sequence(ep_gimbal, ep_chassis, ep_sensor, tof_handler, graph_mapper)
