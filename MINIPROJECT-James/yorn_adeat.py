@@ -1,6 +1,6 @@
 import time
 import robomaster
-from robomaster import robot, vision
+from robomaster import robot
 import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
@@ -43,10 +43,10 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.9
+        self.KP = 1.5
         self.KI = 0.3
-        self.KD = 10
-        self.RAMP_UP_TIME = 0.5
+        self.KD = 4
+        self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
@@ -106,21 +106,21 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
                 else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.02:
+                if abs(relative_position - target_distance) < 0.017:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
-                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
-                    time.sleep(0.2)
+                    # time.sleep(0.2)
                     break
                     
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
-            self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+            # self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
     
     def rotate_90_degrees_right(self):
         """Rotate 90 degrees clockwise"""
@@ -166,177 +166,7 @@ class MovementController:
         except:
             pass
 
-# ===== Marker Detection Classes =====
-class MarkerInfo:
-    """ข้อมูล Marker ที่ตรวจพบ"""
-    def __init__(self, x, y, w, h, marker_id):
-        self._x = x
-        self._y = y
-        self._w = w
-        self._h = h
-        self._id = marker_id
-
-    @property
-    def id(self):
-        return self._id
-
-class MarkerVisionHandler:
-    def __init__(self, graph_mapper):
-        self.graph_mapper = graph_mapper
-        self.markers = []  # เก็บ marker ที่ detect ล่าสุด
-        self.marker_detected = False  # ตัวแปรสถานะการเจอ marker
-        self.detection_count = 0  # นับจำนวนครั้งที่เจอ marker
-        self.first_detection = True  # ตรวจสอบการเจอครั้งแรก
-        self.MAX_DETECTION_DISTANCE = 40.0  # ระยะห่างสูงสุดที่จะนับว่าเจอ marker (cm)
-        self.pending_markers = []  # เก็บ marker ที่เจอแต่ไกลเกิน 40cm สำหรับ node ถัดไป
-        self.is_active = False  # สถานะการทำงานของ vision system
-    
-    def calculate_marker_distance(self, marker_width, marker_height):
-        """คำนวณระยะห่างของ marker จากขนาดที่ตรวจพบ (ประมาณการ)"""
-        # ใช้ขนาดเฉลี่ยของ marker เป็นตัวประมาณ
-        # สมมติว่า marker มีขนาดจริง 10cm และระยะห่างแปรผกผันกับขนาดที่เห็น
-        REAL_MARKER_SIZE_CM = 10.0  # ขนาดจริงของ marker (cm)
-        CAMERA_FOCAL_LENGTH = 700   # ค่าประมาณของ focal length
-        
-        # ใช้ขนาดเฉลี่ย (width + height) / 2 เป็นตัวคำนวณ
-        apparent_size = (marker_width + marker_height) / 2
-        
-        if apparent_size <= 0:
-            return float('inf')  # ถ้าขนาด marker ผิดปกติ ให้ถือว่าอยู่ไกลมาก
-        
-        # คำนวณระยะห่างประมาณ (cm)
-        estimated_distance = (REAL_MARKER_SIZE_CM * CAMERA_FOCAL_LENGTH) / (apparent_size * 1000)
-        return estimated_distance
-
-    def on_detect_marker(self, marker_info):
-        """Callback function สำหรับ marker detection (ตรวจจับตลอดเวลา)"""
-        if not self.is_active:
-            return
-            
-        number = len(marker_info)
-        valid_markers = []  # เก็บ marker ที่อยู่ในระยะที่ยอมรับได้
-        far_markers = []    # เก็บ marker ที่อยู่ไกลเกิน 40cm
-        
-        if number > 0:
-            # ตรวจสอบแต่ละ marker
-            for i in range(number):
-                x, y, w, h, marker_id = marker_info[i]
-                
-                # คำนวณระยะห่างประมาณ
-                estimated_distance = self.calculate_marker_distance(w, h)
-                
-                # แบ่งประเภท marker ตามระยะห่าง
-                if estimated_distance <= self.MAX_DETECTION_DISTANCE:
-                    marker = MarkerInfo(x, y, w, h, marker_id)
-                    valid_markers.append(marker)
-                    print(f"🔖 NEAR Marker ID {marker_id}: ~{estimated_distance:.1f}cm (size: {w}x{h})")
-                else:
-                    # marker ไกลเกิน 40cm - เก็บไว้สำหรับ node ถัดไป
-                    far_markers.append({
-                        'id': marker_id,
-                        'position': (x, y),
-                        'size': (w, h),
-                        'distance': estimated_distance
-                    })
-                    print(f"📡 FAR Marker ID {marker_id}: ~{estimated_distance:.1f}cm (pending for next node)")
-            
-            # จัดการ marker ที่อยู่ในระยะใกล้ (≤ 40cm)
-            if valid_markers:
-                self.marker_detected = True
-                self.detection_count += 1
-                self.markers = valid_markers
-                
-                # อัปเดต node ปัจจุบัน
-                current_node = self.graph_mapper.get_current_node()
-                if current_node:
-                    current_node.marker = True
-                    current_node.lastVisited = datetime.now().isoformat()
-                    current_node.detected_marker_ids = [m.id for m in self.markers]
-                    print(f"✅ Updated node {current_node.id} with NEAR markers: {current_node.detected_marker_ids}")
-            
-            # จัดการ marker ที่อยู่ไกล (> 40cm) - เก็บไว้สำหรับ node ถัดไป
-            if far_markers:
-                self.pending_markers = far_markers
-            
-            # ถ้าไม่มี marker ในระยะใกล้ แต่มี marker ไกล ไม่ต้องเซ็ต false
-            if not valid_markers and not far_markers:
-                current_node = self.graph_mapper.get_current_node()
-                if current_node and not current_node.marker:  # Only update if not already marked
-                    current_node.marker = False
-        else:
-            # ไม่เจอ marker เลย
-            current_node = self.graph_mapper.get_current_node()
-            if current_node and not current_node.marker:  # Only update if not already marked
-                current_node.marker = False
-    
-    def check_pending_markers_for_new_node(self):
-        """ตรวจสอบ pending markers สำหรับ node ใหม่"""
-        if self.pending_markers:
-            current_node = self.graph_mapper.get_current_node()
-            if current_node:
-                # นำ pending markers มาใส่ใน node ใหม่
-                current_node.marker = True
-                current_node.detected_marker_ids = [m['id'] for m in self.pending_markers]
-                current_node.lastVisited = datetime.now().isoformat()
-                
-                print(f"✅ Applied pending markers to node {current_node.id}")
-                print(f"   🆔 Marker IDs: {current_node.detected_marker_ids}")
-                
-                # ล้าง pending markers
-                self.pending_markers = []
-                return True
-        return False
-    
-    def start_continuous_detection(self, vision):
-        """เริ่มการตรวจจับ marker อย่างต่อเนื่อง"""
-        print("🔍 Starting continuous marker detection...")
-        try:
-            result = vision.sub_detect_info(name="marker", callback=self.on_detect_marker)
-            if result:
-                self.is_active = True
-                print("✅ Marker detection system activated")
-                return True
-            else:
-                print("❌ Failed to start marker detection")
-                return False
-        except Exception as e:
-            print(f"❌ Error starting marker detection: {e}")
-            return False
-    
-    def stop_continuous_detection(self, vision):
-        """หยุดการตรวจจับ marker อย่างต่อเนื่อง"""
-        try:
-            self.is_active = False
-            vision.unsub_detect_info(name="marker")
-            print("🛑 Marker detection stopped")
-        except Exception as e:
-            print(f"⚠️ Error stopping marker detection: {e}")
-    
-    def reset_detection(self):
-        """รีเซ็ตสถานะการตรวจจับสำหรับการสแกนครั้งใหม่"""
-        self.marker_detected = False
-        self.markers.clear()
-        self.detection_count = 0
-        self.first_detection = True
-        
-        # รีเซ็ต marker สถานะของ node ปัจจุบัน
-        current_node = self.graph_mapper.get_current_node()
-        if current_node:
-            current_node.marker = False
-            current_node.detected_marker_ids = []
-    
-    def get_detection_summary(self):
-        """ข้อมูลสรุปการตรวจจับ marker"""
-        return {
-            'detected': self.marker_detected,
-            'count': len(self.markers),
-            'total_detections': self.detection_count,
-            'marker_ids': [m.id for m in self.markers] if self.markers else [],
-            'pending_count': len(self.pending_markers),
-            'pending_ids': [m['id'] for m in self.pending_markers]
-        }
-
-# ===== Enhanced Graph Node =====
+# ===== Graph Node =====
 class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
@@ -367,15 +197,12 @@ class GraphNode:
         self.fullyScanned = False
         self.scanTimestamp = None
         
-        # ENHANCED: Marker detection features
-        self.marker = False
-        self.detected_marker_ids = []  # เก็บ id marker ที่เจอใน node นี้
-        
         # Additional info
+        self.marker = False
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
 
-# ===== Enhanced Graph Mapper =====
+# ===== Graph Mapper =====
 class GraphMapper:
     def __init__(self):
         self.nodes = {}
@@ -442,7 +269,7 @@ class GraphMapper:
         # Define all possible directions from this node
         possible_directions = {
             'north': (x, y + 1),
-            'south': (x, y - 1), 
+            'south': (x, y - 1),
             'east': (x + 1, y),
             'west': (x - 1, y)
         }
@@ -465,7 +292,7 @@ class GraphMapper:
         wall_status[current_mapping['left']] = node.wallLeft  
         wall_status[current_mapping['right']] = node.wallRight
         
-        # For the back direction (opposite of front), assume no wall if we came from there
+        # For the back direction (opposite of front)
         back_direction = None
         if current_mapping['front'] == 'north': back_direction = 'south'
         elif current_mapping['front'] == 'south': back_direction = 'north'
@@ -473,9 +300,10 @@ class GraphMapper:
         elif current_mapping['front'] == 'west': back_direction = 'east'
         
         if back_direction:
-            # Check if we have a neighbor in the back direction (meaning we came from there)
             back_neighbor_pos = possible_directions[back_direction] 
             back_neighbor_id = self.get_node_id(back_neighbor_pos)
+            
+            # FIXED: Only assume no wall if we actually came from there AND have a path
             if back_neighbor_id in self.nodes:
                 wall_status[back_direction] = False  # No wall if we came from there
             else:
@@ -513,14 +341,26 @@ class GraphMapper:
         elif not node.unexploredExits and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
-            
-        # Update dead end status
-        all_blocked = all(wall_status.get(direction, True) for direction in ['north', 'south', 'east', 'west'])
-        node.isDeadEnd = all_blocked
         
-        # NEW: Check if this is a dead end (all directions blocked)
-        if all_blocked:
-            print(f"🚫 DEAD END DETECTED at {node.id} - all directions blocked!")
+        # FIXED: Simple dead end detection - check only 3 scanned directions (front, left, right)
+        # Dead end = all 3 sensor directions detect walls
+        is_dead_end = node.wallFront and node.wallLeft and node.wallRight
+        
+        node.isDeadEnd = is_dead_end
+        
+        print(f"🔍 Dead end analysis for {node.id}:")
+        print(f"   📍 Front: {'BLOCKED' if node.wallFront else 'OPEN'}")
+        print(f"   📍 Left:  {'BLOCKED' if node.wallLeft else 'OPEN'}")
+        print(f"   📍 Right: {'BLOCKED' if node.wallRight else 'OPEN'}")
+        print(f"   🎯 Dead End Status: {is_dead_end}")
+        
+        if is_dead_end:
+            print(f"🚫 DEAD END CONFIRMED at {node.id} - Front+Left+Right all blocked!")
+            
+            # Remove from frontier if it's a dead end
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🧹 Removed dead end {node.id} from frontier queue")
     
     def is_dead_end(self, node=None):
         """Check if current node or given node is a dead end"""
@@ -885,19 +725,12 @@ class GraphMapper:
     
     def print_graph_summary(self):
         print("\n" + "="*60)
-        print("📊 ENHANCED GRAPH MAPPING SUMMARY WITH MARKERS")
+        print("📊 GRAPH MAPPING SUMMARY")
         print("="*60)
         print(f"🤖 Current Position: {self.currentPosition}")
         print(f"🧭 Current Direction: {self.currentDirection}")
         print(f"🗺️  Total Nodes: {len(self.nodes)}")
         print(f"🚀 Frontier Queue: {len(self.frontierQueue)} nodes")
-        
-        # Count markers
-        marker_nodes = sum(1 for node in self.nodes.values() if node.marker)
-        total_markers = sum(len(node.detected_marker_ids) for node in self.nodes.values())
-        
-        print(f"🔖 Nodes with Markers: {marker_nodes}")
-        print(f"🏷️  Total Markers Found: {total_markers}")
         print("-"*60)
         
         for node_id, node in self.nodes.items():
@@ -907,10 +740,6 @@ class GraphMapper:
             print(f"   🔍 Unexplored exits: {node.unexploredExits}")
             print(f"   ✅ Explored directions: {node.exploredDirections}")
             print(f"   🎯 Is dead end: {node.isDeadEnd}")
-            print(f"   🔖 Has Markers: {node.marker}")
-            
-            if node.detected_marker_ids:
-                print(f"   🆔 Marker IDs: {node.detected_marker_ids}")
             
             if node.sensorReadings:
                 print(f"   📡 Sensor readings:")
@@ -931,7 +760,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 35.0
+        self.WALL_THRESHOLD = 50.00
         
         self.readings = {
             'front': [],
@@ -1019,21 +848,17 @@ class ToFSensorHandler:
         return is_wall
 
 # ===== Main Exploration Functions =====
-def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler):
-    """Enhanced scan function with integrated marker detection"""
-    print(f"\n🗺️ === ENHANCED SCANNING: Node at {graph_mapper.currentPosition} ===")
+def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
+    """Scan current node and update graph"""
+    print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
     
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
-    
-    # Check for pending markers from previous node
-    marker_handler.check_pending_markers_for_new_node()
     
     # NEW: Check if node has been fully scanned before
     if current_node.fullyScanned:
         print(f"🔄 Node {current_node.id} already fully scanned - using cached data!")
         print(f"   🧱 Cached walls: L:{current_node.wallLeft} R:{current_node.wallRight} F:{current_node.wallFront}")
         print(f"   🔍 Cached unexplored exits: {current_node.unexploredExits}")
-        print(f"   🔖 Cached markers: {current_node.marker} (IDs: {current_node.detected_marker_ids})")
         if current_node.sensorReadings:
             print(f"   📡 Cached sensor readings:")
             for direction, reading in current_node.sensorReadings.items():
@@ -1042,13 +867,13 @@ def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_m
         return current_node.sensorReadings
     
     # Only scan if node hasn't been fully scanned before
-    print(f"🆕 First time visiting node {current_node.id} - performing full scan with marker detection")
+    print(f"🆕 First time visiting node {current_node.id} - performing full scan")
     
     # Lock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.5)
     
-    speed = 540
+    speed = 480
     scan_results = {}
     
     # Scan front (0°)
@@ -1099,9 +924,9 @@ def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_m
     
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    # Return to center and give time for marker detection
+    # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(1.0)  # Extra time for marker detection to work
+    time.sleep(0.5)
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
@@ -1111,170 +936,141 @@ def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_m
     graph_mapper.update_current_node_walls(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
     
-    # Report marker detection results
-    marker_summary = marker_handler.get_detection_summary()
-    print(f"🔖 MARKER DETECTION RESULTS:")
-    print(f"   📍 Node {current_node.id}: Markers detected = {current_node.marker}")
-    if current_node.detected_marker_ids:
-        print(f"   🆔 Marker IDs in this node: {current_node.detected_marker_ids}")
-    if marker_handler.pending_markers:
-        print(f"   📡 Pending markers for next node: {len(marker_handler.pending_markers)}")
-    
     print(f"✅ Node {current_node.id} scan complete:")
     print(f"   🧱 Walls detected: Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
     
     return scan_results
 
-def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, marker_handler, vision, max_nodes=20):
-    """Enhanced autonomous exploration algorithm with marker detection"""
-    print("\n🚀 === ENHANCED AUTONOMOUS EXPLORATION WITH MARKERS ===")
+def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
+    """Main autonomous exploration algorithm with backtracking and dead end handling"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH SMART BACKTRACKING & DEAD END REVERSAL ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     print("⚡ OPTIMIZATION: Previously scanned nodes will NOT be re-scanned!")
     print("🔙 NEW: Dead ends will trigger REVERSE movement instead of turn-around!")
-    print("🔖 ENHANCED: Continuous marker detection throughout exploration!")
-    
-    # Start continuous marker detection
-    if not marker_handler.start_continuous_detection(vision):
-        print("⚠️ Warning: Marker detection failed to start, continuing without markers")
     
     nodes_explored = 0
     scanning_iterations = 0
     dead_end_reversals = 0
     
-    try:
-        while nodes_explored < max_nodes:
-            print(f"\n{'='*50}")
-            print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
-            print(f"🤖 Current position: {graph_mapper.currentPosition}")
-            print(f"🧭 Current direction: {graph_mapper.currentDirection}")
-            print(f"{'='*50}")
+    while nodes_explored < max_nodes:
+        print(f"\n{'='*50}")
+        print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
+        print(f"🤖 Current position: {graph_mapper.currentPosition}")
+        print(f"🧭 Current direction: {graph_mapper.currentDirection}")
+        print(f"{'='*50}")
+        
+        # Check if current node needs scanning
+        current_node = graph_mapper.create_node(graph_mapper.currentPosition)
+        
+        if not current_node.fullyScanned:
+            print("🔍 NEW NODE - Performing full scan...")
+            scan_results = scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper)
+            scanning_iterations += 1
             
-            # Check if current node needs scanning
-            current_node = graph_mapper.create_node(graph_mapper.currentPosition)
-            
-            if not current_node.fullyScanned:
-                print("🔍 NEW NODE - Performing full scan with marker detection...")
-                scan_results = scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, 
-                                                            graph_mapper, marker_handler)
-                scanning_iterations += 1
+            # Check if this scan revealed a dead end
+            if graph_mapper.is_dead_end(current_node):
+                print(f"🚫 DEAD END DETECTED after scanning!")
+                print(f"🔙 Initiating reverse maneuver...")
                 
-                # Check if this scan revealed a dead end
-                if graph_mapper.is_dead_end(current_node):
-                    print(f"🚫 DEAD END DETECTED after scanning!")
-                    print(f"🔙 Initiating reverse maneuver...")
-                    
-                    success = graph_mapper.handle_dead_end(movement_controller)
-                    if success:
-                        dead_end_reversals += 1
-                        print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
-                        nodes_explored += 1  # Count the dead end node
-                        continue
-                    else:
-                        print(f"❌ Failed to reverse from dead end!")
-                        break
-            else:
-                print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
-                # Check for pending markers even on revisited nodes
-                marker_handler.check_pending_markers_for_new_node()
-                # Just update the graph structure without scanning
-                graph_mapper.update_unexplored_exits(current_node)
-                graph_mapper.build_connections()
-            
-            nodes_explored += 1
-            
-            # Print current graph state
-            graph_mapper.print_graph_summary()
-            
-            # Show marker detection status
-            marker_summary = marker_handler.get_detection_summary()
-            print(f"\n🔖 CURRENT MARKER STATUS:")
-            print(f"   📊 Total detections: {marker_summary['total_detections']}")
-            print(f"   📍 Current node markers: {marker_summary['marker_ids']}")
-            print(f"   📡 Pending for next node: {marker_summary['pending_ids']}")
-            
-            # Find next direction to explore
-            graph_mapper.previous_node = current_node
-            
-            # Try to find unexplored direction from current node
-            next_direction = graph_mapper.find_next_exploration_direction()
-            
-            if next_direction:
-                print(f"\n🎯 Next exploration direction from current node: {next_direction}")
-                
-                # Double-check wall detection before moving
-                can_move = graph_mapper.can_move_to_direction(next_direction)
-                print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
-                
-                if can_move:
-                    try:
-                        # Move to next direction
-                        success = graph_mapper.move_to_direction(next_direction, movement_controller)
-                        if success:
-                            print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
-                            time.sleep(1)
-                        else:
-                            print(f"❌ Movement failed - wall detected!")
-                            # Remove this direction from unexplored exits
-                            if current_node and next_direction in current_node.unexploredExits:
-                                current_node.unexploredExits.remove(next_direction)
-                            continue
-                        
-                    except Exception as e:
-                        print(f"❌ Error during movement: {e}")
-                        break
-                else:
-                    print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
-                    # Remove this direction from unexplored exits
-                    if current_node and next_direction in current_node.unexploredExits:
-                        current_node.unexploredExits.remove(next_direction)
+                success = graph_mapper.handle_dead_end(movement_controller)
+                if success:
+                    dead_end_reversals += 1
+                    print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
+                    nodes_explored += 1  # Count the dead end node
                     continue
-            else:
-                # No local unexplored directions - try backtracking to frontier
-                print(f"\n🔍 No unexplored directions from current node")
-                print(f"🔄 Attempting SMART backtrack to nearest frontier...")
-                
-                frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
-                
-                if frontier_id and path is not None and frontier_direction:
-                    print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
-                    print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
-                    print("⚡ SMART BACKTRACK: Will NOT re-scan nodes along the path!")
-                    
-                    try:
-                        # Execute backtracking path (no scanning during backtrack)
-                        success = graph_mapper.execute_path_to_frontier(path, movement_controller)
-                        
-                        if success:
-                            print(f"✅ Successfully backtracked to frontier at {graph_mapper.currentPosition}")
-                            time.sleep(1)
-                            
-                            # IMPORTANT: The next iteration will handle the frontier node
-                            # It will either scan if new, or use cached data if already scanned
-                            print(f"🚀 Ready to process frontier node on next iteration...")
-                            continue
-                            
-                        else:
-                            print(f"❌ Failed to execute backtracking path!")
-                            break
-                            
-                    except Exception as e:
-                        print(f"❌ Error during backtracking: {e}")
-                        break
                 else:
-                    print("🎉 No more frontiers found - exploration complete!")
+                    print(f"❌ Failed to reverse from dead end!")
                     break
+        else:
+            print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
+            # Just update the graph structure without scanning
+            graph_mapper.update_unexplored_exits(current_node)
+            graph_mapper.build_connections()
+        
+        nodes_explored += 1
+        
+        # Print current graph state
+        graph_mapper.print_graph_summary()
+        
+        # Find next direction to explore
+        graph_mapper.previous_node = current_node
+        
+        # Try to find unexplored direction from current node
+        next_direction = graph_mapper.find_next_exploration_direction()
+        
+        if next_direction:
+            print(f"\n🎯 Next exploration direction from current node: {next_direction}")
             
-            # Safety check - prevent infinite loops
-            if nodes_explored >= max_nodes:
-                print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
+            # Double-check wall detection before moving
+            can_move = graph_mapper.can_move_to_direction(next_direction)
+            print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
+            
+            if can_move:
+                try:
+                    # Move to next direction
+                    success = graph_mapper.move_to_direction(next_direction, movement_controller)
+                    if success:
+                        print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
+                        time.sleep(1)
+                    else:
+                        print(f"❌ Movement failed - wall detected!")
+                        # Remove this direction from unexplored exits
+                        if current_node and next_direction in current_node.unexploredExits:
+                            current_node.unexploredExits.remove(next_direction)
+                        continue
+                    
+                except Exception as e:
+                    print(f"❌ Error during movement: {e}")
+                    break
+            else:
+                print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
+                # Remove this direction from unexplored exits
+                if current_node and next_direction in current_node.unexploredExits:
+                    current_node.unexploredExits.remove(next_direction)
+                continue
+        else:
+            # No local unexplored directions - try backtracking to frontier
+            print(f"\n🔍 No unexplored directions from current node")
+            print(f"🔄 Attempting SMART backtrack to nearest frontier...")
+            
+            frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
+            
+            if frontier_id and path is not None and frontier_direction:
+                print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
+                print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
+                print("⚡ SMART BACKTRACK: Will NOT re-scan nodes along the path!")
+                
+                try:
+                    # Execute backtracking path (no scanning during backtrack)
+                    success = graph_mapper.execute_path_to_frontier(path, movement_controller)
+                    
+                    if success:
+                        print(f"✅ Successfully backtracked to frontier at {graph_mapper.currentPosition}")
+                        time.sleep(1)
+                        
+                        # IMPORTANT: The next iteration will handle the frontier node
+                        # It will either scan if new, or use cached data if already scanned
+                        print(f"🚀 Ready to process frontier node on next iteration...")
+                        continue
+                        
+                    else:
+                        print(f"❌ Failed to execute backtracking path!")
+                        break
+                        
+                except Exception as e:
+                    print(f"❌ Error during backtracking: {e}")
+                    break
+            else:
+                print("🎉 No more frontiers found - exploration complete!")
                 break
+        
+        # Safety check - prevent infinite loops
+        if nodes_explored >= max_nodes:
+            print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
+            break
     
-    finally:
-        # Stop marker detection
-        marker_handler.stop_continuous_detection(vision)
-    
-    print(f"\n🎉 === ENHANCED EXPLORATION COMPLETED ===")
+    print(f"\n🎉 === EXPLORATION COMPLETED ===")
     print(f"📊 PERFORMANCE SUMMARY:")
     print(f"   🗺️ Total nodes visited: {nodes_explored}")
     print(f"   🔍 Physical scans performed: {scanning_iterations}")
@@ -1283,25 +1079,15 @@ def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, grap
     print(f"   📈 Efficiency gain: {((nodes_explored - scanning_iterations) / nodes_explored * 100):.1f}% less scanning")
     print(f"   🎯 Dead end handling: {dead_end_reversals} reversals performed")
     
-    # Marker detection summary
-    marker_summary = marker_handler.get_detection_summary()
-    total_marker_nodes = sum(1 for node in graph_mapper.nodes.values() if node.marker)
-    total_markers_found = sum(len(node.detected_marker_ids) for node in graph_mapper.nodes.values())
-    
-    print(f"\n🔖 MARKER DETECTION SUMMARY:")
-    print(f"   🎯 Nodes with markers: {total_marker_nodes}")
-    print(f"   🏷️ Total markers found: {total_markers_found}")
-    print(f"   📊 Detection events: {marker_summary['total_detections']}")
-    
     graph_mapper.print_graph_summary()
     
     # Generate final exploration report
-    generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_reversals)
+    generate_exploration_report(graph_mapper, nodes_explored, dead_end_reversals)
 
-def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_reversals=0):
-    """Generate comprehensive exploration report with marker data"""
+def generate_exploration_report(graph_mapper, nodes_explored, dead_end_reversals=0):
+    """Generate comprehensive exploration report"""
     print(f"\n{'='*60}")
-    print("📋 ENHANCED EXPLORATION REPORT WITH MARKERS")
+    print("📋 FINAL EXPLORATION REPORT")
     print(f"{'='*60}")
     
     # Basic statistics
@@ -1310,14 +1096,7 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
     frontier_nodes = len(graph_mapper.frontierQueue)
     fully_scanned_nodes = sum(1 for node in graph_mapper.nodes.values() if node.fullyScanned)
     
-    # Marker statistics
-    marker_nodes = sum(1 for node in graph_mapper.nodes.values() if node.marker)
-    total_markers = sum(len(node.detected_marker_ids) for node in graph_mapper.nodes.values())
-    unique_marker_ids = set()
-    for node in graph_mapper.nodes.values():
-        unique_marker_ids.update(node.detected_marker_ids)
-    
-    print(f"📊 EXPLORATION STATISTICS:")
+    print(f"📊 STATISTICS:")
     print(f"   🏁 Total nodes explored: {total_nodes}")
     print(f"   🎯 Node visits: {nodes_explored}")
     print(f"   🔍 Fully scanned nodes: {fully_scanned_nodes}")
@@ -1325,17 +1104,9 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
     print(f"   🔙 Dead end reversals performed: {dead_end_reversals}")
     print(f"   🚀 Remaining frontiers: {frontier_nodes}")
     
-    print(f"\n🔖 MARKER DETECTION STATISTICS:")
-    print(f"   🎯 Nodes with markers: {marker_nodes}")
-    print(f"   🏷️ Total marker instances: {total_markers}")
-    print(f"   🆔 Unique marker IDs: {len(unique_marker_ids)}")
-    if unique_marker_ids:
-        print(f"   📋 Marker ID list: {sorted(list(unique_marker_ids))}")
-    
     # Efficiency metrics
     revisited_nodes = nodes_explored - total_nodes
     if revisited_nodes > 0:
-        print(f"\n⚡ EFFICIENCY METRICS:")
         print(f"   🔄 Node revisits (backtracking): {revisited_nodes}")
         print(f"   ⚡ Scans saved by caching: {revisited_nodes}")
         print(f"   📈 Scanning efficiency: {(revisited_nodes / nodes_explored * 100):.1f}% improvement")
@@ -1351,15 +1122,6 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
         print(f"\n🗺️ MAP BOUNDARIES:")
         print(f"   X range: {min_x} to {max_x} (width: {max_x - min_x + 1})")
         print(f"   Y range: {min_y} to {max_y} (height: {max_y - min_y + 1})")
-        print(f"   📍 Starting position: (0, 0)")
-        print(f"   🏁 Final position: {graph_mapper.currentPosition}")
-    
-    # Detailed marker locations
-    if marker_nodes > 0:
-        print(f"\n🔖 DETAILED MARKER LOCATIONS:")
-        for node_id, node in graph_mapper.nodes.items():
-            if node.marker and node.detected_marker_ids:
-                print(f"   📍 Node {node.id} at {node.position}: Markers {node.detected_marker_ids}")
     
     # Unexplored areas
     if graph_mapper.frontierQueue:
@@ -1375,7 +1137,7 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
     for node in graph_mapper.nodes.values():
         if hasattr(node, 'sensorReadings') and node.sensorReadings:
             for direction, distance in node.sensorReadings.items():
-                if distance <= 35.0:  # Wall threshold
+                if distance <= 50.0:  # Wall threshold
                     total_walls += 1
                 else:
                     total_openings += 1
@@ -1401,16 +1163,8 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
         print(f"   Time saved vs turn-around: ~{dead_end_reversals * 2:.1f} seconds")
         print(f"   Success rate: {(dead_end_reversals/max(dead_ends,1)*100):.1f}%")
     
-    # Marker detection efficiency
-    if total_markers > 0:
-        detection_rate = (marker_nodes / total_nodes * 100) if total_nodes > 0 else 0
-        print(f"\n🔖 MARKER DETECTION EFFICIENCY:")
-        print(f"   Detection coverage: {detection_rate:.1f}% of nodes")
-        print(f"   Average markers per marked node: {total_markers/marker_nodes:.1f}")
-        print(f"   Marker density: {total_markers/total_nodes:.2f} markers per node")
-    
     print(f"\n{'='*60}")
-    print("✅ ENHANCED EXPLORATION REPORT COMPLETE")
+    print("✅ EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
 
 if __name__ == '__main__':
@@ -1421,13 +1175,11 @@ if __name__ == '__main__':
     ep_gimbal = ep_robot.gimbal
     ep_chassis = ep_robot.chassis
     ep_sensor = ep_robot.sensor
-    ep_vision = ep_robot.vision  # Add vision system
     
     # Initialize components
     tof_handler = ToFSensorHandler()
     graph_mapper = GraphMapper()
     movement_controller = MovementController(ep_chassis)
-    marker_handler = MarkerVisionHandler(graph_mapper)  # Add marker handler
     
     try:
         print("✅ Recalibrating gimbal...")
@@ -1436,15 +1188,12 @@ if __name__ == '__main__':
         time.sleep(0.5)
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-        print(f"🔖 Max Marker Detection Distance: {marker_handler.MAX_DETECTION_DISTANCE}cm")
         print("⚡ SMART BACKTRACKING: Previously scanned nodes will reuse cached data!")
         print("🔙 DEAD END HANDLING: Reverse movement instead of turn-around!")
-        print("🔖 MARKER DETECTION: Continuous detection with distance-based assignment!")
         
-        # Start enhanced autonomous exploration with marker detection
-        explore_autonomously_with_markers(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                                        graph_mapper, movement_controller, marker_handler,
-                                        ep_vision, max_nodes=49)
+        # Start autonomous exploration with smart backtracking and dead end reversal
+        explore_autonomously(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
+                           graph_mapper, movement_controller, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
@@ -1456,7 +1205,6 @@ if __name__ == '__main__':
         try:
             ep_sensor.unsub_distance()
             movement_controller.cleanup()
-            marker_handler.stop_continuous_detection(ep_vision)
         except:
             pass
         ep_robot.close()

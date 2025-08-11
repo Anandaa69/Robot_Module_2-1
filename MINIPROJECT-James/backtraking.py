@@ -5,6 +5,9 @@ import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
+from collections import deque
+
+ROBOT_FACE = 1 # 0 1
 
 # ===== PID Controller =====
 class PID:
@@ -43,21 +46,20 @@ class MovementController:
         self.KP = 2.1
         self.KI = 0.3
         self.KD = 10
-        self.RAMP_UP_TIME = 0.5
+        self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=20, callback=self.position_handler)
+        self.chassis.sub_position(freq=10, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
         self.current_x = position_info[0]
         self.current_y = position_info[1]
         self.current_z = position_info[2]
-        # print(f"Position: x:{self.current_x:.3f}, y:{self.current_y:.3f}, z:{self.current_z:.3f}")
     
-    def move_forward_with_pid(self, target_distance, axis='x', direction=1):
+    def move_forward_with_pid(self, target_distance, axis, direction=1):
         """Move forward using PID control"""
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -103,12 +105,12 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
                 else:
-                    self.chassis.drive_speed(x=0, y=speed * direction, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.02:
+                if abs(relative_position - target_distance) < 0.025:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
                     target_reached = True
@@ -123,8 +125,7 @@ class MovementController:
         print("🔄 Rotating 90° RIGHT...")
         time.sleep(0.25)
         self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
+        time.sleep(self.ROTATE_TIME + 0.3)
         time.sleep(0.25)
         print("✅ Right rotation completed!")
 
@@ -133,8 +134,7 @@ class MovementController:
         print("🔄 Rotating 90° LEFT...")
         time.sleep(0.25)
         self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.2)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
+        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
         time.sleep(0.25)
         print("✅ Left rotation completed!")
     
@@ -210,6 +210,25 @@ class GraphMapper:
             current_node.lastVisited = datetime.now().isoformat()
             
             self.update_unexplored_exits(current_node)
+            self.build_connections()
+    
+    def build_connections(self):
+        """Build connections between adjacent nodes"""
+        for node_id, node in self.nodes.items():
+            x, y = node.position
+            
+            # Check all four directions
+            directions = {
+                'north': (x, y + 1),
+                'south': (x, y - 1),
+                'east': (x + 1, y),
+                'west': (x - 1, y)
+            }
+            
+            for direction, neighbor_pos in directions.items():
+                neighbor_id = self.get_node_id(neighbor_pos)
+                if neighbor_id in self.nodes:
+                    node.neighbors[direction] = self.nodes[neighbor_id]
     
     def update_unexplored_exits(self, node):
         node.unexploredExits = []
@@ -283,16 +302,15 @@ class GraphMapper:
         elif target_direction == directions['right']:
             return not current_node.wallRight
         else:
-            # For back direction or complex cases, assume it's possible for now
-            # In a full implementation, you'd check the back wall too
+            # For back direction, assume it's possible (we came from there)
             return True
     
-
     def move_to_direction(self, target_direction, movement_controller):
+        global ROBOT_FACE
         """Turn robot to face target direction and move forward"""
         print(f"🎯 Attempting to move from {self.currentDirection} to {target_direction}")
         
-        # CRITICAL FIX: Check if movement is possible BEFORE moving
+        # Check if movement is possible BEFORE moving
         if not self.can_move_to_direction(target_direction):
             print(f"❌ BLOCKED! Cannot move to {target_direction} - wall detected!")
             return False
@@ -307,8 +325,10 @@ class GraphMapper:
         
         if diff == 1:  # Turn right
             movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 1
         elif diff == 3:  # Turn left (3 rights = 1 left)
             movement_controller.rotate_90_degrees_left()
+            ROBOT_FACE += 1
         elif diff == 2:  # Turn around (180°)
             movement_controller.rotate_90_degrees_right()
             movement_controller.rotate_90_degrees_right()
@@ -317,12 +337,15 @@ class GraphMapper:
         # Update current direction
         self.currentDirection = target_direction
         
-        # ===== FIX: ใช้แกนและทิศทางที่ถูกต้องตาม target_direction =====
-        axis, direction = self.get_movement_axis_and_direction(target_direction)
-        print(f"🧭 Moving on {axis}-axis with direction {direction}")
+        axis_test = 'x'
+        if ROBOT_FACE % 2 == 0:
+            axis_test = 'y'
+        elif ROBOT_FACE % 2 == 1:
+            axis_test = 'x'
+        print(f'-------------------------{axis_test}-------------------------')
         
-        # Move forward with correct axis and direction
-        movement_controller.move_forward_with_pid(0.6, axis, direction=direction)
+        # Move forward
+        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
         
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
@@ -333,30 +356,7 @@ class GraphMapper:
         
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
-
-
-    def get_movement_axis_and_direction(self, target_direction):
-        """Get the correct axis and direction for movement based on target direction
-        
-        Returns:
-            tuple: (axis, direction) where axis is 'x' or 'y' and direction is always 1
-            
-        Note: หุ่นยนต์เดินไปข้างหน้าเสมอ (direction=1) การเปลี่ยนทิศทางขึ้นอยู่กับการหมุน
-            direction=-1 จะใช้เมื่อต้องการถอยหลังเท่านั้น
-        """
-        movement_map = {
-            'north': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y
-            'south': ('y', 1),   # เดินไปข้างหน้า tracking แกน Y  
-            'east': ('x', 1),    # เดินไปข้างหน้า tracking แกน X
-            'west': ('x', 1)     # เดินไปข้างหน้า tracking แกน X
-        }
-        
-        if target_direction not in movement_map:
-            print(f"❌ Unknown target direction: {target_direction}")
-            return ('x', 1)  # fallback
-        
-        return movement_map[target_direction]
-
+    
     def find_next_exploration_direction(self):
         """Find the next direction to explore based on priority"""
         current_node = self.get_current_node()
@@ -384,18 +384,110 @@ class GraphMapper:
         
         return None
     
+    def find_path_to_frontier(self, target_node_id):
+        """Find shortest path to frontier node using BFS"""
+        if target_node_id not in self.nodes:
+            return None
+        
+        # BFS to find shortest path
+        queue = deque([(self.currentPosition, [])])
+        visited = set()
+        visited.add(self.currentPosition)
+        
+        while queue:
+            current_pos, path = queue.popleft()
+            current_node_id = self.get_node_id(current_pos)
+            
+            # Check if we reached the target
+            if current_node_id == target_node_id:
+                return path
+            
+            # Explore neighbors
+            if current_node_id in self.nodes:
+                current_node = self.nodes[current_node_id]
+                x, y = current_pos
+                
+                # Check all four directions
+                directions = {
+                    'north': (x, y + 1),
+                    'south': (x, y - 1), 
+                    'east': (x + 1, y),
+                    'west': (x - 1, y)
+                }
+                
+                for direction, neighbor_pos in directions.items():
+                    neighbor_id = self.get_node_id(neighbor_pos)
+                    
+                    if (neighbor_pos not in visited and 
+                        neighbor_id in self.nodes and
+                        self.is_path_clear(current_pos, neighbor_pos, direction)):
+                        
+                        visited.add(neighbor_pos)
+                        new_path = path + [direction]
+                        queue.append((neighbor_pos, new_path))
+        
+        return None  # No path found
+    
+    def is_path_clear(self, from_pos, to_pos, direction):
+        """Check if path between two adjacent nodes is clear"""
+        from_node_id = self.get_node_id(from_pos)
+        to_node_id = self.get_node_id(to_pos)
+        
+        if from_node_id not in self.nodes or to_node_id not in self.nodes:
+            return False
+        
+        from_node = self.nodes[from_node_id]
+        
+        # Check if there's no wall blocking the path from source node
+        # This is simplified - in reality you'd need to check walls properly
+        # based on robot's orientation when it scanned that node
+        return True  # For now, assume paths between explored nodes are clear
+    
+    def execute_path_to_frontier(self, path, movement_controller):
+        """Execute a sequence of moves to reach frontier node"""
+        print(f"🗺️ Executing path to frontier: {path}")
+        
+        for step_direction in path:
+            print(f"📍 Current position: {self.currentPosition}, moving {step_direction}")
+            
+            success = self.move_to_direction(step_direction, movement_controller)
+            if not success:
+                print(f"❌ Failed to move {step_direction} during backtracking!")
+                return False
+            
+            time.sleep(0.5)  # Brief pause between moves
+        
+        print(f"✅ Successfully reached frontier at {self.currentPosition}")
+        return True
+    
     def find_nearest_frontier(self):
         """Find the nearest frontier node to explore"""
         if not self.frontierQueue:
-            return None, None
+            return None, None, None
         
-        # For now, return the first frontier (can be improved with pathfinding)
-        for frontier_id in self.frontierQueue:
+        best_frontier = None
+        best_direction = None
+        shortest_path = None
+        min_distance = float('inf')
+        
+        for frontier_id in self.frontierQueue[:]:  # Copy list to avoid modification during iteration
             frontier_node = self.nodes[frontier_id]
-            if frontier_node.unexploredExits:
-                return frontier_id, frontier_node.unexploredExits[0]
+            
+            if not frontier_node.unexploredExits:
+                # Remove invalid frontiers
+                self.frontierQueue.remove(frontier_id)
+                continue
+            
+            # Find path to this frontier
+            path = self.find_path_to_frontier(frontier_id)
+            
+            if path is not None and len(path) < min_distance:
+                min_distance = len(path)
+                best_frontier = frontier_id
+                best_direction = frontier_node.unexploredExits[0]
+                shortest_path = path
         
-        return None, None
+        return best_frontier, best_direction, shortest_path
     
     def print_graph_summary(self):
         print("\n" + "="*60)
@@ -433,7 +525,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 30.0  # INCREASED from 25cm to 30cm for better detection
+        self.WALL_THRESHOLD = 35.0
         
         self.readings = {
             'front': [],
@@ -463,16 +555,14 @@ class ToFSensorHandler:
             
         raw_tof_mm = sub_info[0]
         
-        # ADDED: Filter out obviously bad readings
-        if raw_tof_mm <= 0 or raw_tof_mm > 4000:  # 4m max range check
+        if raw_tof_mm <= 0 or raw_tof_mm > 4000:
             return
             
         calibrated_tof_cm = self.calibrate_tof_value(raw_tof_mm)
         self.tof_buffer.append(calibrated_tof_cm)
         filtered_tof_cm = self.apply_median_filter(self.tof_buffer, self.WINDOW_SIZE)
         
-        # INCREASED sample count for more reliable readings
-        if len(self.tof_buffer) <= 20:  # Changed from 15 to 20
+        if len(self.tof_buffer) <= 20:
             self.readings[self.current_scan_direction].append({
                 'filtered_cm': filtered_tof_cm,
                 'timestamp': datetime.now().isoformat()
@@ -503,7 +593,6 @@ class ToFSensorHandler:
         
         filtered_values = [reading['filtered_cm'] for reading in self.readings[direction]]
         
-        # ADDED: Remove outliers using IQR method for more robust average
         if len(filtered_values) > 4:
             q1 = np.percentile(filtered_values, 25)
             q3 = np.percentile(filtered_values, 75)
@@ -511,7 +600,6 @@ class ToFSensorHandler:
             lower_bound = q1 - 1.5 * iqr
             upper_bound = q3 + 1.5 * iqr
             
-            # Filter outliers
             filtered_values = [x for x in filtered_values if lower_bound <= x <= upper_bound]
         
         return np.mean(filtered_values) if filtered_values else 0.0
@@ -520,14 +608,11 @@ class ToFSensorHandler:
         avg_distance = self.get_average_distance(direction)
         is_wall = avg_distance <= self.WALL_THRESHOLD and avg_distance > 0
         
-        # ADDED: Extra logging for debugging
         print(f"🔍 Wall check [{direction.upper()}]: {avg_distance:.2f}cm -> {'WALL' if is_wall else 'OPEN'}")
         
         return is_wall
 
 # ===== Main Exploration Functions =====
-# ===== แก้ไขส่วน scan_current_node function =====
-
 def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     """Scan current node and update graph"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
@@ -557,8 +642,7 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
     
-    # ===== แก้ไข: สลับการสแกนซ้าย-ขวา =====
-    # Scan right (-90°) - แต่เก็บข้อมูลเป็น 'left' เพราะ physical sensor อาจจะสลับ
+    # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.5)
@@ -574,7 +658,7 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    # Scan left (90°) - แต่เก็บข้อมูลเป็น 'right' เพราะ physical sensor อาจจะสลับ
+    # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.5)
@@ -608,9 +692,9 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     
     return scan_results
 
-def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=10):
-    """Main autonomous exploration algorithm"""
-    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION ===")
+def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
+    """Main autonomous exploration algorithm with backtracking"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH BACKTRACKING ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     
     nodes_explored = 0
@@ -633,13 +717,13 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
         current_node = graph_mapper.get_current_node()
         graph_mapper.previous_node = current_node
         
-        # IMPROVED: Use the new prioritized direction finding
+        # Try to find unexplored direction from current node
         next_direction = graph_mapper.find_next_exploration_direction()
         
         if next_direction:
             print(f"\n🎯 Next exploration direction: {next_direction}")
             
-            # CRITICAL: Double-check wall detection before moving
+            # Double-check wall detection before moving
             can_move = graph_mapper.can_move_to_direction(next_direction)
             print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
             
@@ -649,10 +733,13 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
                     success = graph_mapper.move_to_direction(next_direction, movement_controller)
                     if success:
                         print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
-                        time.sleep(1)  # Brief pause between moves
+                        time.sleep(1)
                     else:
                         print(f"❌ Movement failed - wall detected!")
-                        break
+                        # Remove this direction from unexplored exits
+                        if current_node and next_direction in current_node.unexploredExits:
+                            current_node.unexploredExits.remove(next_direction)
+                        continue
                     
                 except Exception as e:
                     print(f"❌ Error during movement: {e}")
@@ -660,23 +747,108 @@ def explore_autonomously(gimbal, chassis, sensor, tof_handler, graph_mapper, mov
             else:
                 print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
                 # Remove this direction from unexplored exits
-                if current_node:
-                    if next_direction in current_node.unexploredExits:
-                        current_node.unexploredExits.remove(next_direction)
+                if current_node and next_direction in current_node.unexploredExits:
+                    current_node.unexploredExits.remove(next_direction)
                 continue
         else:
-            # Try to find a frontier node to backtrack to
-            frontier_id, frontier_direction = graph_mapper.find_nearest_frontier()
-            if frontier_id and frontier_direction:
-                print(f"🔍 Need to backtrack to frontier node {frontier_id}")
-                print("⚠️ Backtracking not yet implemented - stopping exploration")
-                break
+            # No local unexplored directions - try backtracking to frontier
+            print(f"\n🔍 No unexplored directions from current node")
+            print(f"🔄 Attempting to backtrack to nearest frontier...")
+            
+            frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
+            
+            if frontier_id and path is not None:
+                print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
+                print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
+                
+                try:
+                    # Execute backtracking path
+                    success = graph_mapper.execute_path_to_frontier(path, movement_controller)
+                    
+                    if success:
+                        print(f"✅ Successfully backtracked to frontier at {graph_mapper.currentPosition}")
+                        time.sleep(1)
+                        
+                        # Continue exploration from this frontier
+                        continue
+                    else:
+                        print(f"❌ Failed to execute backtracking path!")
+                        break
+                        
+                except Exception as e:
+                    print(f"❌ Error during backtracking: {e}")
+                    break
             else:
                 print("🎉 No more frontiers found - exploration complete!")
                 break
+        
+        # Safety check - prevent infinite loops
+        if nodes_explored >= max_nodes:
+            print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
+            break
     
     print(f"\n🎉 === EXPLORATION COMPLETED ({nodes_explored} nodes explored) ===")
     graph_mapper.print_graph_summary()
+    
+    # Generate final exploration report
+    generate_exploration_report(graph_mapper, nodes_explored)
+
+def generate_exploration_report(graph_mapper, nodes_explored):
+    """Generate comprehensive exploration report"""
+    print(f"\n{'='*60}")
+    print("📋 FINAL EXPLORATION REPORT")
+    print(f"{'='*60}")
+    
+    # Basic statistics
+    total_nodes = len(graph_mapper.nodes)
+    dead_ends = sum(1 for node in graph_mapper.nodes.values() if node.isDeadEnd)
+    frontier_nodes = len(graph_mapper.frontierQueue)
+    
+    print(f"📊 STATISTICS:")
+    print(f"   🏁 Total nodes explored: {total_nodes}")
+    print(f"   🎯 Scanning iterations: {nodes_explored}")
+    print(f"   🚫 Dead ends found: {dead_ends}")
+    print(f"   🚀 Remaining frontiers: {frontier_nodes}")
+    
+    # Map boundaries
+    if graph_mapper.nodes:
+        positions = [node.position for node in graph_mapper.nodes.values()]
+        min_x = min(pos[0] for pos in positions)
+        max_x = max(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        max_y = max(pos[1] for pos in positions)
+        
+        print(f"\n🗺️ MAP BOUNDARIES:")
+        print(f"   X range: {min_x} to {max_x} (width: {max_x - min_x + 1})")
+        print(f"   Y range: {min_y} to {max_y} (height: {max_y - min_y + 1})")
+    
+    # Unexplored areas
+    if graph_mapper.frontierQueue:
+        print(f"\n🔍 UNEXPLORED AREAS:")
+        for frontier_id in graph_mapper.frontierQueue:
+            node = graph_mapper.nodes[frontier_id]
+            print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
+    
+    # Wall statistics
+    total_walls = 0
+    total_openings = 0
+    
+    for node in graph_mapper.nodes.values():
+        if hasattr(node, 'sensorReadings') and node.sensorReadings:
+            for direction, distance in node.sensorReadings.items():
+                if distance <= 35.0:  # Wall threshold
+                    total_walls += 1
+                else:
+                    total_openings += 1
+    
+    print(f"\n🧱 WALL ANALYSIS:")
+    print(f"   Walls detected: {total_walls}")
+    print(f"   Openings detected: {total_openings}")
+    print(f"   Wall density: {total_walls/(total_walls+total_openings)*100:.1f}%" if (total_walls + total_openings) > 0 else "   No data available")
+    
+    print(f"\n{'='*60}")
+    print("✅ EXPLORATION REPORT COMPLETE")
+    print(f"{'='*60}")
 
 if __name__ == '__main__':
     print("🤖 Connecting to robot...")
@@ -700,7 +872,7 @@ if __name__ == '__main__':
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         
-        # Start autonomous exploration
+        # Start autonomous exploration with backtracking
         explore_autonomously(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
                            graph_mapper, movement_controller, max_nodes=49)
             
