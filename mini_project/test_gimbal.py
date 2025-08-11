@@ -14,6 +14,8 @@
 # limitations under the License.
 
 
+# ถ้าจะเทสกล้อง เป็นโค้ด example
+
 import cv2
 import robomaster
 from robomaster import robot

@@ -1,3 +1,4 @@
+# โค้ดมากเก้อกับโค้ดเดิมนู้นเลย detect ได้
 import time
 import robomaster
 from robomaster import robot, vision

@@ -1,3 +1,4 @@
+# โค้ดรวมมากเก้อกับของย้อนอดีตแต่ detect ไม่ได้
 import time
 import robomaster
 from robomaster import robot
