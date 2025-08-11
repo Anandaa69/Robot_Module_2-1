@@ -3,10 +3,10 @@ import time
 import csv
 from datetime import datetime
 
-KP = 2.1
-KI = 0.35
-KD = 5
-RAMP_UP_TIME = 0.5  # เวลาที่ใช้ในการ ramp-up
+KP = 1.5
+KI = 0.3
+KD = 4
+RAMP_UP_TIME = 0.8  # เวลาที่ใช้ในการ ramp-up
 ROTATE = 2.11 #MOVE RIGT
 ROTATE_LEFT = 1.9
 # BEST PID = 2.1 0.3 10 ramp 0.7 - 0.5
@@ -187,11 +187,11 @@ if __name__ == '__main__':
     time.sleep(0.25)
 
     try:
-        move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)
-        time.sleep(0.5)
+        # move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)
+        # time.sleep(0.5)
         # move_forward_with_pid(ep_chassis, 0.6, 'x', direction=-1)
         
-        # rotate_90_degrees_right(ep_chassis)
+        rotate_90_degrees_right(ep_chassis)
         # rotate_90_degrees_left(ep_chassis)
 
         print("=== Square completed! ===")
