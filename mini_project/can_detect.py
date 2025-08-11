@@ -1,3 +1,4 @@
+# โค้ดมากเก้อกับโค้ดเดิมนู้นเลย detect ได้
 import time
 import robomaster
 from robomaster import robot, vision
@@ -42,11 +43,11 @@ class MovementController:
         self.current_y = 0.0
         self.current_z = 0.0
         
-        # PID Parameters
-        self.KP = 1.6
-        self.KI = 0.3
-        self.KD = 10
-        self.RAMP_UP_TIME = 0.7
+        # PID Parameters - Reduced for gentler movement
+        self.KP = 0.8  # Reduced from 1.6
+        self.KI = 0.15  # Reduced from 0.3
+        self.KD = 5  # Reduced from 10
+        self.RAMP_UP_TIME = 1.0  # Increased for smoother start
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
@@ -67,9 +68,9 @@ class MovementController:
         last_time = start_time
         target_reached = False
         
-        # Ramp-up parameters
-        min_speed = 0.1
-        max_speed = 1.5
+        # Ramp-up parameters - Reduced for gentler movement
+        min_speed = 0.05  # Reduced from 0.1
+        max_speed = 0.8   # Reduced from 1.5
         
         if axis == 'x':
             start_position = self.current_x
@@ -126,18 +127,18 @@ class MovementController:
         """Rotate 90 degrees clockwise"""
         print("🔄 Rotating 90° RIGHT...")
         time.sleep(0.25)
-        self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.3)
-        time.sleep(0.25)
+        self.chassis.drive_speed(x=0, y=0, z=30, timeout=self.ROTATE_TIME)  # Reduced from 45 to 30
+        time.sleep(self.ROTATE_TIME + 0.5)  # Extra time to settle
+        time.sleep(0.5)  # Additional settling time
         print("✅ Right rotation completed!")
 
     def rotate_90_degrees_left(self):
         """Rotate 90 degrees counter-clockwise"""
         print("🔄 Rotating 90° LEFT...")
         time.sleep(0.25)
-        self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
-        time.sleep(0.25)
+        self.chassis.drive_speed(x=0, y=0, z=-30, timeout=self.ROTATE_LEFT_TIME)  # Reduced from -45 to -30
+        time.sleep(self.ROTATE_LEFT_TIME + 0.5)  # Extra time to settle
+        time.sleep(0.5)  # Additional settling time
         print("✅ Left rotation completed!")
     
     def reverse_from_dead_end(self):
@@ -187,8 +188,7 @@ class MarkerVisionHandler:
         self.marker_detected = False  # ตัวแปรสถานะการเจอ marker
         self.detection_count = 0  # นับจำนวนครั้งที่เจอ marker
         self.first_detection = True  # ตรวจสอบการเจอครั้งแรก
-        self.MAX_DETECTION_DISTANCE = 40.0  # ระยะห่างสูงสุดที่จะนับว่าเจอ marker (cm)
-        self.pending_markers = []  # เก็บ marker ที่เจอแต่ไกลเกิน 40cm สำหรับ node ถัดไป
+        self.MAX_DETECTION_DISTANCE = 30.0  # ระยะห่างสูงสุดที่จะนับว่าเจอ marker (cm)
         self.is_active = False  # สถานะการทำงานของ vision system
         self.detection_timeout = 3.0  # เวลารอ marker detection (วินาที)
     
@@ -215,48 +215,23 @@ class MarkerVisionHandler:
             return
             
         number = len(marker_info)
-        valid_markers = []  # เก็บ marker ที่อยู่ในระยะที่ยอมรับได้
-        far_markers = []    # เก็บ marker ที่อยู่ไกลเกิน 40cm
+        valid_markers = []  # เก็บ marker ที่ตรวจพบ
         
         if number > 0:
             # ตรวจสอบแต่ละ marker
             for i in range(number):
                 x, y, w, h, marker_id = marker_info[i]
                 
-                # คำนวณระยะห่างประมาณ
-                estimated_distance = self.calculate_marker_distance(w, h)
-                
-                # แบ่งประเภท marker ตามระยะห่าง
-                if estimated_distance <= self.MAX_DETECTION_DISTANCE:
-                    marker = MarkerInfo(x, y, w, h, marker_id)
-                    valid_markers.append(marker)
-                    print(f"🔖 NEAR Marker ID {marker_id}: ~{estimated_distance:.1f}cm (size: {w}x{h})")
-                else:
-                    # marker ไกลเกิน 40cm - เก็บไว้สำหรับ node ถัดไป
-                    far_markers.append({
-                        'id': marker_id,
-                        'position': (x, y),
-                        'size': (w, h),
-                        'distance': estimated_distance
-                    })
+                # Accept all detected markers regardless of estimated distance
+                # Let the distance sensor handle the distance filtering
+                marker = MarkerInfo(x, y, w, h, marker_id)
+                valid_markers.append(marker)
             
-            # จัดการ marker ที่อยู่ในระยะใกล้ (≤ 40cm)
+            # จัดการ marker ที่ตรวจพบ
             if valid_markers:
                 self.marker_detected = True
                 self.detection_count += 1
                 self.markers = valid_markers
-                
-                # อัปเดต node ปัจจุบัน
-                current_node = self.graph_mapper.get_current_node()
-                if current_node:
-                    current_node.marker = True
-                    current_node.lastVisited = datetime.now().isoformat()
-                    current_node.detected_marker_ids = [m.id for m in self.markers]
-                    print(f"✅ Updated node {current_node.id} with NEAR markers: {current_node.detected_marker_ids}")
-            
-            # จัดการ marker ที่อยู่ไกล (> 40cm) - เก็บไว้สำหรับ node ถัดไป
-            if far_markers:
-                self.pending_markers = far_markers
         
         # ไม่เจอ marker เลย - ไม่ต้องเซ็ต false ทันที เพราะอาจจะเจอใน callback ครั้งถัดไป
     
@@ -276,42 +251,25 @@ class MarkerVisionHandler:
         
         while (time.time() - start_time) < timeout:
             # ถ้าเจอ marker แล้ว รอเพิ่มอีกนิดเพื่อให้แน่ใจว่าได้ข้อมูลครบ
-            if self.marker_detected and (time.time() - last_detection_time) > 1.0:
+            if self.marker_detected and (time.time() - last_detection_time) > 0.5:  # Reduced wait time
                 print(f"✅ Marker detection stable after {time.time() - start_time:.1f}s")
                 break
             
             if self.marker_detected:
                 last_detection_time = time.time()
             
-            time.sleep(0.1)
+            time.sleep(0.05)  # Faster polling
         
-        # ถ้าไม่เจอ marker เลย ให้เซ็ตสถานะ node
+        # ถ้าไม่เจอ marker เลย ให้เซ็ตสถานะ node (แต่ไม่ overwrite ถ้าเจอแล้ว)
         if not self.marker_detected:
             current_node = self.graph_mapper.get_current_node()
-            if current_node and not hasattr(current_node, 'marker_checked'):
+            if current_node and not hasattr(current_node, 'marker_checked') and not current_node.marker:
+                # Only set to False if marker hasn't been detected yet in this node
                 current_node.marker = False
                 current_node.marker_checked = True
                 print(f"❌ No markers found at node {current_node.id}")
         
         return self.marker_detected
-    
-    def check_pending_markers_for_new_node(self):
-        """ตรวจสอบ pending markers สำหรับ node ใหม่"""
-        if self.pending_markers:
-            current_node = self.graph_mapper.get_current_node()
-            if current_node:
-                # นำ pending markers มาใส่ใน node ใหม่
-                current_node.marker = True
-                current_node.detected_marker_ids = [m['id'] for m in self.pending_markers]
-                current_node.lastVisited = datetime.now().isoformat()
-                
-                print(f"✅ Applied pending markers to node {current_node.id}")
-                print(f"   🆔 Marker IDs: {current_node.detected_marker_ids}")
-                
-                # ล้าง pending markers
-                self.pending_markers = []
-                return True
-        return False
     
     def start_continuous_detection(self, vision):
         """เริ่มการตรวจจับ marker อย่างต่อเนื่อง"""
@@ -319,14 +277,14 @@ class MarkerVisionHandler:
         try:
             # หยุด detection ก่อน (ถ้ามี)
             self.stop_continuous_detection(vision)
-            time.sleep(0.5)
+            time.sleep(0.3)  # Reduced delay
             
             # เริ่ม marker detection
             result = vision.sub_detect_info(name="marker", callback=self.on_detect_marker)
             if result:
                 self.is_active = True
                 print("✅ Marker detection system activated")
-                time.sleep(1.0)  # รอให้ระบบเริ่มทำงาน
+                time.sleep(0.5)  # Reduced initialization time
                 return True
             else:
                 print("❌ Failed to start marker detection")
@@ -351,11 +309,8 @@ class MarkerVisionHandler:
         self.detection_count = 0
         self.first_detection = True
         
-        # รีเซ็ต marker สถานะของ node ปัจจุบัน
-        current_node = self.graph_mapper.get_current_node()
-        if current_node:
-            current_node.marker = False
-            current_node.detected_marker_ids = []
+        # DON'T reset node marker status - let the scanning logic handle it
+        # This prevents overwriting markers detected in previous directions
     
     def get_detection_summary(self):
         """ข้อมูลสรุปการตรวจจับ marker"""
@@ -363,9 +318,7 @@ class MarkerVisionHandler:
             'detected': self.marker_detected,
             'count': len(self.markers),
             'total_detections': self.detection_count,
-            'marker_ids': [m.id for m in self.markers] if self.markers else [],
-            'pending_count': len(self.pending_markers),
-            'pending_ids': [m['id'] for m in self.pending_markers]
+            'marker_ids': [m.id for m in self.markers] if self.markers else []
         }
 
 # ===== Enhanced Graph Node =====
@@ -402,6 +355,7 @@ class GraphNode:
         # ENHANCED: Marker detection features
         self.marker = False
         self.detected_marker_ids = []  # เก็บ id marker ที่เจอใน node นี้
+        self.markers_per_direction = {'front': [], 'left': [], 'right': []}  # NEW: Markers per angle
         
         # Additional info
         self.lastVisited = datetime.now().isoformat()
@@ -874,11 +828,6 @@ class GraphMapper:
         if not self.frontierQueue:
             return None, None, None
         
-        best_frontier = None
-        best_direction = None
-        shortest_path = None
-        min_distance = float('inf')
-        
         # Clean up frontier queue first
         valid_frontiers = []
         for frontier_id in self.frontierQueue[:]:  # Copy list to avoid modification during iteration
@@ -897,6 +846,11 @@ class GraphMapper:
             return None, None, None
         
         print(f"🔍 Checking {len(self.frontierQueue)} valid frontier(s): {self.frontierQueue}")
+        
+        best_frontier = None
+        best_direction = None
+        shortest_path = None
+        min_distance = float('inf')
         
         for frontier_id in self.frontierQueue:
             frontier_node = self.nodes[frontier_id]
@@ -944,6 +898,22 @@ class GraphMapper:
             if node.detected_marker_ids:
                 print(f"   🆔 Marker IDs: {node.detected_marker_ids}")
             
+            if any(node.markers_per_direction.values()):
+                print(f"   📐 Markers per direction:")
+                for dir, ids in node.markers_per_direction.items():
+                    if ids:
+                        print(f"      {dir}: {ids} (count: {len(ids)})")
+            
+            # Display detailed marker information if available
+            if hasattr(node, 'marker_details') and node.marker_details:
+                print(f"   🎯 Detailed marker info:")
+                for dir, details in node.marker_details.items():
+                    if 'marker_types' in details and details['marker_types']:
+                        print(f"      {dir.upper()}: {details['direction_type']} at {details['angle']}° ({details['distance']:.1f}cm)")
+                        print(f"         Markers: {', '.join(details['marker_types'])}")
+                    else:
+                        print(f"      {dir.upper()}: {details.get('direction_type', 'UNKNOWN')} at {details['angle']}° ({details['distance']:.1f}cm)")
+            
             if node.sensorReadings:
                 print(f"   📡 Sensor readings:")
                 for direction, reading in node.sensorReadings.items():
@@ -968,7 +938,10 @@ class ToFSensorHandler:
         self.readings = {
             'front': [],
             'left': [],
-            'right': []
+            'right': [],
+            'front_marker': [],
+            'left_marker': [],
+            'right_marker': []
         }
         
         self.current_scan_direction = None
@@ -1057,8 +1030,11 @@ def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_m
     
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
     
-    # Check for pending markers from previous node
-    marker_handler.check_pending_markers_for_new_node()
+    # Initialize marker detection state for this node (only if not already set)
+    if not hasattr(current_node, 'marker_initialized'):
+        current_node.marker = False
+        current_node.detected_marker_ids = []
+        current_node.marker_initialized = True
     
     # Only scan if node hasn't been fully scanned before
     print(f"🆕 First time visiting node {current_node.id} - performing full scan with marker detection")
@@ -1067,91 +1043,160 @@ def scan_current_node_with_markers(gimbal, chassis, sensor, tof_handler, graph_m
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.5)
     
-    speed = 540
+    speed = 200  # Reduced gimbal speed for smoother movement
+    pitch_down = -45  # Tilt down significantly for better marker detection
     scan_results = {}
+    directions = ['front', 'left', 'right']
+    yaw_angles = {'front': 0, 'left': -90, 'right': 90}
     
-    # Scan front (0°)
-    print("🔍 Scanning FRONT (0°)...")
+    for direction in directions:
+        # Scan distance at pitch=0
+        print(f"🔍 Scanning {direction.upper()} ({yaw_angles[direction]}°)...")
+        gimbal.moveto(pitch=0, yaw=yaw_angles[direction], pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.5)
+        
+        tof_handler.start_scanning(direction)
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.8)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        distance = tof_handler.get_average_distance(direction)
+        wall = tof_handler.is_wall_detected(direction)
+        scan_results[direction] = distance
+        
+        print(f"📏 {direction.upper()} scan result: {distance:.2f}cm - {'WALL' if wall else 'OPEN'}")
+        
+        # Tilt down 45 degrees for marker detection
+        print(f"🔖 Tilting down 45 degrees for marker detection in {direction.upper()}...")
+        gimbal.moveto(pitch=pitch_down, yaw=yaw_angles[direction], pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.3)  # Reduced delay
+        
+        # Quick distance check first
+        tof_handler.start_scanning(f"{direction}_marker")
+        sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)  # Increased frequency
+        time.sleep(0.5)  # Reduced scan time
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        marker_distance = tof_handler.get_average_distance(f"{direction}_marker")
+        
+        # Determine direction type based on yaw angle
+        direction_type = ""
+        marker_angle = yaw_angles[direction]
+        if marker_angle == -90:
+            direction_type = "LEFT_SIDE"
+        elif marker_angle == 90:
+            direction_type = "RIGHT_SIDE"
+        elif marker_angle == 0:
+            direction_type = "CENTER"
+        
+        # Try vision detection for markers
+        print(f"🎯 Scanning for markers in {direction_type} at {marker_angle}°...")
+        
+        # Reset and start fresh marker detection
+        marker_handler.reset_detection()
+        
+        # Ensure vision system is active
+        if not marker_handler.is_active:
+            print("🔄 Reactivating marker detection...")
+            try:
+                vision.enable_detection(name="marker")
+                marker_handler.start_continuous_detection(vision)
+                time.sleep(0.3)
+            except Exception as e:
+                print(f"❌ Failed to reactivate: {e}")
+        
+        # Wait for marker detection with longer timeout for better detection
+        detected = marker_handler.wait_for_markers(timeout=2.0)
+        
+        if detected and marker_handler.markers:
+            # Get actual marker information from vision system
+            detected_markers = marker_handler.markers
+            marker_ids = [m.id for m in detected_markers]
+            
+            # Apply distance filter - only accept if within 30cm
+            if marker_distance > 0 and marker_distance < 30.0:
+                # Update node with real marker information
+                current_node.marker = True
+                
+                for marker_id in marker_ids:
+                    full_marker_id = f"ID{marker_id}_{direction_type}_{marker_angle}deg_{marker_distance:.1f}cm"
+                    current_node.detected_marker_ids.append(full_marker_id)
+                
+                current_node.markers_per_direction[direction] = [f"ID{mid}_{direction_type}" for mid in marker_ids]
+                
+                # Store detailed marker information
+                if not hasattr(current_node, 'marker_details'):
+                    current_node.marker_details = {}
+                current_node.marker_details[direction] = {
+                    'angle': marker_angle,
+                    'distance': marker_distance,
+                    'direction_type': direction_type,
+                    'marker_ids': marker_ids,
+                    'marker_types': [f"Marker ID {mid}" for mid in marker_ids]
+                }
+                
+                # Force update node properties
+                current_node.lastVisited = datetime.now().isoformat()
+                
+                print(f"✅ MARKERS DETECTED!")
+                print(f"   📐 Angle: {marker_angle}°")
+                print(f"   📏 Distance: {marker_distance:.2f}cm")
+                print(f"   🏷️ Direction: {direction_type}")
+                print(f"   🆔 Marker Types: {[f'ID {mid}' for mid in marker_ids]}")
+                print(f"✅ Node {current_node.id} updated with {len(marker_ids)} marker(s) on {direction_type}")
+            else:
+                print(f"❌ Markers detected by vision but outside 30cm range: {marker_distance:.2f}cm")
+                print(f"   🔍 Detected marker IDs: {marker_ids} (not counted)")
+        else:
+            print(f"❌ No markers detected in {direction_type} (distance: {marker_distance:.2f}cm)")
+        
+        # Turn back to pitch=0 with faster speed
+        gimbal.moveto(pitch=0, yaw=yaw_angles[direction], pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.2)  # Reduced delay
+    
+    # Return to center
+    print("🔍 Returning to center...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.5)
-    
-    tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.8)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    front_distance = tof_handler.get_average_distance('front')
-    front_wall = tof_handler.is_wall_detected('front')
-    scan_results['front'] = front_distance
-    
-    print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    
-    # Scan left (physical: -90°)
-    print("🔍 Scanning LEFT (physical: -90°)...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
-    
-    tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.8)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    left_distance = tof_handler.get_average_distance('left')
-    left_wall = tof_handler.is_wall_detected('left')
-    scan_results['left'] = left_distance
-    
-    print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
-    
-    # Scan right (physical: 90°)
-    print("🔍 Scanning RIGHT (physical: 90°)...")
-    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
-    
-    tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.8)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    right_distance = tof_handler.get_average_distance('right')
-    right_wall = tof_handler.is_wall_detected('right')
-    scan_results['right'] = right_distance
-    
-    print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
-    
-    # Return to center and actively wait for marker detection
-    print("🔍 Returning to center for marker detection...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
-    
-    # Active marker detection scan
-    print("🔖 Starting active marker detection...")
-    marker_detected = marker_handler.wait_for_markers(timeout=3.0)
-    
-    if marker_detected:
-        print(f"✅ Marker detection successful!")
-    else:
-        print(f"❌ No markers detected at this node")
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
     time.sleep(0.2)
     
     # Update graph with wall information
-    graph_mapper.update_current_node_walls(left_wall, right_wall, front_wall)
+    graph_mapper.update_current_node_walls(
+        left_wall=tof_handler.is_wall_detected('left'),
+        right_wall=tof_handler.is_wall_detected('right'),
+        front_wall=tof_handler.is_wall_detected('front')
+    )
     current_node.sensorReadings = scan_results
     
+    # Final check: ensure marker flag is correct based on detected markers
+    if current_node.detected_marker_ids and len(current_node.detected_marker_ids) > 0:
+        current_node.marker = True
+    
     # Report marker detection results
-    marker_summary = marker_handler.get_detection_summary()
     print(f"🔖 MARKER DETECTION RESULTS:")
     print(f"   📍 Node {current_node.id}: Markers detected = {current_node.marker}")
     if current_node.detected_marker_ids:
-        print(f"   🆔 Marker IDs in this node: {current_node.detected_marker_ids}")
-    if marker_handler.pending_markers:
-        print(f"   📡 Pending markers for next node: {len(marker_handler.pending_markers)}")
+        print(f"   🆔 Total Marker IDs: {current_node.detected_marker_ids}")
+    for dir, ids in current_node.markers_per_direction.items():
+        if ids:
+            print(f"   📐 {dir.upper()}: {len(ids)} markers {ids}")
+    
+    # Display detailed marker information
+    if hasattr(current_node, 'marker_details') and current_node.marker_details:
+        print(f"   🎯 DETAILED MARKER INFO:")
+        for dir, details in current_node.marker_details.items():
+            if 'marker_types' in details and details['marker_types']:
+                print(f"      {dir.upper()}: {details['direction_type']} at {details['angle']}° (distance: {details['distance']:.1f}cm)")
+                print(f"         Markers: {', '.join(details['marker_types'])}")
+            else:
+                print(f"      {dir.upper()}: {details.get('direction_type', 'UNKNOWN')} at {details['angle']}° (distance: {details['distance']:.1f}cm)")
     
     print(f"✅ Node {current_node.id} scan complete:")
-    print(f"   🧱 Walls detected: Left={left_wall}, Right={right_wall}, Front={front_wall}")
-    print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    print(f"   🧱 Walls detected: Left={tof_handler.is_wall_detected('left')}, Right={tof_handler.is_wall_detected('right')}, Front={tof_handler.is_wall_detected('front')}")
+    print(f"   📏 Distances: Left={scan_results['left']:.1f}cm, Right={scan_results['right']:.1f}cm, Front={scan_results['front']:.1f}cm")
     
     return scan_results
 
@@ -1161,12 +1206,20 @@ def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, grap
     scanning_iterations = 0
     dead_end_reversals = 0
     
-    # CRITICAL FIX: Start marker detection BEFORE exploration begins
+    # Initialize marker detection system for vision-based marker identification
     print("🔍 Initializing marker detection system...")
+    
+    # Enable marker detection in vision system
+    try:
+        vision.enable_detection(name="marker")
+        print("✅ Vision marker detection enabled")
+    except Exception as e:
+        print(f"⚠️ Could not enable marker detection: {e}")
+    
     marker_detection_success = marker_handler.start_continuous_detection(vision)
     
     if not marker_detection_success:
-        print("⚠️ Warning: Marker detection failed to initialize - continuing without markers")
+        print("⚠️ Warning: Marker detection failed to initialize - continuing with distance-only detection")
     else:
         print("✅ Marker detection system ready!")
     
@@ -1203,8 +1256,6 @@ def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, grap
                         break
             else:
                 print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
-                # Check for pending markers even on revisited nodes
-                marker_handler.check_pending_markers_for_new_node()
                 # Just update the graph structure without scanning
                 graph_mapper.update_unexplored_exits(current_node)
                 graph_mapper.build_connections()
@@ -1215,11 +1266,15 @@ def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, grap
             graph_mapper.print_graph_summary()
             
             # Show marker detection status
-            marker_summary = marker_handler.get_detection_summary()
             print(f"\n🔖 CURRENT MARKER STATUS:")
-            print(f"   📊 Total detections: {marker_summary['total_detections']}")
-            print(f"   📍 Current node markers: {marker_summary['marker_ids']}")
-            print(f"   📡 Pending for next node: {marker_summary['pending_ids']}")
+            current_node = graph_mapper.get_current_node()
+            if current_node and current_node.marker:
+                print(f"   📍 Current node has markers: {current_node.detected_marker_ids}")
+                if hasattr(current_node, 'marker_details') and current_node.marker_details:
+                    for dir, details in current_node.marker_details.items():
+                        print(f"      {dir.upper()}: {details['direction_type']} at {details['angle']}° ({details['distance']:.1f}cm)")
+            else:
+                print(f"   📍 Current node: No markers detected")
             
             # Find next direction to explore
             graph_mapper.previous_node = current_node
@@ -1312,14 +1367,39 @@ def explore_autonomously_with_markers(gimbal, chassis, sensor, tof_handler, grap
     print(f"   🎯 Dead end handling: {dead_end_reversals} reversals performed")
     
     # Marker detection summary
-    marker_summary = marker_handler.get_detection_summary()
     total_marker_nodes = sum(1 for node in graph_mapper.nodes.values() if node.marker)
     total_markers_found = sum(len(node.detected_marker_ids) for node in graph_mapper.nodes.values())
+    
+    # Collect marker type statistics
+    marker_types = {}
+    direction_stats = {}
+    for node in graph_mapper.nodes.values():
+        if hasattr(node, 'marker_details') and node.marker_details:
+            for dir, details in node.marker_details.items():
+                # Count by direction type
+                direction_type = details.get('direction_type', 'UNKNOWN')
+                if direction_type not in direction_stats:
+                    direction_stats[direction_type] = 0
+                direction_stats[direction_type] += 1
+                
+                # Count by actual marker IDs
+                if 'marker_types' in details and details['marker_types']:
+                    for marker_type in details['marker_types']:
+                        if marker_type not in marker_types:
+                            marker_types[marker_type] = 0
+                        marker_types[marker_type] += 1
     
     print(f"\n🔖 MARKER DETECTION SUMMARY:")
     print(f"   🎯 Nodes with markers: {total_marker_nodes}")
     print(f"   🏷️ Total markers found: {total_markers_found}")
-    print(f"   📊 Detection events: {marker_summary['total_detections']}")
+    if marker_types:
+        print(f"   📊 Marker types found:")
+        for marker_type, count in marker_types.items():
+            print(f"      {marker_type}: {count} markers")
+    if direction_stats:
+        print(f"   🧭 Markers by direction:")
+        for direction_type, count in direction_stats.items():
+            print(f"      {direction_type}: {count} markers")
     
     graph_mapper.print_graph_summary()
     
@@ -1387,7 +1467,21 @@ def generate_enhanced_exploration_report(graph_mapper, nodes_explored, dead_end_
         print(f"\n🔖 DETAILED MARKER LOCATIONS:")
         for node_id, node in graph_mapper.nodes.items():
             if node.marker and node.detected_marker_ids:
-                print(f"   📍 Node {node.id} at {node.position}: Markers {node.detected_marker_ids}")
+                print(f"   📍 Node {node.id} at {node.position}: Total Markers {node.detected_marker_ids}")
+                for dir, ids in node.markers_per_direction.items():
+                    if ids:
+                        print(f"      {dir.upper()}: {ids} (count: {len(ids)})")
+                
+                # Display detailed marker information
+                if hasattr(node, 'marker_details') and node.marker_details:
+                    print(f"      🎯 Marker Details:")
+                    for dir, details in node.marker_details.items():
+                        if 'marker_types' in details and details['marker_types']:
+                            print(f"         {dir.upper()}: {details['direction_type']} at {details['angle']}° ({details['distance']:.1f}cm)")
+                            print(f"            Markers: {', '.join(details['marker_types'])}")
+                        else:
+                            print(f"         {dir.upper()}: {details.get('direction_type', 'UNKNOWN')} at {details['angle']}° ({details['distance']:.1f}cm)")
+
     
     # Unexplored areas
     if graph_mapper.frontierQueue:

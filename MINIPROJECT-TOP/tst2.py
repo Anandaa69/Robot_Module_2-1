@@ -352,9 +352,9 @@ def simple_marker_detection_sequence(vision, marker_handler, duration=10):
                 summary = marker_handler.get_detection_summary()
                 remaining_time = duration - (time.time() - start_time)
                 print(f"📊 เวลาเหลือ: {remaining_time:.1f}s | "
-                      f"Detected: {summary['detected']} | "
-                      f"Markers: {summary['count']} | "
-                      f"Total: {summary['total_detections']}")
+                    f"Detected: {summary['detected']} | "
+                    f"Markers: {summary['count']} | "
+                    f"Total: {summary['total_detections']}")
                 
                 # หากเจอ marker แล้วให้แสดงรายละเอียด
                 if summary['detected']:
