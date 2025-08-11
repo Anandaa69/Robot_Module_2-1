@@ -169,13 +169,13 @@ class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
         self.position = position  # (x, y)
-        
+
         # Wall detection
         self.wallLeft = False
         self.wallRight = False
         self.wallFront = False
         self.wallBack = False
-        
+
         # Neighbors (connected nodes)
         self.neighbors = {
             'north': None,
@@ -183,22 +183,25 @@ class GraphNode:
             'east': None,
             'west': None
         }
-        
+
         # Exploration state
         self.visited = True
         self.visitCount = 1
         self.exploredDirections = []
         self.unexploredExits = []
         self.isDeadEnd = False
-        
+
         # NEW: Add flag to track if node has been fully scanned
         self.fullyScanned = False
         self.scanTimestamp = None
-        
+
         # Additional info
         self.marker = False
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
+
+        # NEW: เก็บทิศทางตอนเข้ามาครั้งแรก
+        self.entryDirection = None
 
 # ===== Graph Mapper =====
 # ===== Fixed GraphMapper Class =====
@@ -210,6 +213,7 @@ class GraphMapper:
         self.frontierQueue = []
         self.pathStack = []
         self.visitedNodes = set()
+        self.previous_node = None
         
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -217,10 +221,43 @@ class GraphMapper:
     def create_node(self, position):
         node_id = self.get_node_id(position)
         if node_id not in self.nodes:
-            self.nodes[node_id] = GraphNode(node_id, position)
+            node = GraphNode(node_id, position)
+            # บันทึกทิศทางตอนเข้ามาครั้งแรก
+            node.entryDirection = self.currentDirection
+            self.nodes[node_id] = node
             self.visitedNodes.add(node_id)
         return self.nodes[node_id]
-    
+
+    def rotate_to_direction(self, target_direction, movement_controller):
+        """หมุนหุ่นไปให้ตรง target_direction โดยไม่เดิน"""
+        global ROBOT_FACE
+        direction_order = ['north', 'east', 'south', 'west']
+        current_idx = direction_order.index(self.currentDirection)
+        target_idx = direction_order.index(target_direction)
+
+        diff = (target_idx - current_idx) % 4
+        if diff == 1:
+            movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 1
+        elif diff == 3:
+            movement_controller.rotate_90_degrees_left()
+            ROBOT_FACE += 1
+        elif diff == 2:
+            movement_controller.rotate_90_degrees_right()
+            movement_controller.rotate_90_degrees_right()
+            ROBOT_FACE += 2
+
+        self.currentDirection = target_direction
+
+    def check_and_correct_direction(self, movement_controller):
+        """ถ้าโหนดปัจจุบันเคยบันทึก entryDirection ให้หมุนกลับไปทิศนั้น"""
+        current_node = self.get_current_node()
+        if current_node and current_node.entryDirection:
+            if self.currentDirection != current_node.entryDirection:
+                print(f"🔄 Correcting direction from {self.currentDirection} -> {current_node.entryDirection}")
+                self.rotate_to_direction(current_node.entryDirection, movement_controller)
+                print(f"✅ Direction corrected to {self.currentDirection}")
+
     def get_current_node(self):
         node_id = self.get_node_id(self.currentPosition)
         return self.nodes.get(node_id)
@@ -510,17 +547,17 @@ class GraphMapper:
     def handle_dead_end(self, movement_controller):
         """Handle dead end situation by reversing instead of turning around"""
         global ROBOT_FACE
-        
+
         print(f"🚫 === DEAD END HANDLER ACTIVATED ===")
         current_node = self.get_current_node()
-        
+
         if current_node:
             print(f"📍 Dead end at position: {current_node.position}")
             print(f"🧱 Walls: Front={current_node.wallFront}, Left={current_node.wallLeft}, Right={current_node.wallRight}")
-        
+
         # Use the new reverse method instead of turning around
         movement_controller.reverse_from_dead_end()
-        
+
         # Update position after reversing (move back in opposite direction)
         reverse_direction_map = {
             'north': 'south',
@@ -528,16 +565,17 @@ class GraphMapper:
             'east': 'west',
             'west': 'east'
         }
-        
+
         reverse_direction = reverse_direction_map[self.currentDirection]
         self.currentPosition = self.get_next_position(reverse_direction)
-        
+
         print(f"🔙 Reversed to position: {self.currentPosition}")
         print(f"🧭 Still facing: {self.currentDirection}")
-        
-        # Robot face doesn't change since we only moved backward
         print(f"🤖 Robot face unchanged: {ROBOT_FACE}")
-        
+
+        # 🔄 ปรับทิศทางให้ตรงกับ entryDirection ของโหนดนี้
+        self.check_and_correct_direction(movement_controller)
+
         return True
     
     def move_to_direction(self, target_direction, movement_controller):
