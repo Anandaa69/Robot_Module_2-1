@@ -43,10 +43,10 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.9
+        self.KP = 1.5
         self.KI = 0.3
-        self.KD = 10
-        self.RAMP_UP_TIME = 0.5
+        self.KD = 4
+        self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
@@ -106,21 +106,21 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
                 else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1.5)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.02:
+                if abs(relative_position - target_distance) < 0.017:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
-                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
-                    time.sleep(0.2)
+                    # time.sleep(0.2)
                     break
                     
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
-            self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
+            # self.chassis.drive_speed(x=0, y=0, z=0, timeout=1)
     
     def rotate_90_degrees_right(self):
         """Rotate 90 degrees clockwise"""
@@ -269,7 +269,7 @@ class GraphMapper:
         # Define all possible directions from this node
         possible_directions = {
             'north': (x, y + 1),
-            'south': (x, y - 1), 
+            'south': (x, y - 1),
             'east': (x + 1, y),
             'west': (x - 1, y)
         }
@@ -292,7 +292,7 @@ class GraphMapper:
         wall_status[current_mapping['left']] = node.wallLeft  
         wall_status[current_mapping['right']] = node.wallRight
         
-        # For the back direction (opposite of front), assume no wall if we came from there
+        # For the back direction (opposite of front)
         back_direction = None
         if current_mapping['front'] == 'north': back_direction = 'south'
         elif current_mapping['front'] == 'south': back_direction = 'north'
@@ -300,9 +300,10 @@ class GraphMapper:
         elif current_mapping['front'] == 'west': back_direction = 'east'
         
         if back_direction:
-            # Check if we have a neighbor in the back direction (meaning we came from there)
             back_neighbor_pos = possible_directions[back_direction] 
             back_neighbor_id = self.get_node_id(back_neighbor_pos)
+            
+            # FIXED: Only assume no wall if we actually came from there AND have a path
             if back_neighbor_id in self.nodes:
                 wall_status[back_direction] = False  # No wall if we came from there
             else:
@@ -340,14 +341,26 @@ class GraphMapper:
         elif not node.unexploredExits and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
-            
-        # Update dead end status
-        all_blocked = all(wall_status.get(direction, True) for direction in ['north', 'south', 'east', 'west'])
-        node.isDeadEnd = all_blocked
         
-        # NEW: Check if this is a dead end (all directions blocked)
-        if all_blocked:
-            print(f"🚫 DEAD END DETECTED at {node.id} - all directions blocked!")
+        # FIXED: Simple dead end detection - check only 3 scanned directions (front, left, right)
+        # Dead end = all 3 sensor directions detect walls
+        is_dead_end = node.wallFront and node.wallLeft and node.wallRight
+        
+        node.isDeadEnd = is_dead_end
+        
+        print(f"🔍 Dead end analysis for {node.id}:")
+        print(f"   📍 Front: {'BLOCKED' if node.wallFront else 'OPEN'}")
+        print(f"   📍 Left:  {'BLOCKED' if node.wallLeft else 'OPEN'}")
+        print(f"   📍 Right: {'BLOCKED' if node.wallRight else 'OPEN'}")
+        print(f"   🎯 Dead End Status: {is_dead_end}")
+        
+        if is_dead_end:
+            print(f"🚫 DEAD END CONFIRMED at {node.id} - Front+Left+Right all blocked!")
+            
+            # Remove from frontier if it's a dead end
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🧹 Removed dead end {node.id} from frontier queue")
     
     def is_dead_end(self, node=None):
         """Check if current node or given node is a dead end"""
@@ -747,7 +760,7 @@ class ToFSensorHandler:
         self.CALIBRATION_Y_INTERCEPT = 3.8409
         self.WINDOW_SIZE = 5
         self.tof_buffer = []
-        self.WALL_THRESHOLD = 35.0
+        self.WALL_THRESHOLD = 50.00
         
         self.readings = {
             'front': [],
@@ -860,7 +873,7 @@ def scan_current_node(gimbal, chassis, sensor, tof_handler, graph_mapper):
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.5)
     
-    speed = 540
+    speed = 480
     scan_results = {}
     
     # Scan front (0°)
@@ -1124,7 +1137,7 @@ def generate_exploration_report(graph_mapper, nodes_explored, dead_end_reversals
     for node in graph_mapper.nodes.values():
         if hasattr(node, 'sensorReadings') and node.sensorReadings:
             for direction, distance in node.sensorReadings.items():
-                if distance <= 35.0:  # Wall threshold
+                if distance <= 50.0:  # Wall threshold
                     total_walls += 1
                 else:
                     total_openings += 1
