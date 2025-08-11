@@ -1,13 +1,25 @@
-from robomaster import robot
-import cv2
-import numpy as np
-import csv
-import time
-
 # -*-coding:utf-8-*-
-# ... (โค้ดส่วนต้นเหมือนเดิม)
+# Copyright (c) 2020 DJI.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License in the file LICENSE.txt or at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import time
+
+import cv2
+import robomaster
+from robomaster import robot
+from robomaster import vision
+from robomaster import camera
+
 
 markers = []
 window_size = 720
@@ -41,6 +53,7 @@ class MarkerInfo:
         return self._info
 
 
+
 def on_detect_marker(marker_info):
     number = len(marker_info)
     markers.clear()
@@ -50,31 +63,15 @@ def on_detect_marker(marker_info):
         print("marker:{0} x:{1}, y:{2}, w:{3}, h:{4}".format(info, x * height_window, y * weight_window, w * height_window, h * weight_window))
 
 
-def gimbal_recenter_and_rotate(ep_gimbal, angle=180, speed=20):
-    # รีเซ็ตกิมบอลกลับศูนย์
-    print("Recenter gimbal...")
-    ep_gimbal.recenter().wait_for_completed()
-    time.sleep(1)
-
-    # หมุนกิมบอล 180 องศา แบบช้าๆ
-    print(f"Rotate gimbal by {angle} degrees at speed {speed}...")
-    ep_gimbal.rotate(yaw=angle, speed=speed).wait_for_completed()
-    print("Rotation completed.")
-
-
 if __name__ == '__main__':
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
 
     ep_vision = ep_robot.vision
     ep_camera = ep_robot.camera
-    ep_gimbal = ep_robot.gimbal
 
     ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
     result = ep_vision.sub_detect_info(name="marker", callback=on_detect_marker)
-
-    # รีเซ็ตและหมุนกิมบอล
-    gimbal_recenter_and_rotate(ep_gimbal, angle=180, speed=20)
 
     for i in range(0, 5000):
         img = ep_camera.read_cv2_image(strategy="newest", timeout=0.5)
