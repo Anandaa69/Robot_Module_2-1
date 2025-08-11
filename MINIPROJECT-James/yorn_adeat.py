@@ -1193,7 +1193,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with smart backtracking and dead end reversal
         explore_autonomously(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, max_nodes=49)
+                        graph_mapper, movement_controller, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
