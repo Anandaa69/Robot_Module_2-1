@@ -43,8 +43,8 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.5
-        self.KI = 0.3
+        self.KP = 1.1
+        self.KI = 0
         self.KD = 4
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
@@ -240,6 +240,9 @@ class GraphMapper:
         self.pathStack = []
         self.visitedNodes = set()
         self.previous_node = None
+        # Override methods เพื่อใช้ priority-based exploration
+        self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
+        self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -571,7 +574,141 @@ class GraphMapper:
         
         print(f"✅ Successfully reversed to {self.currentPosition}, still facing {self.currentDirection}")
         return True
-    
+
+    def find_next_exploration_direction_with_priority(self):
+        """Find next exploration direction with LEFT-first priority"""
+        current_node = self.get_current_node()
+        if not current_node:
+            return None
+        
+        if self.is_dead_end(current_node):
+            print(f"🚫 Current node is a dead end - no exploration directions available")
+            return None
+        
+        print(f"🧭 Current robot facing: {self.currentDirection}")
+        print(f"🔍 Available unexplored exits: {current_node.unexploredExits}")
+        
+        # กำหนดลำดับความสำคัญตามทิศทางสัมพันธ์ (LEFT-FIRST STRATEGY)
+        # แปลงทิศทางสัมบูรณ์กลับเป็นทิศทางสัมพันธ์เพื่อจัดลำดับ
+        direction_map = {
+            'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
+            'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
+            'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
+            'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
+        }
+        
+        current_mapping = direction_map[self.currentDirection]
+        
+        # สร้าง reverse mapping (จากทิศทางสัมบูรณ์เป็นทิศทางสัมพันธ์)
+        reverse_mapping = {v: k for k, v in current_mapping.items()}
+        
+        # ลำดับความสำคัญ: ซ้าย → หน้า → ขวา → หลัง
+        priority_order = ['left', 'front', 'right', 'back']
+        
+        print(f"🎯 Checking exploration priority order: {priority_order}")
+        
+        # ตรวจสอบตามลำดับความสำคัญ
+        for relative_direction in priority_order:
+            # แปลงเป็นทิศทางสัมบูรณ์
+            absolute_direction = current_mapping.get(relative_direction)
+            
+            if absolute_direction and absolute_direction in current_node.unexploredExits:
+                if self.can_move_to_direction_absolute(absolute_direction):
+                    print(f"✅ Selected direction: {relative_direction} ({absolute_direction})")
+                    return absolute_direction
+                else:
+                    print(f"❌ {relative_direction} ({absolute_direction}) is blocked by wall!")
+                    # ลบออกจาก unexplored exits เพราะมีกำแพง
+                    current_node.unexploredExits.remove(absolute_direction)
+        
+        print(f"❌ No valid exploration direction found")
+        return None
+
+    def update_unexplored_exits_with_priority(self, node):
+        """Update unexplored exits with priority ordering"""
+        node.unexploredExits = []
+        
+        x, y = node.position
+        
+        # กำหนดลำดับการตรวจสอบตามความสำคัญ LEFT-FIRST
+        # แต่เก็บเป็นทิศทางสัมบูรณ์
+        direction_map = {
+            'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
+            'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
+            'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
+            'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
+        }
+        
+        current_mapping = direction_map[self.currentDirection]
+        
+        # ลำดับความสำคัญ
+        priority_order = ['left', 'front', 'right', 'back']
+        
+        possible_directions = {
+            'north': (x, y + 1),
+            'south': (x, y - 1),
+            'east': (x + 1, y),
+            'west': (x - 1, y)
+        }
+        
+        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
+        print(f"🔍 Wall status: {node.walls}")
+        print(f"🤖 Robot facing: {self.currentDirection}")
+        
+        # ตรวจสอบตามลำดับความสำคัญและเพิ่มเข้า unexploredExits
+        for relative_dir in priority_order:
+            absolute_dir = current_mapping[relative_dir]
+            target_pos = possible_directions[absolute_dir]
+            target_node_id = self.get_node_id(target_pos)
+            
+            # ตรวจสอบเงื่อนไขเหมือนเดิม
+            is_blocked = node.walls.get(absolute_dir, True)
+            already_explored = absolute_dir in node.exploredDirections
+            target_exists = target_node_id in self.nodes
+            target_fully_explored = False
+            if target_exists:
+                target_node = self.nodes[target_node_id]
+                target_fully_explored = target_node.fullyScanned
+            
+            print(f"   📍 {relative_dir} ({absolute_dir}):")
+            print(f"      🚧 Blocked: {is_blocked}")
+            print(f"      ✅ Already explored: {already_explored}")
+            print(f"      🏗️  Target exists: {target_exists}")
+            print(f"      🔍 Target fully explored: {target_fully_explored}")
+            
+            should_explore = (not is_blocked and 
+                            not already_explored and 
+                            (not target_exists or not target_fully_explored))
+            
+            if should_explore:
+                node.unexploredExits.append(absolute_dir)
+                print(f"      ✅ ADDED to unexplored exits! (Priority: {relative_dir})")
+            else:
+                print(f"      ❌ NOT added to unexplored exits")
+        
+        print(f"🎯 Final unexplored exits (ordered by priority): {node.unexploredExits}")
+        
+        # อัปเดต frontier queue
+        has_unexplored = len(node.unexploredExits) > 0
+        
+        if has_unexplored and node.id not in self.frontierQueue:
+            self.frontierQueue.append(node.id)
+            print(f"🚀 Added {node.id} to frontier queue")
+        elif not has_unexplored and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
+            print(f"🧹 Removed {node.id} from frontier queue")
+        
+        # Dead end detection
+        blocked_count = sum(1 for blocked in node.walls.values() if blocked)
+        is_dead_end = blocked_count >= 3
+        node.isDeadEnd = is_dead_end
+        
+        if is_dead_end:
+            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🧹 Removed dead end {node.id} from frontier queue")
+
     def find_next_exploration_direction(self):
         """Find the next ABSOLUTE direction to explore"""
         current_node = self.get_current_node()
@@ -965,6 +1102,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     speed = 480
     scan_results = {}
+    ep_chassis = ep_robot.chassis
     
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
@@ -972,7 +1110,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     time.sleep(0.2)
     
     tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
@@ -982,10 +1120,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
     
-    front_wall = tof_handler.is_wall_detected('front')
-    if front_wall  < 0.02:
-        chassis.move(x=-0.05, y=0, z=0).wait_for_completed()
-        time.sleep(0.5)
+    # Check if front distance is too close and move away
+    if front_distance < 25.0:
+        move_distance = -(30 - front_distance)
+        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
+        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.5).wait_for_completed()
     
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
@@ -993,7 +1132,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     time.sleep(0.2)
     
     tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
@@ -1003,19 +1142,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    left_wall = tof_handler.is_wall_detected('left')
-    if left_wall  < 0.02:
-        print(f"⚠️ TOO CLOSE TO LEFT WALL ({left_distance:.1f}cm) - Moving right")
-        chassis.move(x=0, y=0.05, z=0).wait_for_completed()
-        time.sleep(0.5)
-
+    # Check if left distance is too close and move away
+    if left_distance < 25:
+        move_distance = 30 - left_distance
+        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
+        ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+    
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
     
     tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
@@ -1024,11 +1163,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     scan_results['right'] = right_distance
     
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
-    right_wall = tof_handler.is_wall_detected('right') 
-    if right_wall < 0.02:
-        print(f"⚠️ TOO CLOSE TO RIGHT WALL ({right_distance:.1f}cm) - Moving left")
-        chassis.move(x=0, y=-0.05, z=0).wait_for_completed()
-        time.sleep(0.5)
+    
+    # Check if right distance is too close and move away
+    if right_distance < 0.25:
+        move_distance = -(30 - right_distance)
+        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
+        ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+    
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
