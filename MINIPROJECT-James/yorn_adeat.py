@@ -368,8 +368,8 @@ class GraphMapper:
             # 2. Not already explored from this node AND
             # 3. Target doesn't exist OR target exists but hasn't been fully scanned
             should_explore = (not is_blocked and 
-                             not already_explored and 
-                             (not target_exists or not target_fully_explored))
+                            not already_explored and 
+                            3(not target_exists or not target_fully_explored))
             
             if should_explore:
                 node.unexploredExits.append(direction)
