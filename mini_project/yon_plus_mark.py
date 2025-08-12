@@ -187,9 +187,16 @@ class MovementController:
             while not target_reached:
                 now = time.time()
                 dt = now - last_time
+                if dt < 0.01:
+                    time.sleep(0.01)
+                    continue
                 last_time = now
                 elapsed_time = now - start_time
                 
+                if elapsed_time > 10:  # Safety max time
+                    print("⚠️ Max movement time exceeded!")
+                    break
+
                 if axis == 'x':
                     current_position = self.current_x
                 else:
@@ -210,19 +217,27 @@ class MovementController:
                 speed = max(min(ramped_output, max_speed), -max_speed)
                 
                 if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0)
                 else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+                    self.chassis.drive_speed(x=speed * direction, y=0, z=0)
+
+                # Print debug
+                print(f"Debug: rel_pos={relative_position:.3f}, speed={speed:.2f}, error={pid.prev_error:.3f}")
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.017:
+                if abs(relative_position - target_distance) < 0.02:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
-                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
+                    self.chassis.drive_speed(x=0, y=0, z=0)
+                    time.sleep(0.1)
                     target_reached = True
                     break
+                
+                time.sleep(0.05)  # Slow down loop for stable position updates
                     
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
+        finally:
+            self.chassis.drive_speed(x=0, y=0, z=0)
     
     def rotate_90_degrees_right(self):
         """Rotate 90 degrees clockwise"""
@@ -1220,105 +1235,8 @@ class ToFSensorHandler:
         return is_wall
 
 # ===== Integrated Scanning Function =====
-def scan_for_markers_all_directions(gimbal, chassis, sensor, marker_handler, tof_handler):
-    """สแกนหา marker ในทุกทิศทาง พร้อมตรวจระยะทางและบอกองศา"""
-    print(f"\n🔍 === SCANNING FOR MARKERS WITH DIRECTION ANGLES ===")
-    print(f"🔄 NEW: Rotate first, then tilt for better stability!")
-    
-    # ล็อคล้อ
-    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-    time.sleep(0.1)
-    
-    speed = 480
-    pitch_angle = -20
-    directions = ['front', 'left', 'right']
-    yaw_angles = {'front': 0, 'left': -90, 'right': 90}
-    
-    all_results = {}
-    
-    for direction in directions:
-        current_angle = yaw_angles[direction]
-        direction_name = get_direction_name(current_angle)
-        compass_dir = get_compass_direction(current_angle)
-        
-        print(f"\n🧭 Scanning {direction_name} | Gimbal Yaw: {current_angle}° | Compass: {compass_dir}")
-        print(f"   📍 Target: {direction.upper()} direction")
-        
-        # แก้ไข: หมุน gimbal ก่อนแล้วค่อยก้ม (หมุนก่อน ก้มทีหลัง)
-        print(f"   🔄 Step 1: Rotating gimbal to {current_angle}°...")
-        gimbal.moveto(pitch=0, yaw=current_angle, 
-                     pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-        time.sleep(0.5)  # รอให้การหมุนเสถียร
-        print(f"      ✅ Rotation complete")
-        
-        print(f"   📐 Step 2: Tilting gimbal to {pitch_angle}°...")
-        gimbal.moveto(pitch=pitch_angle, yaw=current_angle, 
-                     pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-        time.sleep(0.5)  # รอให้การก้มเสถียร
-        print(f"      ✅ Tilt complete")
-        
-        # วัดระยะทางก่อน
-        print("📏 Measuring distance...")
-        tof_handler.start_scanning(direction)
-        sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-        time.sleep(0.3)
-        tof_handler.stop_scanning(sensor.unsub_distance)
-        
-        distance = tof_handler.get_average_distance(direction)
-        print(f"   📐 Distance: {distance:.2f}cm at {current_angle}°")
-        
-        # ตรวจ marker เฉพาะถ้าระยะใกล้พอ
-        if distance > 0 and distance <= 40.0:
-            print("✅ Distance OK - Scanning for markers...")
-            
-            # รีเซ็ตและเริ่มสแกน marker
-            marker_handler.reset_detection()
-            detected = marker_handler.wait_for_markers(timeout=2.5)
-            
-            if detected and marker_handler.markers:
-                marker_ids = [m.id for m in marker_handler.markers]
-                all_results[direction] = {
-                    'angle': current_angle,
-                    'direction_name': direction_name,
-                    'compass_direction': compass_dir,
-                    'marker_ids': marker_ids,
-                    'distance': distance,
-                    'timestamp': datetime.now().isoformat()
-                }
-                
-                print(f"🎯 FOUND MARKERS: {marker_ids}")
-                print(f"   📍 Direction: {direction_name} ({current_angle}°)")
-                print(f"   📏 Distance: {distance:.2f}cm")
-                print(f"   🧭 Compass: {compass_dir}")
-                print(f"   ✅ {direction.upper()} scan complete with markers")
-            else:
-                print(f"❌ No markers found at {direction_name} ({current_angle}°)")
-                all_results[direction] = None
-                print(f"   ✅ {direction.upper()} scan complete (no markers)")
-        else:
-            print(f"❌ Too far ({distance:.2f}cm > 40cm) at {current_angle}° - Skipping marker detection")
-            all_results[direction] = None
-            print(f"   ✅ {direction.upper()} scan complete (distance too far)")
-        
-        time.sleep(0.1)
-    
-    # กลับไปกึ่งกลาง
-    print(f"   📐 Returning gimbal to center (0°)...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.1)
-    print(f"      ✅ Center complete")
-    
-    # ปลดล็อคล้อ
-    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
-    
-    # แสดงสรุปการสแกน
-    print(f"\n🎯 === MARKER SCANNING COMPLETE ===")
-    print(f"📊 Summary: {len([r for r in all_results.values() if r])} directions with markers found")
-    
-    return all_results
-
 def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler=None, vision=None):
-    """NEW: Scan current node and update graph with ABSOLUTE directions + marker detection"""
+    """NEW: Scan current node and update graph with ABSOLUTE directions + marker detection in one round"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
     
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
@@ -1346,84 +1264,118 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     time.sleep(0.2)
     
     speed = 480
-    scan_results = {}
+    pitch_angle = -20
+    directions = ['front', 'left', 'right']
+    yaw_angles = {'front': 0, 'left': -90, 'right': 90}
     
-    # PHASE 1: Wall Detection Scan
-    print("\n🔍 === PHASE 1: WALL DETECTION ===")
+    scan_results = {}  # For wall distances
+    marker_results = {}  # For markers
     
-    # Scan front (0°)
-    print("🔍 Scanning FRONT (0°)...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    print("\n🔍 === INTEGRATED SCAN: WALLS + MARKERS IN ONE ROUND ===")
     
-    tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    front_distance = tof_handler.get_average_distance('front')
-    front_wall = tof_handler.is_wall_detected('front')
-    scan_results['front'] = front_distance
-    
-    print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    
-    # Scan left (physical: -90°)
-    print("🔍 Scanning LEFT (physical: -90°)...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
-    
-    tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    left_distance = tof_handler.get_average_distance('left')
-    left_wall = tof_handler.is_wall_detected('left')
-    scan_results['left'] = left_distance
-    
-    print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
-    
-    # Scan right (physical: 90°)
-    print("🔍 Scanning RIGHT (physical: 90°)...")
-    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
-    
-    tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    right_distance = tof_handler.get_average_distance('right')
-    right_wall = tof_handler.is_wall_detected('right')
-    scan_results['right'] = right_distance
-    
-    print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
-    
-    # Return to center after wall scanning
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
-    
-    # PHASE 2: Marker Detection Scan (if marker handler is provided)
-    marker_results = {}
-    if marker_handler and vision:
-        print("\n🎯 === PHASE 2: MARKER DETECTION ===")
-        marker_results = scan_for_markers_all_directions(gimbal, chassis, sensor, marker_handler, tof_handler)
+    for direction in directions:
+        current_angle = yaw_angles[direction]
+        direction_name = get_direction_name(current_angle)
+        compass_dir = get_compass_direction(current_angle)
         
-        # Update node with marker information
-        graph_mapper.update_current_node_markers(marker_results)
+        print(f"\n🧭 Scanning {direction_name} | Gimbal Yaw: {current_angle}° | Compass: {compass_dir}")
+        print(f"   📍 Target: {direction.upper()} direction")
+        
+        # Step 1: Move to pitch=0, yaw for wall detection
+        print(f"   🔄 Rotating gimbal to {current_angle}° at pitch=0...")
+        gimbal.moveto(pitch=0, yaw=current_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.2)
+        print(f"      ✅ Rotation complete")
+        
+        # Measure wall distance at pitch=0
+        print("📏 Measuring wall distance at pitch=0...")
+        tof_handler.start_scanning(direction)
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        wall_distance = tof_handler.get_average_distance(direction)
+        wall_detected = tof_handler.is_wall_detected(direction)
+        scan_results[direction] = wall_distance
+        
+        print(f"   📐 Wall distance: {wall_distance:.2f}cm at {current_angle}° - {'WALL' if wall_detected else 'OPEN'}")
+        
+        # Step 2: Tilt down to pitch=-20 for marker detection
+        print(f"   📐 Tilting gimbal to {pitch_angle}°...")
+        gimbal.moveto(pitch=pitch_angle, yaw=current_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.5)
+        print(f"      ✅ Tilt complete")
+        
+        # Measure distance at tilted position for marker check
+        print("📏 Measuring marker distance at pitch=-20...")
+        tof_handler.start_scanning(direction)  # Overwrites previous readings, but wall_distance already saved
+        sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+        time.sleep(0.3)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        
+        marker_distance = tof_handler.get_average_distance(direction)
+        print(f"   📐 Marker distance: {marker_distance:.2f}cm at {current_angle}°")
+        
+        # Scan for markers if distance is suitable
+        if marker_distance > 0 and marker_distance <= 40.0:
+            print("✅ Distance OK - Scanning for markers...")
+            
+            # Reset and start marker scan
+            marker_handler.reset_detection()
+            detected = marker_handler.wait_for_markers(timeout=2.5)
+            
+            if detected and marker_handler.markers:
+                marker_ids = [m.id for m in marker_handler.markers]
+                marker_results[direction] = {
+                    'angle': current_angle,
+                    'direction_name': direction_name,
+                    'compass_direction': compass_dir,
+                    'marker_ids': marker_ids,
+                    'distance': marker_distance,
+                    'timestamp': datetime.now().isoformat()
+                }
+                
+                print(f"🎯 FOUND MARKERS: {marker_ids}")
+                print(f"   📍 Direction: {direction_name} ({current_angle}°)")
+                print(f"   📏 Distance: {marker_distance:.2f}cm")
+                print(f"   🧭 Compass: {compass_dir}")
+                print(f"   ✅ {direction.upper()} scan complete with markers")
+            else:
+                print(f"❌ No markers found at {direction_name} ({current_angle}°)")
+                marker_results[direction] = None
+                print(f"   ✅ {direction.upper()} scan complete (no markers)")
+        else:
+            print(f"❌ Too far ({marker_distance:.2f}cm > 40cm) at {current_angle}° - Skipping marker detection")
+            marker_results[direction] = None
+            print(f"   ✅ {direction.upper()} scan complete (distance too far)")
+        
+        time.sleep(0.1)
+    
+    # Return gimbal to center
+    print(f"   📐 Returning gimbal to center (0°)...")
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.1)
+    print(f"      ✅ Center complete")
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
     time.sleep(0.2)
     
+    # Update node with marker information
+    if marker_handler and vision:
+        graph_mapper.update_current_node_markers(marker_results)
+    
     # NEW: Update graph with wall information using ABSOLUTE directions
+    left_wall = tof_handler.is_wall_detected('left')
+    right_wall = tof_handler.is_wall_detected('right')
+    front_wall = tof_handler.is_wall_detected('front')
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
     
     print(f"✅ Node {current_node.id} scan complete:")
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
-    print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    print(f"   📏 Distances: Left={scan_results.get('left', 0):.1f}cm, Right={scan_results.get('right', 0):.1f}cm, Front={scan_results.get('front', 0):.1f}cm")
     
     # NEW: Display marker results
     if marker_results:
