@@ -1122,7 +1122,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     # Check if front distance is too close and move away
     if front_distance < 25.0:
-        move_distance = -(30 - front_distance)
+        move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.5).wait_for_completed()
     
@@ -1144,7 +1144,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     # Check if left distance is too close and move away
     if left_distance < 25:
-        move_distance = 30 - left_distance
+        move_distance = 23 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
     
@@ -1165,8 +1165,8 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
     # Check if right distance is too close and move away
-    if right_distance < 0.25:
-        move_distance = -(30 - right_distance)
+    if right_distance < 30:
+        move_distance = -(23 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
     
