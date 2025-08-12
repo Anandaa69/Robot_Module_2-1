@@ -43,15 +43,15 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.0
-        self.KI = 0.1
-        self.KD = 6
+        self.KP = 1.2
+        self.KI = 0.3
+        self.KD = 4
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=10, callback=self.position_handler)
+        self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -1073,6 +1073,38 @@ class ToFSensorHandler:
         
         return is_wall
 
+def drive_for_distance(ep_chassis, x_speed=0.0, y_speed=0.0, distance_cm=0.0):
+    global ROBOT_FACE
+    # Determine axis for movement
+    axis_test = 'x'
+    if ROBOT_FACE % 2 == 0:
+        axis_test = 'y'
+    elif ROBOT_FACE % 2 == 1:
+        axis_test = 'x'
+    
+    speed_mps = abs(x_speed) if x_speed != 0 else abs(y_speed)
+    if speed_mps == 0:
+        return
+    
+    time_needed = (abs(distance_cm / 100) / speed_mps )
+
+    if x_speed < 0:  
+        # ถอยหลังแบบใช้ PID แกนโลก
+        move_distance_m = distance_cm / 100.0  # cm -> m
+        movement_controller.move_forward_with_pid(move_distance_m, axis_test, direction=-1)
+
+    elif y_speed != 0:
+        ep_chassis.drive_speed(x=0, y=y_speed, z=0)
+        time.sleep(time_needed)  # ขับตามเวลาที่ต้องการ
+        ep_chassis.drive_speed(0, 0, 0)  # หยุดแบบ active brake
+        time.sleep(0.1)  # รอให้หยุดสนิท
+    else:
+        # เดินหน้า
+        ep_chassis.drive_speed(x=x_speed, y=0, z=0, timeout=time_needed)
+        time.sleep(1.5)
+        ep_chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+
+
 # ===== Main Exploration Functions =====
 def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
     """NEW: Scan current node and update graph with ABSOLUTE directions"""
@@ -1104,6 +1136,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     scan_results = {}
     ep_chassis = ep_robot.chassis
     
+    
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1120,12 +1153,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
     
-    # Check if front distance is too close and move away
-    if front_distance < 30.0:
-        move_distance = -(25 - front_distance)
-        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+    # FRONT too close -> ถอยหลัง
+    if front_distance < 30:
+        move_distance_cm = 25 - front_distance
+        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance_cm:.2f}cm")
+        drive_for_distance(ep_chassis, x_speed=-0.2, distance_cm=move_distance_cm)
+        time.sleep(0.2)
     
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
@@ -1143,12 +1176,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    # Check if left distance is too close and move away
-    if left_distance < 25:
-        move_distance = 25 - left_distance
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+    # # LEFT too close -> เลื่อนไปทางขวา
+    # if left_distance < 22.5:
+    #     move_distance_cm = 22.5 - left_distance
+    #     print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance_cm:.2f}cm")
+    #     drive_for_distance(ep_chassis, y_speed=0.2, distance_cm=move_distance_cm)
+    #     time.sleep(0.5)
     
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
@@ -1166,12 +1199,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    # Check if right distance is too close and move away
-    if right_distance < 25:
-        move_distance = -(25 - right_distance)
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+    # # RIGHT too close -> เลื่อนไปทางซ้าย
+    # if right_distance < 22.5:
+    #     move_distance_cm = 22.5 - right_distance
+    #     print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance_cm:.2f}cm")
+    #     drive_for_distance(ep_chassis, y_speed=-0.2, distance_cm=move_distance_cm)
+    #     time.sleep(0.5)
     
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
