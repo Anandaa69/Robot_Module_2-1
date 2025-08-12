@@ -43,15 +43,15 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.1
-        self.KI = 0
-        self.KD = 4
+        self.KP = 1.0
+        self.KI = 0.1
+        self.KD = 6
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=20, callback=self.position_handler)
+        self.chassis.sub_position(freq=10, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -1121,10 +1121,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
     
     # Check if front distance is too close and move away
+<<<<<<< HEAD
     if front_distance < 25.0:
         move_distance = -(23 - front_distance)
+=======
+    if front_distance < 30.0:
+        move_distance = -(25 - front_distance)
+>>>>>>> d306cb80561dbf4105f4e22d48c30f8a231de8ab
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.5).wait_for_completed()
+        time.sleep(0.5)
     
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
@@ -1144,9 +1150,14 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     # Check if left distance is too close and move away
     if left_distance < 25:
+<<<<<<< HEAD
         move_distance = 23 - left_distance
+=======
+        move_distance = 25 - left_distance
+>>>>>>> d306cb80561dbf4105f4e22d48c30f8a231de8ab
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        #time.sleep(0.5)
     
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
@@ -1165,10 +1176,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
     # Check if right distance is too close and move away
+<<<<<<< HEAD
     if right_distance < 30:
         move_distance = -(23 - right_distance)
+=======
+    if right_distance < 25:
+        move_distance = -(25 - right_distance)
+>>>>>>> d306cb80561dbf4105f4e22d48c30f8a231de8ab
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.02, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        #time.sleep(0.5)
     
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
