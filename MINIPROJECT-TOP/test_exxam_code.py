@@ -14,19 +14,28 @@
 # limitations under the License.
 
 
+import robomaster
 from robomaster import robot
+
+
+def sub_attitude_info_handler(attitude_info):
+    yaw, pitch, roll = attitude_info
+    print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
 
 
 if __name__ == '__main__':
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
 
-    ep_chassis_fix = ep_robot.chassis
+    ep_chassis = ep_robot.chassis
 
-
-    # 前进 0.5米
-    # ep_chassis_fix.move(x=0.02,y=0.07,xy_speed=0.5).wait_for_completed()
-    # ep_chassis_fix.move(x=-0.07,y=-0,xy_speed=0.5).wait_for_completed()
-    ep_chassis_fix.move(x=0.02,y=-0.07,xy_speed=0.5).wait_for_completed()
+    # 订阅底盘姿态信息
+    ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
+    ep_chassis.move (z=-10).wait_for_completed()
+    # ep_chassis.move(x=0, y=0, z=-90).wait_for_completed()
+    ep_chassis.unsub_attitude()
 
     ep_robot.close()
+
+
+

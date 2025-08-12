@@ -1118,6 +1118,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     front_wall = tof_handler.is_wall_detected('front')
     scan_results['front'] = front_distance
     
+    
+    def sub_attitude_info_handler(attitude_info):
+        yaw, pitch, roll = attitude_info
+        print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
+
+
+
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
     
     # Check if front distance is too close and move away
@@ -1146,6 +1153,9 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     # Check if left distance is too close and move away
     if left_distance < 25:
         move_distance = 25 - left_distance
+        if left_distance < 15:
+            ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
+            ep_chassis.move(x=0, y=0, z=-15).wait_for_completed()
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         #time.sleep(0.5)
@@ -1169,6 +1179,9 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     # Check if right distance is too close and move away
     if right_distance < 25:
         move_distance = -(25 - right_distance)
+        if right_distance < 15:
+            ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
+            ep_chassis.move(x=0, y=0, z=0).wait_for_completed()
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         #time.sleep(0.5)

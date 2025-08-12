@@ -43,15 +43,15 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.0
-        self.KI = 0.0
+        self.KP = 1.1
+        self.KI = 0.1
         self.KD = 6
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=10, callback=self.position_handler)
+        self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -1077,7 +1077,10 @@ class ToFSensorHandler:
 def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
     """NEW: Scan current node and update graph with ABSOLUTE directions"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
-    
+    def sub_attitude_info_handler(attitude_info):
+        yaw, pitch, roll = attitude_info
+        print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
+
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
     
     # Check if node has been fully scanned before
@@ -1102,17 +1105,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     speed = 480
     scan_results = {}
-    ep_chassis = ep_robot.chassis
-
+    ep_chassis_fix = ep_robot.chassis
+    count = 0
     
     # Scan front (0°)
-
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
     
     tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=20, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
@@ -1121,70 +1123,72 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     scan_results['front'] = front_distance
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    
-    # Check if front distance is too close and move away
-    if front_distance < 30.0:
-        move_distance = -(25 - front_distance)
+    if front_distance <= 18.0 : # ถ้าใกล้เกิน19เซน
+        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2)
         time.sleep(0.5)
     elif front_distance < 50.0 and front_distance >= 30.0:
-        move_distance = (front_distance-30)
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2)
-    
+        move_distance_font = (front_distance-30)
+        ep_chassis.move(x=move_distance_font/100, y=0, xy_speed=0.4)
+        time.sleep(0.5)
+
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.5)
     
     tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=20, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.5)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
+
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    # Check if left distance is too close and move away
     if left_distance < 15:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(1.0)
     
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
-    
+    time.sleep(0.5)
+    count +=1
     tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.5)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
-    
+
+
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    # Check if right distance is too close and move away
     if right_distance < 15:
-        move_distance = -(20 - right_distance)
+        move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        #time.sleep(0.5)
+        time.sleep(0.5)
+        
     
+
+
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.5)
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
-    time.sleep(0.2)
+    time.sleep(0.3)
     
     # NEW: Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
