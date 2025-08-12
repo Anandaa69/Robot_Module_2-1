@@ -569,7 +569,7 @@ class GraphMapper:
             print(f"🔄 Need to turn LEFT (-90°)")
             success = movement_controller.rotate_90_degrees_left(movement_controller, attitude_handler)
             if success:
-                ROBOT_FACE -= 1
+                ROBOT_FACE += 1
         elif diff == 2:  # Turn around (180°)
             print(f"🔄 Need to turn AROUND (180°)")
             success1 = movement_controller.rotate_90_degrees_right(movement_controller, attitude_handler)

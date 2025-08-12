@@ -1284,14 +1284,14 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         # Step 1: Move to pitch=0, yaw for wall detection
         print(f"   🔄 Rotating gimbal to {current_angle}° at pitch=0...")
         gimbal.moveto(pitch=0, yaw=current_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.15)
         print(f"      ✅ Rotation complete")
         
         # Measure wall distance at pitch=0
         print("📏 Measuring wall distance at pitch=0...")
         tof_handler.start_scanning(direction)
         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-        time.sleep(0.2)
+        time.sleep(0.15)
         tof_handler.stop_scanning(sensor.unsub_distance)
         
         wall_distance = tof_handler.get_average_distance(direction)
@@ -1303,14 +1303,14 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         # Step 2: Tilt down to pitch=-20 for marker detection
         print(f"   📐 Tilting gimbal to {pitch_angle}°...")
         gimbal.moveto(pitch=pitch_angle, yaw=current_angle, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(0.15)
         print(f"      ✅ Tilt complete")
         
         # Measure distance at tilted position for marker check
         print("📏 Measuring marker distance at pitch=-20...")
         tof_handler.start_scanning(direction)  # Overwrites previous readings, but wall_distance already saved
         sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
-        time.sleep(0.3)
+        time.sleep(0.2)
         tof_handler.stop_scanning(sensor.unsub_distance)
         
         marker_distance = tof_handler.get_average_distance(direction)
