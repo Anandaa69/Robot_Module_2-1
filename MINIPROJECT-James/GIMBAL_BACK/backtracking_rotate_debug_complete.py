@@ -1513,7 +1513,42 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
 
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
-    
+
+    # หลังจาก scan front/left/right เสร็จ แต่ก่อน return
+    # เช็คกรณีเป็นโหนดเริ่มต้น (0,0) และหันหน้าเริ่มต้น
+    if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
+        print("🔍 Special check: scanning BACK at start node...")
+        # หมุน gimbal 180° เพื่อสแกนด้านหลัง
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.2)
+
+        tof_handler.start_scanning('back')
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+
+        back_distance = tof_handler.get_average_distance('back')
+        back_wall = tof_handler.is_wall_detected('back')
+        scan_results['back'] = back_distance
+        
+        print(f"📏 BACK scan result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
+
+        # อัปเดตกำแพงแบบ absolute
+        direction_map = {
+            'north': 'south',
+            'south': 'north',
+            'east': 'west',
+            'west': 'east'
+        }
+        back_abs_dir = direction_map[graph_mapper.currentDirection]
+        current_node.walls[back_abs_dir] = back_wall
+        current_node.wallBack = back_wall
+
+        # ถ้ามีกำแพงด้านหลัง ให้ลบออกจาก unexploredExits
+        if back_wall and back_abs_dir in current_node.unexploredExits:
+            current_node.unexploredExits.remove(back_abs_dir)
+            print(f"🧹 Removed BACK ({back_abs_dir}) from unexplored exits at start node")
+
     if left_distance < 15:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
@@ -1539,8 +1574,6 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
-
-
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
