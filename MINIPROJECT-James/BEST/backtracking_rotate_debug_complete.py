@@ -125,42 +125,50 @@ class AttitudeHandler:
         return is_correct
         
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
-        # ✅ เริ่ม monitor ก่อนหมุน
-        self.start_monitoring(chassis)
-
         if self.is_at_target_yaw(target_yaw):
             print(f"✅ Chassis already at correct yaw: {self.current_yaw:.1f}° (target: {target_yaw}°)")
-            self.stop_monitoring(chassis)  # ✅ หยุด monitor
             return True
-
+            
         gimbal_to_target = target_yaw - self.current_yaw
         gimbal_diff = self.normalize_angle(gimbal_to_target)
         robot_rotation = -gimbal_diff
-
+        
         print(f"🔧 Correcting chassis yaw: from {self.current_yaw:.1f}° to {target_yaw}°")
         print(f"📐 Gimbal needs to change: {gimbal_diff:.1f}°")
         print(f"📐 Robot will rotate: {robot_rotation:.1f}°")
-
+        
         try:
             if abs(robot_rotation) > self.yaw_tolerance:
                 correction_speed = 60
+                
                 print(f"🔄 Rotating robot {robot_rotation:.1f}°")
                 chassis.move(x=0, y=0, z=robot_rotation, z_speed=correction_speed).wait_for_completed()
                 time.sleep(0.3)
-
+            
             final_check = self.is_at_target_yaw(target_yaw)
-
-            self.stop_monitoring(chassis)  # ✅ หยุด monitor หลังหมุนเสร็จ
-
+            
             if final_check:
                 print(f"✅ Successfully corrected chassis yaw to {self.current_yaw:.1f}°")
                 return True
             else:
                 print(f"⚠️ Chassis yaw correction incomplete: {self.current_yaw:.1f}° (target: {target_yaw}°)")
+                
+                remaining_gimbal = target_yaw - self.current_yaw
+                remaining_diff = self.normalize_angle(remaining_gimbal)
+                remaining_robot = -remaining_diff
+                print(f"📐 Remaining gimbal difference: {remaining_diff:.1f}°")
+                print(f"📐 Additional robot rotation needed: {remaining_robot:.1f}°")
+                
+                if abs(remaining_robot) > self.yaw_tolerance and abs(remaining_robot) < 45:
+                    print(f"🔧 Fine-tuning robot with additional {remaining_robot:.1f}°")
+                    chassis.move(x=0, y=0, z=remaining_robot, z_speed=60).wait_for_completed()
+                    time.sleep(0.3)
+                    return self.is_at_target_yaw(target_yaw)
+                else:
+                    print(f"⚠️ Remaining rotation too large ({remaining_robot:.1f}°), may need multiple corrections")
                 return False
-
+                
         except Exception as e:
-            self.stop_monitoring(chassis)  # ✅ หยุด monitor แม้ error
             print(f"❌ Failed to correct chassis yaw: {e}")
             return False
 
@@ -279,37 +287,57 @@ class MovementController:
         return False
 
     def perform_attitude_drift_correction(self, attitude_handler):
+        """ทำการแก้ไข attitude drift โดยหมุนขวาเพิ่มตามมุมที่กำหนด"""
         global CURRENT_TARGET_YAW
+        
         print(f"⚙️ === PERFORMING ATTITUDE DRIFT CORRECTION ===")
+        print(f"🔧 Correcting attitude drift after {self.nodes_visited_count} nodes")
+        print(f"📐 Adding {self.DRIFT_CORRECTION_ANGLE}° clockwise correction")
 
-        # ✅ เริ่ม monitor
-        attitude_handler.start_monitoring(self.chassis)
-
+        # ใช้ yaw ปัจจุบันเป็นฐาน ไม่ใช่บวกสะสม
         current_yaw_before = attitude_handler.current_yaw
         target_after_correction = attitude_handler.normalize_angle(
             current_yaw_before + self.DRIFT_CORRECTION_ANGLE
         )
+
+        # อัปเดต CURRENT_TARGET_YAW ให้ตรงกับเป้าหมายล่าสุด
         CURRENT_TARGET_YAW = target_after_correction
+
+        print(f"📊 Drift correction details:")
+        print(f"   🧭 Current yaw before: {current_yaw_before:.1f}°")
+        print(f"   🎯 New target: {target_after_correction:.1f}°")
 
         try:
             success = attitude_handler.correct_yaw_to_target(self.chassis, target_after_correction)
 
-            # ✅ หยุด monitor หลังเสร็จ
-            attitude_handler.stop_monitoring(self.chassis)
-
             if success:
                 self.total_drift_corrections += 1
+                current_yaw_after = attitude_handler.current_yaw
+
+                print(f"✅ Attitude drift correction completed!")
+                print(f"   🧭 Final yaw: {current_yaw_after:.1f}°")
+                print(f"   📈 Total corrections performed: {self.total_drift_corrections}")
+                print(f"   📐 Total accumulated correction: {self.total_drift_corrections * self.DRIFT_CORRECTION_ANGLE}°")
+
+                self.movement_tracker.record_movement('rotation')
+
+                # ป้องกัน trigger ซ้ำ — บันทึก node ล่าสุดที่แก้ไปแล้ว
+                self.last_correction_at = self.nodes_visited_count
+
                 return True
             else:
+                print(f"⚠️ Attitude drift correction may be incomplete!")
                 return False
 
         except Exception as e:
-            attitude_handler.stop_monitoring(self.chassis)  # ✅ หยุดแม้ error
             print(f"❌ Error during attitude drift correction: {e}")
             return False
 
+        finally:
+            print(f"⚙️ === ATTITUDE DRIFT CORRECTION END ===")
+            time.sleep(0.3)
 
-    def move_forward_with_pid(self, target_distance, axis, direction=1, allow_yaw_correction=True, attitude_handler=None):
+    def move_forward_with_pid(self, target_distance, axis, direction=1, allow_yaw_correction=True):
         """Move forward using PID control with movement tracking"""
         # บันทึกการเคลื่อนไหว
         movement_type = 'forward' if direction == 1 else 'backward'
@@ -328,22 +356,6 @@ class MovementController:
                 target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
                 print(f"🎯 Target yaw: {target_angle}°")
                 attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
-
-        # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่
-        if self.movement_tracker.has_consecutive_forward_moves(2):
-            print("⚠️ DETECTED: 2 consecutive forward moves!")
-            # print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
-            
-        if self.movement_tracker.has_consecutive_backward_moves(2):
-            print("⚠️ DETECTED: 2 consecutive backward moves!")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
         
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -407,51 +419,41 @@ class MovementController:
     def rotate_90_degrees_right(self, attitude_handler=None):
         global CURRENT_TARGET_YAW
         print("🔄 Rotating 90° RIGHT...")
+        # บันทึกการหมุน
         self.movement_tracker.record_movement('rotation')
         time.sleep(0.2)
-
-        # ✅ เริ่ม monitor
-        attitude_handler.start_monitoring(self.chassis)
-
+        
         CURRENT_TARGET_YAW += 90
         target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-
+        
         print(f"🎯 Target yaw: {target_angle}°")
         success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
-
-        # ✅ หยุด monitor
-        attitude_handler.stop_monitoring(self.chassis)
-
+        
         if success:
             print("✅ Right rotation completed!")
         else:
             print("⚠️ Right rotation may be incomplete")
-
+            
         time.sleep(0.2)
 
     def rotate_90_degrees_left(self, attitude_handler=None):
         global CURRENT_TARGET_YAW
         print("🔄 Rotating 90° LEFT...")
+        # บันทึกการหมุน
         self.movement_tracker.record_movement('rotation')
         time.sleep(0.2)
-
-        # ✅ เริ่ม monitor
-        attitude_handler.start_monitoring(self.chassis)
-
+        
         CURRENT_TARGET_YAW -= 90
         target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-
+        
         print(f"🎯 Target yaw: {target_angle}°")
         success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
-
-        # ✅ หยุด monitor
-        attitude_handler.stop_monitoring(self.chassis)
-
+        
         if success:
             print("✅ Left rotation completed!")
         else:
             print("⚠️ Left rotation may be incomplete")
-
+            
         time.sleep(0.2)
     
     def reverse_from_dead_end(self):
@@ -1493,11 +1495,8 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
-    # if 45 > front_distance >= 25:
-    #     move_distance=  (front_distance-28)
-    #     ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
-    #     time.sleep(0.2)
-
+    # if front_distance >= 25:
+    #     move_distance=  (front_distance)
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1540,8 +1539,6 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
-
-
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
