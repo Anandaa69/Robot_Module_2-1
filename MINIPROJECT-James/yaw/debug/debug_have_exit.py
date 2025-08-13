@@ -1526,7 +1526,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         time.sleep(0.3)
 
     # หลังสแกน LEFT
-    if left_distance >= 300.0:  # 3 เมตรขึ้นไป = exit
+    if left_distance >= 250.0:  # 3 เมตรขึ้นไป = exit
         print(f"🚪 EXIT DETECTED on LEFT at {left_distance:.1f} cm!")
         # แปลงทิศ relative (left) เป็น absolute
         direction_map = {
@@ -1568,7 +1568,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         time.sleep(0.3)
 
     # หลังสแกน RIGHT
-    if right_distance >= 300.0:
+    if right_distance >= 250.0:
         print(f"🚪 EXIT DETECTED on RIGHT at {right_distance:.1f} cm!")
         direction_map = {
             'north': 'east',

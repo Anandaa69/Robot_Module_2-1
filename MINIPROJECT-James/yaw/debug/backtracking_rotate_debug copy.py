@@ -337,27 +337,25 @@ class MovementController:
             print(f"⚙️ === ATTITUDE DRIFT CORRECTION END ===")
             time.sleep(0.3)
 
-    def move_forward_with_pid(self, target_distance, axis, direction=1):
+    def move_forward_with_pid(self, target_distance, axis, direction=1, allow_yaw_correction=True):
         """Move forward using PID control with movement tracking"""
         # บันทึกการเคลื่อนไหว
         movement_type = 'forward' if direction == 1 else 'backward'
         self.movement_tracker.record_movement(movement_type)
         
-        # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่
-        if self.movement_tracker.has_consecutive_forward_moves(2):
-            print("⚠️ DETECTED: 2 consecutive forward moves!")
-            # print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
-            
-        if self.movement_tracker.has_consecutive_backward_moves(2):
-            print("⚠️ DETECTED: 2 consecutive backward moves!")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+        # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่ (เฉพาะกรณีอนุญาตแก้ yaw)
+        if allow_yaw_correction:
+            if self.movement_tracker.has_consecutive_forward_moves(2):
+                print("⚠️ DETECTED: 2 consecutive forward moves!")
+                target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+                print(f"🎯 Target yaw: {target_angle}°")
+                attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+                
+            if self.movement_tracker.has_consecutive_backward_moves(2):
+                print("⚠️ DETECTED: 2 consecutive backward moves!")
+                target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+                print(f"🎯 Target yaw: {target_angle}°")
+                attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
         
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -480,16 +478,11 @@ class MovementController:
 
     def reverse_to_previous_node(self):
         """NEW: Reverse 0.6m to go back to previous node without rotating"""
-        # บันทึกการถอยหลัง
         self.movement_tracker.record_movement('backward')
-        # เช็คการถอยหลังติดกัน
-        if self.movement_tracker.has_consecutive_backward_moves(2):
-            print("⚠️ DETECTED: 2 consecutive backward moves during backtracking!")
 
         global ROBOT_FACE
         print("🔙 BACKTRACKING - Reversing to previous node...")
 
-        # Determine current axis based on robot face
         axis_test = 'x'
         if ROBOT_FACE % 2 == 0:
             axis_test = 'y'
@@ -498,8 +491,8 @@ class MovementController:
         
         print(f"🔙 Reversing 0.6m on {axis_test}-axis for backtrack")
         
-        # Move backward using negative direction
-        self.move_forward_with_pid(0.6, axis_test, direction=-1)
+        # ❌ ปิด yaw correction ระหว่าง backtracking
+        self.move_forward_with_pid(0.6, axis_test, direction=-1, allow_yaw_correction=False)
         
         print("✅ Reverse backtrack completed!")
     
