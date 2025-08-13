@@ -66,7 +66,7 @@ class MapVisualizer:
         self.ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
         self.ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
         
-        # Create comprehensive legend
+        # Create comprehensive legendgit
         legend_elements = [
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=self.colors['robot'], 
                     markersize=12, label='Current Robot Position'),
