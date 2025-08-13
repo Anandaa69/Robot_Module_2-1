@@ -174,6 +174,10 @@ def rotate_90_degrees_left(ep_chassis):
     time.sleep(0.25)
     print("Rotation completed!")
 
+def sub_attitude_info_handler(attitude_info):
+    yaw, pitch, roll = attitude_info
+    print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
+
 # -------------------------
 # Main
 # -------------------------
@@ -187,15 +191,21 @@ if __name__ == '__main__':
     time.sleep(0.25)
 
     try:
+        ep_chassis.sub_attitude(freq=20, callback=sub_attitude_info_handler)
         # move_forward_with_pid(ep_chassis, 0.6, 'x', direction=1)
         # time.sleep(0.5)
         # move_forward_with_pid(ep_chassis, 0.6, 'x', direction=-1)
         
-        rotate_90_degrees_right(ep_chassis)
-        # rotate_90_degrees_left(ep_chassis)
+        # rotate_90_degrees_right(ep_chassis)
+        rotate_90_degrees_left(ep_chassis)
 
         print("=== Square completed! ===")
-        
+
+        while True:
+            ep_chassis.sub_attitude(freq=20, callback=sub_attitude_info_handler)
+            # ep_chassis.move(x=0, y=0, z=90).wait_for_completed()
+            # ep_chassis.move(x=0, y=0, z=-90).wait_for_completed()
+            print('-')
     except KeyboardInterrupt:
         print("Program interrupted by user.")
     
@@ -203,6 +213,7 @@ if __name__ == '__main__':
         print("All movements completed!")
         try:
             ep_chassis.unsub_position()
+            ep_chassis.unsub_attitude()
         except:
             pass
         time.sleep(0.5)
