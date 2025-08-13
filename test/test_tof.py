@@ -16,26 +16,20 @@
 
 import robomaster
 from robomaster import robot
+import time
 
 
-def sub_attitude_info_handler(attitude_info):
-    yaw, pitch, roll = attitude_info
-    print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
+def sub_data_handler(sub_info):
+    distance = sub_info
+    print("tof1:{0}  tof2:{1}  tof3:{2}  tof4:{3}".format(distance[0], distance[1], distance[2], distance[3]))
 
 
 if __name__ == '__main__':
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
 
-    ep_chassis = ep_robot.chassis
-
-    # 订阅底盘姿态信息
-    ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
-    ep_chassis.move (z=-10).wait_for_completed()
-    # ep_chassis.move(x=0, y=0, z=-90).wait_for_completed()
-    ep_chassis.unsub_attitude()
-
+    ep_sensor = ep_robot.sensor
+    ep_sensor.sub_distance(freq=5, callback=sub_data_handler)
+    time.sleep(60)
+    ep_sensor.unsub_distance()
     ep_robot.close()
-
-
-

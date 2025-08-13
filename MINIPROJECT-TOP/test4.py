@@ -6,6 +6,8 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 ROBOT_FACE = 1 # 0 1
 
@@ -43,15 +45,15 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.0
-        self.KI = 0.0
-        self.KD = 6
+        self.KP = 1.5
+        self.KI = 0.05
+        self.KD = 8
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=10, callback=self.position_handler)
+        self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -979,6 +981,132 @@ class GraphMapper:
             print("🎉 EXPLORATION COMPLETE - No more frontiers!")
         print("="*60)
 
+def save_walls_data(graph_mapper, filename="maze_walls.json"):
+    """เซฟข้อมูลกำแพงเป็น JSON สำหรับพลอต"""
+    import json
+    
+    walls_data = {
+        'nodes': {},
+        'metadata': {
+            'total_nodes': len(graph_mapper.nodes),
+            'exploration_complete': len(graph_mapper.frontierQueue) == 0,
+            'timestamp': datetime.now().isoformat()
+        }
+    }
+    
+    # เก็บข้อมูลแต่ละโหนด
+    for node_id, node in graph_mapper.nodes.items():
+        walls_data['nodes'][node_id] = {
+            'position': node.position,
+            'walls': node.walls,
+            'is_dead_end': node.isDeadEnd,
+            'fully_scanned': node.fullyScanned,
+            'sensor_readings': node.sensorReadings if hasattr(node, 'sensorReadings') else {}
+        }
+    
+    # เซฟไฟล์
+    with open(filename, 'w') as f:
+        json.dump(walls_data, f, indent=2)
+    
+    print(f"💾 Walls data saved to {filename}")
+    return filename
+
+def plot_maze_from_walls(filename="maze_walls.json", save_plot="maze_map.png"):
+    """พลอตแมพจากข้อมูลกำแพงที่เซฟไว้"""
+    import json
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as patches
+    
+    # โหลดข้อมูล
+    with open(filename, 'r') as f:
+        walls_data = json.load(f)
+    
+    nodes = walls_data['nodes']
+    
+    if not nodes:
+        print("❌ No nodes data found!")
+        return
+    
+    # หาขอบเขตของแมพ
+    positions = [node['position'] for node in nodes.values()]
+    min_x = min(pos[0] for pos in positions) - 1
+    max_x = max(pos[0] for pos in positions) + 1
+    min_y = min(pos[1] for pos in positions) - 1
+    max_y = max(pos[1] for pos in positions) + 1
+    
+    # สร้างกราฟ
+    fig, ax = plt.subplots(figsize=(12, 10))
+    
+    # วาดกริด
+    for x in range(min_x, max_x + 1):
+        ax.axvline(x - 0.5, color='lightgray', linewidth=0.5, alpha=0.3)
+    for y in range(min_y, max_y + 1):
+        ax.axhline(y - 0.5, color='lightgray', linewidth=0.5, alpha=0.3)
+    
+    # วาดโหนดและกำแพง
+    for node_data in nodes.values():
+        x, y = node_data['position']
+        walls = node_data['walls']
+        is_dead_end = node_data['is_dead_end']
+        
+        # วาดโหนด
+        if is_dead_end:
+            # Dead end = สีแดง
+            circle = plt.Circle((x, y), 0.3, color='red', alpha=0.7)
+        else:
+            # Normal node = สีเขียว
+            circle = plt.Circle((x, y), 0.25, color='lightgreen', alpha=0.8)
+        ax.add_patch(circle)
+        
+        # วาดกำแพง (เส้นหนา)
+        wall_thickness = 4
+        
+        if walls.get('north', False):  # กำแพงทางเหนือ
+            ax.plot([x-0.4, x+0.4], [y+0.5, y+0.5], 'black', linewidth=wall_thickness)
+        
+        if walls.get('south', False):  # กำแพงทางใต้
+            ax.plot([x-0.4, x+0.4], [y-0.5, y-0.5], 'black', linewidth=wall_thickness)
+        
+        if walls.get('east', False):   # กำแพงทางตะวันออก
+            ax.plot([x+0.5, x+0.5], [y-0.4, y+0.4], 'black', linewidth=wall_thickness)
+        
+        if walls.get('west', False):   # กำแพงทางตะวันตก
+            ax.plot([x-0.5, x-0.5], [y-0.4, y+0.4], 'black', linewidth=wall_thickness)
+        
+        # ใส่ text แสดงพิกัด
+        ax.text(x, y-0.1, f'({x},{y})', ha='center', va='center', fontsize=8, weight='bold')
+    
+    # ตั้งค่ากราฟ
+    ax.set_xlim(min_x - 0.7, max_x + 0.7)
+    ax.set_ylim(min_y - 0.7, max_y + 0.7)
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    
+    # ใส่ legend
+    legend_elements = [
+        plt.Circle((0, 0), 0.1, color='lightgreen', alpha=0.8, label='Normal Node'),
+        plt.Circle((0, 0), 0.1, color='red', alpha=0.7, label='Dead End'),
+        plt.Line2D([0], [0], color='black', linewidth=4, label='Wall')
+    ]
+    ax.legend(handles=legend_elements, loc='upper right')
+    
+    # ใส่ title และ label
+    total_nodes = len(nodes)
+    dead_ends = sum(1 for node in nodes.values() if node['is_dead_end'])
+    ax.set_title(f'Maze Map - {total_nodes} Nodes, {dead_ends} Dead Ends', fontsize=14, weight='bold')
+    ax.set_xlabel('X Coordinate', fontsize=12)
+    ax.set_ylabel('Y Coordinate', fontsize=12)
+    
+    # เซฟกราฟ
+    plt.tight_layout()
+    plt.savefig(save_plot, dpi=300, bbox_inches='tight')
+    print(f"📊 Maze plot saved to {save_plot}")
+    
+    # แสดงกราฟ
+    plt.show()
+    
+    return save_plot
+
 # ===== ToF Sensor Handler =====
 class ToFSensorHandler:
     def __init__(self):
@@ -1077,7 +1205,10 @@ class ToFSensorHandler:
 def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
     """NEW: Scan current node and update graph with ABSOLUTE directions"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
-    
+    def sub_attitude_info_handler(attitude_info):
+        yaw, pitch, roll = attitude_info
+        print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
+
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
     
     # Check if node has been fully scanned before
@@ -1102,17 +1233,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     speed = 480
     scan_results = {}
-    ep_chassis = ep_robot.chassis
-
+    ep_chassis_fix = ep_robot.chassis
+    count = 0
     
     # Scan front (0°)
-
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
     
     tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=20, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
@@ -1121,70 +1251,72 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     scan_results['front'] = front_distance
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    
-    # Check if front distance is too close and move away
-    if front_distance < 30.0:
-        move_distance = -(25 - front_distance)
+    if front_distance <= 18.0 : # ถ้าใกล้เกิน19เซน
+        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2)
         time.sleep(0.5)
     elif front_distance < 50.0 and front_distance >= 30.0:
-        move_distance = (front_distance-30)
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2)
-    
+        move_distance_font = (front_distance-30)
+        ep_chassis.move(x=move_distance_font/100, y=0, xy_speed=0.4)
+        time.sleep(0.5)
+
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.5)
     
     tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=20, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.5)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
+
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    # Check if left distance is too close and move away
     if left_distance < 15:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(1.0)
     
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
-    
+    time.sleep(0.5)
+    count +=1
     tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.5)
     tof_handler.stop_scanning(sensor.unsub_distance)
     
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
-    
+
+
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    # Check if right distance is too close and move away
     if right_distance < 15:
-        move_distance = -(20 - right_distance)
+        move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        #time.sleep(0.5)
+        time.sleep(0.5)
+        
     
+
+
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    time.sleep(0.5)
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
-    time.sleep(0.2)
+    time.sleep(0.3)
     
     # NEW: Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
@@ -1362,6 +1494,14 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     """Generate comprehensive exploration report with absolute direction info"""
     print(f"\n{'='*60}")
     print("📋 FINAL EXPLORATION REPORT (ABSOLUTE DIRECTIONS)")
+    
+    # เซฟข้อมูลและสร้างพลอต
+    print(f"\n💾 === SAVING EXPLORATION DATA ===")
+    walls_file = save_walls_data(graph_mapper)
+    plot_file = plot_maze_from_walls(walls_file)
+    print(f"✅ Data saved: {walls_file}")
+    print(f"📊 Plot saved: {plot_file}")
+
     print(f"{'='*60}")
     
     # Basic statistics
@@ -1491,5 +1631,16 @@ if __name__ == '__main__':
             movement_controller.cleanup()
         except:
             pass
+        print("\n💾 Saving final exploration data...")
+        try:
+            walls_file = save_walls_data(graph_mapper, f"maze_exploration_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            plot_file = plot_maze_from_walls(walls_file, f"maze_plot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
+        except Exception as e:
+            print(f"❌ Error saving data: {e}")
+        
         ep_robot.close()
         print("🔌 Connection closed")
+def load_and_plot_saved_maze(json_file):
+    """โหลดและพลอตแมพจากไฟล์ที่เซฟไว้"""
+    plot_file = json_file.replace('.json', '_plot.png')
+    return plot_maze_from_walls(json_file, plot_file)

@@ -43,9 +43,9 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.5
-        self.KI = 0.3
-        self.KD = 4
+        self.KP = 1.1
+        self.KI = 0.1
+        self.KD = 6
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn

@@ -1142,10 +1142,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    if left_distance < 15:
+    if left_distance <= 16:
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        time.sleep(1.0)
+    if left_distance <= 16:
+        ep_chassis.move(z=-15,xy_speed = 0.3).wait_for_completed()
         time.sleep(1.0)
 
     # Scan right (physical: 90°)

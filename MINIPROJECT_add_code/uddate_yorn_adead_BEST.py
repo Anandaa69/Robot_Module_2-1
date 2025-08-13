@@ -7,478 +7,10 @@ from datetime import datetime
 import json
 from collections import deque
 
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-from matplotlib.animation import FuncAnimation
-import threading
+from robot_map_visualizer import RobotMapVisualizer, integrate_with_exploration_loop
 
-ROBOT_FACE = 1 
+ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
-
-
-class MapVisualizer:
-    def __init__(self, grid_size=0.6, enable_realtime=True, save_images=True):
-        """
-        Map Visualizer for Robot Exploration
-        
-        Args:
-            grid_size (float): Size of each grid cell in meters (default: 0.6m)
-            enable_realtime (bool): Enable real-time visualization
-            save_images (bool): Save map images during exploration
-        """
-        self.grid_size = grid_size
-        self.enable_realtime = enable_realtime
-        self.save_images = save_images
-        
-        # Visualization settings
-        self.node_size = 0.4  # Size of node markers
-        self.wall_width = 0.05  # Width of wall lines
-        self.robot_size = 0.3  # Size of robot marker
-        
-        # Colors
-        self.colors = {
-            'visited_node': '#87CEEB',      # Sky blue
-            'current_node': '#FF4500',      # Orange red
-            'frontier_node': '#32CD32',     # Lime green
-            'dead_end': '#8B0000',          # Dark red
-            'wall': '#2F4F4F',              # Dark slate gray
-            'path': '#FFD700',              # Gold
-            'robot': '#FF1493',             # Deep pink
-            'unexplored': '#D3D3D3',        # Light gray
-            'background': '#F5F5F5'         # White smoke
-        }
-        
-        # Map data storage
-        self.nodes = {}
-        self.walls = []
-        self.robot_position = (0, 0)
-        self.robot_direction = 'north'
-        self.robot_path = [(0, 0)]
-        self.exploration_history = []
-        
-        # Matplotlib setup
-        if self.enable_realtime:
-            plt.ion()  # Interactive mode
-            self.fig, self.ax = plt.subplots(figsize=(12, 10))
-            self.fig.patch.set_facecolor(self.colors['background'])
-            self.ax.set_facecolor(self.colors['background'])
-            
-            # Setup plot parameters
-            self.ax.set_aspect('equal')
-            self.ax.grid(True, alpha=0.3, linestyle='--')
-            self.ax.set_title('🤖 Robot Exploration Map (Real-time)', 
-                            fontsize=16, fontweight='bold', pad=20)
-            
-            # Create legend
-            self._setup_legend()
-            
-            # Thread-safe plotting
-            self.plot_lock = threading.Lock()
-        
-        print("🗺️ MapVisualizer initialized successfully!")
-        if enable_realtime:
-            print("📊 Real-time visualization enabled")
-        if save_images:
-            print("💾 Image saving enabled")
-    
-    def _setup_legend(self):
-        """Setup legend for the map visualization"""
-        legend_elements = [
-            plt.scatter([], [], c=self.colors['current_node'], s=200, 
-                       marker='o', label='🤖 Current Position'),
-            plt.scatter([], [], c=self.colors['visited_node'], s=100, 
-                       marker='s', label='✅ Visited Node'),
-            plt.scatter([], [], c=self.colors['frontier_node'], s=100, 
-                       marker='^', label='🚀 Frontier Node'),
-            plt.scatter([], [], c=self.colors['dead_end'], s=100, 
-                       marker='X', label='🚫 Dead End'),
-            plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, 
-                      label='🧱 Wall'),
-            plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, 
-                      label='🛤️ Robot Path')
-        ]
-        
-        self.ax.legend(handles=legend_elements, loc='upper left', 
-                      bbox_to_anchor=(0.02, 0.98), framealpha=0.9)
-    
-    def update_from_graph_mapper(self, graph_mapper, movement_controller=None):
-        """Update visualization data from GraphMapper instance"""
-        with self.plot_lock if self.enable_realtime else threading.Lock():
-            # Update nodes
-            self.nodes = {}
-            for node_id, node in graph_mapper.nodes.items():
-                self.nodes[node_id] = {
-                    'position': node.position,
-                    'walls': node.walls,
-                    'is_dead_end': node.isDeadEnd,
-                    'visited': node.visited,
-                    'fully_scanned': node.fullyScanned,
-                    'unexplored_exits': node.unexploredExits,
-                    'visit_count': node.visitCount,
-                    'last_visited': node.lastVisited
-                }
-            
-            # Update robot position and direction
-            self.robot_position = graph_mapper.currentPosition
-            self.robot_direction = graph_mapper.currentDirection
-            
-            # Add to path if position changed
-            if len(self.robot_path) == 0 or self.robot_path[-1] != self.robot_position:
-                self.robot_path.append(self.robot_position)
-            
-            # Update frontier queue
-            self.frontier_nodes = graph_mapper.frontierQueue
-            
-            # Add exploration event
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            stats = {}
-            if movement_controller:
-                drift_status = movement_controller.get_drift_correction_status()
-                movement_status = movement_controller.get_movement_status()
-                stats = {
-                    'nodes_visited': drift_status['nodes_visited'],
-                    'corrections': drift_status['total_corrections'],
-                    'consecutive_forward': movement_status['consecutive_forward'],
-                    'consecutive_backward': movement_status['consecutive_backward']
-                }
-            
-            self.exploration_history.append({
-                'timestamp': timestamp,
-                'position': self.robot_position,
-                'direction': self.robot_direction,
-                'total_nodes': len(self.nodes),
-                'frontiers': len(self.frontier_nodes),
-                'stats': stats
-            })
-    
-    def _generate_walls_from_nodes(self):
-        """Generate wall lines from node wall information"""
-        walls = []
-        
-        for node_id, node_data in self.nodes.items():
-            x, y = node_data['position']
-            node_walls = node_data['walls']
-            
-            # Convert grid position to visualization coordinates
-            grid_x = x * self.grid_size
-            grid_y = y * self.grid_size
-            half_grid = self.grid_size / 2
-            
-            # Generate wall lines based on absolute directions
-            if node_walls.get('north', False):
-                walls.append([
-                    [grid_x - half_grid, grid_y + half_grid],
-                    [grid_x + half_grid, grid_y + half_grid]
-                ])
-            
-            if node_walls.get('south', False):
-                walls.append([
-                    [grid_x - half_grid, grid_y - half_grid],
-                    [grid_x + half_grid, grid_y - half_grid]
-                ])
-            
-            if node_walls.get('east', False):
-                walls.append([
-                    [grid_x + half_grid, grid_y - half_grid],
-                    [grid_x + half_grid, grid_y + half_grid]
-                ])
-            
-            if node_walls.get('west', False):
-                walls.append([
-                    [grid_x - half_grid, grid_y - half_grid],
-                    [grid_x - half_grid, grid_y + half_grid]
-                ])
-        
-        return walls
-    
-    def _draw_direction_arrow(self, x, y, direction, size=0.2):
-        """Draw direction arrow for robot orientation"""
-        # Direction vectors
-        direction_vectors = {
-            'north': (0, size),
-            'south': (0, -size),
-            'east': (size, 0),
-            'west': (-size, 0)
-        }
-        
-        if direction in direction_vectors:
-            dx, dy = direction_vectors[direction]
-            self.ax.arrow(x, y, dx, dy, 
-                         head_width=size/3, head_length=size/4,
-                         fc=self.colors['robot'], ec=self.colors['robot'],
-                         linewidth=2, alpha=0.9)
-    
-    def plot_current_map(self, title_suffix="", show_stats=True):
-        """Plot current exploration map"""
-        if not self.enable_realtime:
-            self.fig, self.ax = plt.subplots(figsize=(12, 10))
-            self.fig.patch.set_facecolor(self.colors['background'])
-            self.ax.set_facecolor(self.colors['background'])
-        
-        with self.plot_lock if self.enable_realtime else threading.Lock():
-            # Clear previous plot
-            self.ax.clear()
-            
-            # Plot nodes
-            for node_id, node_data in self.nodes.items():
-                x, y = node_data['position']
-                grid_x, grid_y = x * self.grid_size, y * self.grid_size
-                
-                # Determine node color and marker
-                if (x, y) == self.robot_position:
-                    color = self.colors['current_node']
-                    marker = 'o'
-                    size = 300
-                    alpha = 1.0
-                elif node_data['is_dead_end']:
-                    color = self.colors['dead_end']
-                    marker = 'X'
-                    size = 200
-                    alpha = 0.8
-                elif node_id in self.frontier_nodes:
-                    color = self.colors['frontier_node']
-                    marker = '^'
-                    size = 150
-                    alpha = 0.9
-                else:
-                    color = self.colors['visited_node']
-                    marker = 's'
-                    size = 100
-                    alpha = 0.7
-                
-                # Plot node
-                self.ax.scatter(grid_x, grid_y, c=color, marker=marker, 
-                              s=size, alpha=alpha, edgecolors='black', linewidth=1)
-                
-                # Add node label
-                label = f"({x},{y})"
-                if node_data.get('visit_count', 1) > 1:
-                    label += f"\n×{node_data['visit_count']}"
-                
-                self.ax.annotate(label, (grid_x, grid_y), 
-                               xytext=(5, 5), textcoords='offset points',
-                               fontsize=8, alpha=0.8, fontweight='bold')
-            
-            # Plot walls
-            walls = self._generate_walls_from_nodes()
-            for wall in walls:
-                wall_line = np.array(wall)
-                self.ax.plot(wall_line[:, 0], wall_line[:, 1], 
-                           color=self.colors['wall'], linewidth=4, alpha=0.8)
-            
-            # Plot robot path
-            if len(self.robot_path) > 1:
-                path_array = np.array(self.robot_path) * self.grid_size
-                self.ax.plot(path_array[:, 0], path_array[:, 1], 
-                           color=self.colors['path'], linewidth=3, alpha=0.7,
-                           linestyle='-', marker='.')
-            
-            # Plot robot with direction arrow
-            robot_x, robot_y = self.robot_position[0] * self.grid_size, self.robot_position[1] * self.grid_size
-            self.ax.scatter(robot_x, robot_y, c=self.colors['robot'], 
-                          marker='o', s=400, alpha=1.0, edgecolors='white', linewidth=2)
-            self._draw_direction_arrow(robot_x, robot_y, self.robot_direction)
-            
-            # Set plot properties
-            self.ax.set_aspect('equal')
-            self.ax.grid(True, alpha=0.3, linestyle='--')
-            
-            # Calculate plot bounds
-            if self.nodes:
-                positions = [node['position'] for node in self.nodes.values()]
-                min_x = min(pos[0] for pos in positions) * self.grid_size - self.grid_size
-                max_x = max(pos[0] for pos in positions) * self.grid_size + self.grid_size
-                min_y = min(pos[1] for pos in positions) * self.grid_size - self.grid_size
-                max_y = max(pos[1] for pos in positions) * self.grid_size + self.grid_size
-                
-                self.ax.set_xlim(min_x, max_x)
-                self.ax.set_ylim(min_y, max_y)
-            
-            # Title with current statistics
-            base_title = f"🤖 Robot Exploration Map {title_suffix}"
-            if show_stats and self.exploration_history:
-                latest = self.exploration_history[-1]
-                stats_text = f" | 📍 ({self.robot_position[0]},{self.robot_position[1]}) | 🧭 {self.robot_direction} | 🗺️ {latest['total_nodes']} nodes | 🚀 {latest['frontiers']} frontiers"
-                base_title += stats_text
-            
-            self.ax.set_title(base_title, fontsize=14, fontweight='bold', pad=20)
-            
-            # Labels
-            self.ax.set_xlabel('Distance (meters)', fontsize=12)
-            self.ax.set_ylabel('Distance (meters)', fontsize=12)
-            
-            # Setup legend
-            if not self.enable_realtime:
-                self._setup_legend()
-            else:
-                # Update legend for real-time mode
-                legend_elements = [
-                    plt.scatter([], [], c=self.colors['current_node'], s=200, 
-                               marker='o', label='🤖 Current Position'),
-                    plt.scatter([], [], c=self.colors['visited_node'], s=100, 
-                               marker='s', label='✅ Visited Node'),
-                    plt.scatter([], [], c=self.colors['frontier_node'], s=100, 
-                               marker='^', label='🚀 Frontier Node'),
-                    plt.scatter([], [], c=self.colors['dead_end'], s=100, 
-                               marker='X', label='🚫 Dead End'),
-                    plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, 
-                              label='🧱 Wall'),
-                    plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, 
-                              label='🛤️ Robot Path')
-                ]
-                
-                self.ax.legend(handles=legend_elements, loc='upper left', 
-                              bbox_to_anchor=(0.02, 0.98), framealpha=0.9)
-            
-            # Refresh display
-            if self.enable_realtime:
-                plt.draw()
-                plt.pause(0.1)
-    
-    def save_map_image(self, filename=None, dpi=300):
-        """Save current map as image file"""
-        if not self.save_images:
-            return
-        
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"robot_map_{timestamp}.png"
-        
-        try:
-            # Create a copy for saving (to avoid interfering with real-time display)
-            save_fig, save_ax = plt.subplots(figsize=(12, 10))
-            save_fig.patch.set_facecolor(self.colors['background'])
-            save_ax.set_facecolor(self.colors['background'])
-            
-            # Plot on save figure (similar to plot_current_map but on save_ax)
-            # [Same plotting logic as plot_current_map but using save_ax instead of self.ax]
-            
-            save_fig.savefig(filename, dpi=dpi, bbox_inches='tight', 
-                           facecolor=self.colors['background'], 
-                           edgecolor='none')
-            plt.close(save_fig)  # Clean up
-            
-            print(f"💾 Map saved as: {filename}")
-            return filename
-            
-        except Exception as e:
-            print(f"❌ Error saving map image: {e}")
-            return None
-    
-    def generate_exploration_summary(self):
-        """Generate text summary of exploration"""
-        if not self.exploration_history:
-            return "No exploration data available."
-        
-        summary = []
-        summary.append("=" * 50)
-        summary.append("📊 EXPLORATION SUMMARY")
-        summary.append("=" * 50)
-        
-        # Basic stats
-        latest = self.exploration_history[-1]
-        summary.append(f"🗺️ Total nodes mapped: {latest['total_nodes']}")
-        summary.append(f"🚀 Active frontiers: {latest['frontiers']}")
-        summary.append(f"🛤️ Path length: {len(self.robot_path)} waypoints")
-        summary.append(f"📍 Current position: {self.robot_position}")
-        summary.append(f"🧭 Current direction: {self.robot_direction}")
-        
-        # Map boundaries
-        if self.nodes:
-            positions = [node['position'] for node in self.nodes.values()]
-            min_x, max_x = min(pos[0] for pos in positions), max(pos[0] for pos in positions)
-            min_y, max_y = min(pos[1] for pos in positions), max(pos[1] for pos in positions)
-            summary.append(f"🏁 Map bounds: X({min_x} to {max_x}), Y({min_y} to {max_y})")
-            summary.append(f"📏 Map size: {max_x-min_x+1} × {max_y-min_y+1} grid cells")
-        
-        # Node type counts
-        dead_ends = sum(1 for node in self.nodes.values() if node['is_dead_end'])
-        fully_scanned = sum(1 for node in self.nodes.values() if node['fully_scanned'])
-        
-        summary.append(f"🚫 Dead ends: {dead_ends}")
-        summary.append(f"🔍 Fully scanned nodes: {fully_scanned}")
-        
-        # Movement stats from latest data
-        if latest['stats']:
-            stats = latest['stats']
-            summary.append(f"\n🔧 MOVEMENT STATISTICS:")
-            summary.append(f"   📊 Total node visits: {stats.get('nodes_visited', 'N/A')}")
-            summary.append(f"   🔄 Drift corrections: {stats.get('corrections', 'N/A')}")
-            summary.append(f"   ⏭️ Consecutive forward: {stats.get('consecutive_forward', 'N/A')}")
-            summary.append(f"   ⏪ Consecutive backward: {stats.get('consecutive_backward', 'N/A')}")
-        
-        # Exploration timeline
-        if len(self.exploration_history) > 1:
-            summary.append(f"\n📅 EXPLORATION TIMELINE:")
-            summary.append(f"   🚀 Started: {self.exploration_history[0]['timestamp']}")
-            summary.append(f"   🏁 Latest: {self.exploration_history[-1]['timestamp']}")
-            summary.append(f"   ⏱️ Updates: {len(self.exploration_history)}")
-        
-        summary.append("=" * 50)
-        
-        return "\n".join(summary)
-    
-    def show_map(self, block=True):
-        """Show the current map visualization"""
-        if self.enable_realtime:
-            if block:
-                plt.show(block=True)
-        else:
-            self.plot_current_map()
-            plt.show(block=block)
-    
-    def close(self):
-        """Clean up visualization resources"""
-        if self.enable_realtime:
-            plt.ioff()
-            if hasattr(self, 'fig'):
-                plt.close(self.fig)
-        print("🗺️ MapVisualizer closed successfully!")
-
-# ===== Integration Helper Functions =====
-
-def integrate_visualizer_with_exploration(graph_mapper, movement_controller, 
-                                        enable_realtime=True, save_images=True):
-    """
-    Helper function to integrate MapVisualizer with existing exploration code
-    
-    Usage:
-        visualizer = integrate_visualizer_with_exploration(graph_mapper, movement_controller)
-    """
-    visualizer = MapVisualizer(enable_realtime=enable_realtime, save_images=save_images)
-    
-    # Initial update
-    visualizer.update_from_graph_mapper(graph_mapper, movement_controller)
-    visualizer.plot_current_map()
-    
-    return visualizer
-
-def update_visualization_during_exploration(visualizer, graph_mapper, movement_controller,
-                                          auto_save=False, save_interval=10):
-    """
-    Helper function to update visualization during exploration
-    Call this function after each exploration step
-    
-    Args:
-        visualizer: MapVisualizer instance
-        graph_mapper: GraphMapper instance
-        movement_controller: MovementController instance
-        auto_save: Automatically save images
-        save_interval: Save every N updates (if auto_save=True)
-    """
-    # Update data
-    visualizer.update_from_graph_mapper(graph_mapper, movement_controller)
-    
-    # Plot current state
-    visualizer.plot_current_map()
-    
-    # Auto-save if enabled
-    if auto_save and len(visualizer.exploration_history) % save_interval == 0:
-        step_num = len(visualizer.exploration_history)
-        filename = f"exploration_step_{step_num:03d}.png"
-        visualizer.save_map_image(filename)
-    
-    return visualizer
 
 # เพิ่มคลาสใหม่สำหรับติดตามการเคลื่อนไหว
 class MovementTracker:
@@ -2033,13 +1565,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
     
     return scan_results
-
-def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
+def explore_autonomously_with_absolute_directions(
+    gimbal, chassis, sensor, tof_handler, graph_mapper, 
+    movement_controller, attitude_handler, max_nodes=20
+):
     """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING"""
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     print(f"🔧 Attitude Drift Correction: Every {movement_controller.DRIFT_CORRECTION_INTERVAL} nodes (+{movement_controller.DRIFT_CORRECTION_ANGLE}° right)")
     
+    visualizer = RobotMapVisualizer(cell_size=0.6, figsize=(15, 10))
+    visualizer.add_robot_position(graph_mapper.currentPosition, graph_mapper.currentDirection)
+    visualizer.plot_map()
+
     nodes_explored = 0
     scanning_iterations = 0
     dead_end_reversals = 0
@@ -2054,37 +1592,31 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         # แสดงสถานะ drift correction
         drift_status = movement_controller.get_drift_correction_status()
-        print(f"🔧 Comprehensive Drift Correction Status:")
-        print(f"   📊 Total nodes visited (including backtrack): {drift_status['nodes_visited']}")
+        print(f"🔧 Drift Correction Status:")
+        print(f"   📊 Total nodes visited: {drift_status['nodes_visited']}")
         print(f"   ⏳ Next correction at node: {drift_status['next_correction_at']}")
         print(f"   ⏰ Nodes until correction: {drift_status['nodes_until_correction']}")
         print(f"   🔄 Total corrections done: {drift_status['total_corrections']}")
-        print(f"   📍 Last correction at node: {drift_status['last_correction_at']}")
-        print(f"{'='*50}")
         
-        if nodes_explored % 5 == 0:  # แสดง map ทุกๆ 5 nodes
-            print(f"\n📊 === INTERMEDIATE MAP (Node {nodes_explored}) ===")
-            plot_exploration_map(graph_mapper, show_plot=True)
-
-        print(f"\n🎉 === FINAL EXPLORATION MAP ===")
-        plot_exploration_map(graph_mapper, show_plot=True)
-        plot_exploration_progress(graph_mapper)
-            
-        # *** เพิ่มจำนวนโหนดสำหรับ main exploration และเช็ค drift correction ***
+        # เพิ่มจำนวนโหนดใน main exploration และเช็ค drift correction
         needs_drift_correction = movement_controller.increment_node_visit_main_exploration(attitude_handler)
-        
         if needs_drift_correction:
             print(f"✅ Main exploration drift correction completed!")
         
-        # Check if current node needs scanning
+        # สร้าง node ปัจจุบัน
         current_node = graph_mapper.create_node(graph_mapper.currentPosition)
         
+        # ถ้าเป็นโหนดใหม่ → scan
         if not current_node.fullyScanned:
             print("🔍 NEW NODE - Performing full scan...")
             scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper)
             scanning_iterations += 1
+
+            # อัพเดทแผนที่หลังสแกน
+            visualizer.update_from_graph_mapper(graph_mapper)
+            visualizer.plot_map()
             
-            # Check if this scan revealed a dead end
+            # ถ้า dead end → reverse
             if graph_mapper.is_dead_end(current_node):
                 print(f"🚫 DEAD END DETECTED after scanning!")
                 print(f"🔙 Initiating reverse maneuver...")
@@ -2093,30 +1625,33 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 if success:
                     dead_end_reversals += 1
                     print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
+                    
+                    visualizer.add_robot_position(graph_mapper.currentPosition, graph_mapper.currentDirection)
+                    visualizer.update_from_graph_mapper(graph_mapper)
+                    visualizer.plot_map()
+                    
                     nodes_explored += 1
                     continue
                 else:
                     print(f"❌ Failed to reverse from dead end!")
                     break
         else:
+            # ถ้าเป็นโหนดที่เคยสแกนแล้ว
             print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
             graph_mapper.update_unexplored_exits_absolute(current_node)
             graph_mapper.build_connections()
+            visualizer.update_from_graph_mapper(graph_mapper)
+            visualizer.plot_map()
         
         nodes_explored += 1
-        
-        # Print current graph state
         graph_mapper.print_graph_summary()
-        
-        # Find next direction to explore
         graph_mapper.previous_node = current_node
         
-        # STEP 1: Try to find unexplored direction from current node
+        # STEP 1: หา direction ใหม่ที่ยังไม่ได้สำรวจ
         next_direction = graph_mapper.find_next_exploration_direction()
         
         if next_direction:
             print(f"\n🎯 Next exploration direction (absolute): {next_direction}")
-            
             can_move = graph_mapper.can_move_to_direction_absolute(next_direction)
             print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
             
@@ -2129,22 +1664,20 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                         continue
                     else:
                         print(f"❌ Movement failed - wall detected!")
-                        if current_node and next_direction in current_node.unexploredExits:
+                        if next_direction in current_node.unexploredExits:
                             current_node.unexploredExits.remove(next_direction)
                         continue
-                    
                 except Exception as e:
                     print(f"❌ Error during movement: {e}")
                     break
             else:
                 print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
-                if current_node and next_direction in current_node.unexploredExits:
+                if next_direction in current_node.unexploredExits:
                     current_node.unexploredExits.remove(next_direction)
                 continue
         
         # STEP 2: Backtracking logic
         backtrack_attempts += 1
-        
         frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
         
         if frontier_id and path is not None and frontier_direction:
@@ -2153,31 +1686,26 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
             print("🔙 REVERSE BACKTRACK: Using reverse movements WITH drift correction!")
             
             try:
-                # *** เปลี่ยนการเรียกใช้ให้ส่ง attitude_handler ไปด้วย ***
                 success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler)
-                
                 if success:
                     reverse_backtracks += 1
                     print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
                     print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
                     
-                    # แสดงสถานะ drift correction หลัง backtrack
                     updated_drift_status = movement_controller.get_drift_correction_status()
                     print(f"   🔧 Total nodes after backtrack: {updated_drift_status['nodes_visited']}")
                     print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
                     
                     time.sleep(0.2)
                     continue
-                    
                 else:
                     print(f"❌ Failed to execute reverse backtracking path!")
                     break
-                    
             except Exception as e:
                 print(f"❌ Error during reverse backtracking: {e}")
                 break
         else:
-            # STEP 3: Final check
+            # STEP 3: Final frontier scan
             print("🎉 No more frontiers found!")
             print("🔄 Performing final frontier scan...")
             graph_mapper.rebuild_frontier_queue()
@@ -2188,10 +1716,10 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
             else:
                 print("🎉 EXPLORATION DEFINITELY COMPLETE!")
                 break
-        
-        if nodes_explored >= max_nodes:
-            print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
-            break
+    
+    if nodes_explored >= max_nodes:
+        print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
+
     
     # Final statistics
     final_drift_status = movement_controller.get_drift_correction_status()
@@ -2356,6 +1884,3 @@ if __name__ == '__main__':
             pass
         ep_robot.close()
         print("🔌 Connection closed")
-
-print(f"\n📊 Generating visual reports...")
-create_final_map_report(graph_mapper)
