@@ -7,7 +7,123 @@ from datetime import datetime
 import json
 from collections import deque
 
-ROBOT_FACE = 1 # 0 1
+ROBOT_FACE = 1 
+
+CURRENT_TARGET_YAW = 0.0
+
+class AttitudeHandler:
+    def __init__(self):
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
+        self.current_roll = 0.0
+        self.target_yaw = 0.0
+        self.yaw_tolerance = 2.0  # เพิ่ม tolerance เพราะมีการ drift
+        self.is_monitoring = False
+        
+    def attitude_handler(self, attitude_info):
+        if not self.is_monitoring:
+            return
+            
+        yaw, pitch, roll = attitude_info
+        self.current_yaw = yaw
+        self.current_pitch = pitch
+        self.current_roll = roll
+        print(f"\r🧭 Current chassis attitude: yaw={yaw:.1f}°, pitch={pitch:.1f}°, roll={roll:.1f}°", end="", flush=True)
+        
+    def start_monitoring(self, chassis):
+        """เริ่มการติดตาม attitude"""
+        self.is_monitoring = True
+        chassis.sub_attitude(freq=20, callback=self.attitude_handler)
+        
+    def stop_monitoring(self, chassis):
+        """หยุดการติดตาม attitude"""
+        self.is_monitoring = False
+        try:
+            chassis.unsub_attitude()
+        except:
+            pass
+            
+    def normalize_angle(self, angle):
+        """ปรับมุมให้อยู่ในช่วง -180 ถึง 180"""
+        while angle > 180:
+            angle -= 360
+        while angle < -180:
+            angle += 360
+        return angle
+        
+    def is_at_target_yaw(self, target_yaw=0.0):
+        """ตรวจสอบว่า yaw อยู่ที่เป้าหมายหรือไม่"""
+        # สำหรับ 180° ตรวจสอบทั้ง 180° และ -180°
+        if abs(target_yaw) == 180:
+            diff_180 = abs(self.normalize_angle(self.current_yaw - 180))
+            diff_neg180 = abs(self.normalize_angle(self.current_yaw - (-180)))
+            diff = min(diff_180, diff_neg180)
+            target_display = f"±180"
+        else:
+            diff = abs(self.normalize_angle(self.current_yaw - target_yaw))
+            target_display = f"{target_yaw}"
+            
+        is_correct = diff <= self.yaw_tolerance
+        print(f"\n🎯 Yaw check: current={self.current_yaw:.1f}°, target={target_display}°, diff={diff:.1f}°, correct={is_correct}")
+        return is_correct
+        
+    def correct_yaw_to_target(self, chassis, target_yaw=0.0):
+        """แก้ไข yaw ให้อยู่ที่มุมเป้าหมายที่กำหนด"""
+        
+        if self.is_at_target_yaw(target_yaw):
+            print(f"✅ Chassis already at correct yaw: {self.current_yaw:.1f}° (target: {target_yaw}°)")
+            return True
+            
+        # FIXED: Gimbal coordinate คงที่ตาม physical orientation ของ gimbal เอง
+        # ต้องหมุน robot ในทิศทางตรงข้ามกับที่ต้องการปรับ gimbal angle
+        gimbal_to_target = target_yaw - self.current_yaw
+        gimbal_diff = self.normalize_angle(gimbal_to_target)
+        
+        # หมุน robot ในทิศทางตรงข้าม
+        robot_rotation = -gimbal_diff
+        
+        print(f"🔧 Correcting chassis yaw: from {self.current_yaw:.1f}° to {target_yaw}°")
+        print(f"📐 Gimbal needs to change: {gimbal_diff:.1f}°")
+        print(f"📐 Robot will rotate: {robot_rotation:.1f}°")
+        
+        # หมุน chassis
+        try:
+            if abs(robot_rotation) > self.yaw_tolerance:
+                correction_speed = 30
+                
+                print(f"🔄 Rotating robot {robot_rotation:.1f}°")
+                chassis.move(x=0, y=0, z=robot_rotation, z_speed=correction_speed).wait_for_completed()
+                time.sleep(1.0)  # รอให้การหมุนเสร็จสมบูรณ์
+            
+            # ตรวจสอบผลลัพธ์
+            final_check = self.is_at_target_yaw(target_yaw)
+            
+            if final_check:
+                print(f"✅ Successfully corrected chassis yaw to {self.current_yaw:.1f}°")
+                return True
+            else:
+                print(f"⚠️ Chassis yaw correction incomplete: {self.current_yaw:.1f}° (target: {target_yaw}°)")
+                
+                # คำนวณความต่างที่เหลือ
+                remaining_gimbal = target_yaw - self.current_yaw
+                remaining_diff = self.normalize_angle(remaining_gimbal)
+                remaining_robot = -remaining_diff
+                print(f"📐 Remaining gimbal difference: {remaining_diff:.1f}°")
+                print(f"📐 Additional robot rotation needed: {remaining_robot:.1f}°")
+                
+                # ลองอีกครั้งด้วยการปรับเล็กน้อย
+                if abs(remaining_robot) > self.yaw_tolerance and abs(remaining_robot) < 45:
+                    print(f"🔧 Fine-tuning robot with additional {remaining_robot:.1f}°")
+                    chassis.move(x=0, y=0, z=remaining_robot, z_speed=20).wait_for_completed()
+                    time.sleep(0.5)
+                    return self.is_at_target_yaw(target_yaw)
+                else:
+                    print(f"⚠️ Remaining rotation too large ({remaining_robot:.1f}°), may need multiple corrections")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Failed to correct chassis yaw: {e}")
+            return False
 
 # ===== PID Controller =====
 class PID:
@@ -43,15 +159,15 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.0
-        self.KI = 0.1
-        self.KD = 6
+        self.KP = 1.5
+        self.KI = 0.3
+        self.KD = 4
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
         
         # Subscribe to position updates
-        self.chassis.sub_position(freq=10, callback=self.position_handler)
+        self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
     
     def position_handler(self, position_info):
@@ -59,18 +175,17 @@ class MovementController:
         self.current_y = position_info[1]
         self.current_z = position_info[2]
     
-    def move_forward_with_pid(self, target_distance, axis, direction=1):
-        """Move forward using PID control"""
+    def move_forward_with_pid(self, target_distance, axis, direction=1, gimbal=None, tof_handler=None, sensor=None):
+        """Move forward/backward using PID control with gimbal obstacle check"""
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
-        
+
         start_time = time.time()
         last_time = start_time
         target_reached = False
-        
-        # Ramp-up parameters
+
         min_speed = 0.1
         max_speed = 1.5
-        
+
         if axis == 'x':
             start_position = self.current_x
         else:
@@ -78,65 +193,107 @@ class MovementController:
 
         direction_text = "FORWARD" if direction == 1 else "BACKWARD"
         print(f"🚀 Moving {direction_text} {target_distance}m on {axis}-axis, direction: {direction}")
-        
+
+        # === NEW: Set gimbal direction ===
+        if gimbal:
+            yaw_angle = 0 if direction == 1 else 180
+            gimbal.moveto(pitch=0, yaw=yaw_angle, pitch_speed=300, yaw_speed=300).wait_for_completed()
+            time.sleep(0.1)
+
+        # === NEW: Subscribe ToF for continuous obstacle check ===
+        if tof_handler and sensor:
+            tof_handler.start_scanning('front')  # 'front' คือทิศที่ gimbal หัน
+            sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+
         try:
             while not target_reached:
                 now = time.time()
                 dt = now - last_time
                 last_time = now
                 elapsed_time = now - start_time
-                
+
                 if axis == 'x':
                     current_position = self.current_x
                 else:
                     current_position = self.current_y
-                
+
                 relative_position = abs(current_position - start_position)
+
+                # === NEW: Obstacle check ===
+                if tof_handler and tof_handler.is_wall_detected('front'):
+                    print("🛑 Obstacle detected ahead! Stopping movement.")
+                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
+                    break
 
                 # PID calculation
                 output = pid.compute(relative_position, dt)
-                
+
                 # Ramp-up logic
                 if elapsed_time < self.RAMP_UP_TIME:
                     ramp_multiplier = min_speed + (elapsed_time / self.RAMP_UP_TIME) * (1.0 - min_speed)
                 else:
                     ramp_multiplier = 1.0
-                
+
                 ramped_output = output * ramp_multiplier
                 speed = max(min(ramped_output, max_speed), -max_speed)
-                
-                if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
-                else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
-                # Stop condition
-                if abs(relative_position - target_distance) < 0.017:
+                self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+
+                if abs(relative_position - target_distance) < 0.02:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
                     break
-                    
+
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
-    
-    def rotate_90_degrees_right(self):
+        finally:
+            # Stop ToF scanning
+            if tof_handler and sensor:
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
+    def rotate_90_degrees_right(self, movement_controller=None, attitude_handler=None):
+        global CURRENT_TARGET_YAW
         """Rotate 90 degrees clockwise"""
         print("🔄 Rotating 90° RIGHT...")
         time.sleep(0.2)
-        self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.3)
+        
+        # อัปเดท target yaw ก่อน
+        CURRENT_TARGET_YAW += 90
+        target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+        
+        print(f"🎯 Target yaw: {target_angle}°")
+        success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+        
+        if success:
+            print("✅ Right rotation completed!")
+        else:
+            print("⚠️ Right rotation may be incomplete")
+            
         time.sleep(0.2)
-        print("✅ Right rotation completed!")
+        return success
 
-    def rotate_90_degrees_left(self):
-        """Rotate 90 degrees counter-clockwise"""
+    def rotate_90_degrees_left(self, movement_controller=None, attitude_handler=None):
+        global CURRENT_TARGET_YAW
+        """Rotate 90 degrees counter-clockwise"""  
         print("🔄 Rotating 90° LEFT...")
         time.sleep(0.2)
-        self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
+        
+        # อัปเดท target yaw ก่อน
+        CURRENT_TARGET_YAW -= 90
+        target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+        
+        print(f"🎯 Target yaw: {target_angle}°")
+        success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+        
+        if success:
+            print("✅ Left rotation completed!")
+        else:
+            print("⚠️ Left rotation may be incomplete")
+            
         time.sleep(0.2)
-        print("✅ Left rotation completed!")
+        return success
+
     
     def reverse_from_dead_end(self):
         """Reverse robot from dead end position"""
@@ -189,19 +346,13 @@ class GraphNode:
         self.id = node_id
         self.position = position  # (x, y)
 
-        # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
+        # Wall detection (absolute directions)
         self.walls = {
             'north': False,
             'south': False,
             'east': False,
             'west': False
         }
-
-        # Legacy support (will be removed)
-        self.wallLeft = False
-        self.wallRight = False
-        self.wallFront = False
-        self.wallBack = False
 
         # Neighbors (connected nodes)
         self.neighbors = {
@@ -241,8 +392,7 @@ class GraphMapper:
         self.visitedNodes = set()
         self.previous_node = None
         # Override methods เพื่อใช้ priority-based exploration
-        self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
-        self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+    # Use only absolute direction logic
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -262,114 +412,57 @@ class GraphMapper:
         return self.nodes.get(node_id)
     
     def update_current_node_walls_absolute(self, left_wall, right_wall, front_wall):
-        """NEW: Update walls using ABSOLUTE directions"""
         current_node = self.get_current_node()
         if current_node:
-            # Map relative sensor readings to absolute directions
             direction_map = {
                 'north': {'front': 'north', 'left': 'west', 'right': 'east'},
                 'south': {'front': 'south', 'left': 'east', 'right': 'west'},
                 'east': {'front': 'east', 'left': 'north', 'right': 'south'},
                 'west': {'front': 'west', 'left': 'south', 'right': 'north'}
             }
-            
             current_mapping = direction_map[self.currentDirection]
-            
-            # Update absolute wall information
             current_node.walls[current_mapping['front']] = front_wall
             current_node.walls[current_mapping['left']] = left_wall
             current_node.walls[current_mapping['right']] = right_wall
-            
-            # Legacy support - update old format too
-            current_node.wallFront = front_wall
-            current_node.wallLeft = left_wall
-            current_node.wallRight = right_wall
-            
             current_node.lastVisited = datetime.now().isoformat()
-            
-            # NEW: Mark node as fully scanned
             current_node.fullyScanned = True
             current_node.scanTimestamp = datetime.now().isoformat()
-            
             self.update_unexplored_exits_absolute(current_node)
             self.build_connections()
 
     def update_unexplored_exits_absolute(self, node):
-        """FIXED: Update unexplored exits using ABSOLUTE directions"""
         node.unexploredExits = []
-        
         x, y = node.position
-        
-        # Define all possible directions from this node (ABSOLUTE)
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
             'east': (x + 1, y),
             'west': (x - 1, y)
         }
-        
-        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-        print(f"🔍 Wall status: {node.walls}")
-        
-        # Check each ABSOLUTE direction for unexplored exits
         for direction, target_pos in possible_directions.items():
             target_node_id = self.get_node_id(target_pos)
-            
-            # Check if this direction is blocked by wall
             is_blocked = node.walls.get(direction, True)
-            
-            # Check if already explored
             already_explored = direction in node.exploredDirections
-            
-            # Check if target node exists and is fully explored
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-            
-            print(f"   📍 Direction {direction}:")
-            print(f"      🚧 Blocked: {is_blocked}")
-            print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🏗️  Target exists: {target_exists}")
-            print(f"      🔍 Target fully explored: {target_fully_explored}")
-            
-            # Add to unexplored exits if:
-            # 1. Not blocked by wall AND
-            # 2. Not already explored from this node AND
-            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
             should_explore = (not is_blocked and 
-                            not already_explored and 
-                            (not target_exists or not target_fully_explored))
-            
+                             not already_explored and 
+                             (not target_exists or not target_fully_explored))
             if should_explore:
                 node.unexploredExits.append(direction)
-                print(f"      ✅ ADDED to unexplored exits!")
-            else:
-                print(f"      ❌ NOT added to unexplored exits")
-        
-        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        
-        # Update frontier queue
         has_unexplored = len(node.unexploredExits) > 0
-        
         if has_unexplored and node.id not in self.frontierQueue:
             self.frontierQueue.append(node.id)
-            print(f"🚀 Added {node.id} to frontier queue")
         elif not has_unexplored and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
-            print(f"🧹 Removed {node.id} from frontier queue")
-        
-        # Dead end detection using absolute directions
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
+        is_dead_end = blocked_count >= 3
         node.isDeadEnd = is_dead_end
-        
-        if is_dead_end:
-            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
-            if node.id in self.frontierQueue:
-                self.frontierQueue.remove(node.id)
-                print(f"🧹 Removed dead end {node.id} from frontier queue")
+        if is_dead_end and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
     
     def build_connections(self):
         """Build connections between adjacent nodes"""
@@ -448,14 +541,15 @@ class GraphMapper:
         is_blocked = current_node.walls.get(target_direction, True)
         return not is_blocked
     
-    def rotate_to_absolute_direction(self, target_direction, movement_controller):
+    def rotate_to_absolute_direction(self, target_direction, movement_controller, attitude_handler=None):
         """NEW: Rotate robot to face target ABSOLUTE direction"""
         global ROBOT_FACE
+        global CURRENT_TARGET_YAW
         print(f"🎯 Rotating from {self.currentDirection} to {target_direction}")
         
         if self.currentDirection == target_direction:
             print(f"✅ Already facing {target_direction}")
-            return
+            return True
         
         direction_order = ['north', 'east', 'south', 'west']
         current_idx = direction_order.index(self.currentDirection)
@@ -464,20 +558,34 @@ class GraphMapper:
         # Calculate shortest rotation
         diff = (target_idx - current_idx) % 4
         
-        if diff == 1:  # Turn right
-            movement_controller.rotate_90_degrees_right()
-            ROBOT_FACE += 1
-        elif diff == 3:  # Turn left
-            movement_controller.rotate_90_degrees_left()
-            ROBOT_FACE += 1
-        elif diff == 2:  # Turn around (180°)
-            movement_controller.rotate_90_degrees_right()
-            movement_controller.rotate_90_degrees_right()
-            ROBOT_FACE += 2
+        success = True
         
-        # Update current direction
-        self.currentDirection = target_direction
-        print(f"✅ Now facing {self.currentDirection}")
+        if diff == 1:  # Turn right
+            print(f"🔄 Need to turn RIGHT (90°)")
+            success = movement_controller.rotate_90_degrees_right(movement_controller, attitude_handler)
+            if success:
+                ROBOT_FACE += 1
+        elif diff == 3:  # Turn left  
+            print(f"🔄 Need to turn LEFT (-90°)")
+            success = movement_controller.rotate_90_degrees_left(movement_controller, attitude_handler)
+            if success:
+                ROBOT_FACE += 1
+        elif diff == 2:  # Turn around (180°)
+            print(f"🔄 Need to turn AROUND (180°)")
+            success1 = movement_controller.rotate_90_degrees_right(movement_controller, attitude_handler)
+            success2 = movement_controller.rotate_90_degrees_right(movement_controller, attitude_handler)
+            success = success1 and success2
+            if success:
+                ROBOT_FACE += 2
+        
+        if success:
+            # Update current direction only if rotation was successful
+            self.currentDirection = target_direction
+            print(f"✅ Successfully rotated to face {self.currentDirection}")
+        else:
+            print(f"❌ Failed to rotate to {target_direction}")
+            
+        return success
 
     def handle_dead_end(self, movement_controller):
         """Handle dead end situation by reversing"""
@@ -507,7 +615,7 @@ class GraphMapper:
 
         return True
     
-    def move_to_absolute_direction(self, target_direction, movement_controller):
+    def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler=None):
         """NEW: Move to target ABSOLUTE direction with proper rotation"""
         global ROBOT_FACE
         print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
@@ -518,7 +626,7 @@ class GraphMapper:
             return False
         
         # First rotate to face the target direction
-        self.rotate_to_absolute_direction(target_direction, movement_controller)
+        self.rotate_to_absolute_direction(target_direction, movement_controller, attitude_handler)
         
         # Determine axis for movement
         axis_test = 'x'
@@ -530,7 +638,7 @@ class GraphMapper:
         print(f"🚀 Moving forward on {axis_test}-axis")
         
         # Move forward
-        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
+        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1, gimbal=ep_gimbal, tof_handler=tof_handler, sensor=ep_sensor)
         
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
@@ -1075,11 +1183,8 @@ class ToFSensorHandler:
 
 # ===== Main Exploration Functions =====
 def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
-    """NEW: Scan current node and update graph with ABSOLUTE directions"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
-    
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
-    
     # Check if node has been fully scanned before
     if current_node.fullyScanned:
         print(f"🔄 Node {current_node.id} already fully scanned - using cached data!")
@@ -1092,120 +1197,77 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print("⚡ Skipping physical scan - using cached data")
         return current_node.sensorReadings
     
-    # Only scan if node hasn't been fully scanned before
     print(f"🆕 First time visiting node {current_node.id} - performing full scan")
     print(f"🧭 Robot currently facing: {graph_mapper.currentDirection}")
-    
-    # Lock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.2)
-    
     speed = 480
     scan_results = {}
-    ep_chassis = ep_robot.chassis
-    
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-    
     tof_handler.start_scanning('front')
-    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     front_distance = tof_handler.get_average_distance('front')
     front_wall = tof_handler.is_wall_detected('front')
     scan_results['front'] = front_distance
-    
-    
-    def sub_attitude_info_handler(attitude_info):
-        yaw, pitch, roll = attitude_info
-        print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
-
-
-
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    
-    # Check if front distance is too close and move away
-    if front_distance < 30.0:
-        move_distance = -(25 - front_distance)
-        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
-    
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-    
     tof_handler.start_scanning('left')
-    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
-    
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
-    
-    # Check if left distance is too close and move away
-    if left_distance < 25:
-        move_distance = 25 - left_distance
-        if left_distance < 15:
-            ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
-            ep_chassis.move(x=0, y=0, z=-15).wait_for_completed()
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        #time.sleep(0.5)
-    
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-    
     tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=10, callback=tof_handler.tof_data_handler)
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
-    
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
-    
-    # Check if right distance is too close and move away
-    if right_distance < 25:
-        move_distance = -(25 - right_distance)
-        if right_distance < 15:
-            ep_chassis.sub_attitude(freq=10, callback=sub_attitude_info_handler)
-            ep_chassis.move(x=0, y=0, z=0).wait_for_completed()
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        #time.sleep(0.5)
-    
+    # Scan back (physical: 180°) ONLY for (0,0)
+    if graph_mapper.currentPosition == (0, 0):
+        print("🔍 Scanning BACK (physical: 180°) at (0,0)...")
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.2)
+        tof_handler.start_scanning('back')
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        back_distance = tof_handler.get_average_distance('back')
+        back_wall = tof_handler.is_wall_detected('back')
+        scan_results['back'] = back_distance
+        print(f"📏 BACK scan result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
     # Return to center
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-    
-    # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
     time.sleep(0.2)
-    
-    # NEW: Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
-    
     print(f"✅ Node {current_node.id} scan complete:")
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
-    
+    if graph_mapper.currentPosition == (0, 0):
+        print(f"   📏 Back: {scan_results['back']:.1f}cm")
     return scan_results
 
-def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
+def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=49):
     """NEW: Main autonomous exploration using ABSOLUTE directions and reverse backtracking"""
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH ABSOLUTE DIRECTIONS ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
@@ -1275,7 +1337,7 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
             if can_move:
                 try:
                     # Move to next direction using absolute direction system
-                    success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller)
+                    success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller, attitude_handler)
                     if success:
                         print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
                         time.sleep(0.2)
@@ -1471,7 +1533,10 @@ if __name__ == '__main__':
     tof_handler = ToFSensorHandler()
     graph_mapper = GraphMapper()
     movement_controller = MovementController(ep_chassis)
-    
+
+    attitude_handler = AttitudeHandler()
+    attitude_handler.start_monitoring(ep_chassis)
+
     try:
         print("✅ Recalibrating gimbal...")
         ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
@@ -1485,7 +1550,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                        graph_mapper, movement_controller, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
@@ -1497,6 +1562,7 @@ if __name__ == '__main__':
         try:
             ep_sensor.unsub_distance()
             movement_controller.cleanup()
+            attitude_handler.stop_monitoring(ep_chassis)
         except:
             pass
         ep_robot.close()

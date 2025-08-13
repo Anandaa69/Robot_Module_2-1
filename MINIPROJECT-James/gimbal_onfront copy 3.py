@@ -6,11 +6,10 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
 ROBOT_FACE = 1 # 0 1
 
+# ===== PID Controller =====
 # ===== PID Controller =====
 class PID:
     def __init__(self, Kp, Ki, Kd, setpoint=0):
@@ -36,7 +35,127 @@ class PID:
         self.prev_error = error
         return output
 
-# ===== Movement Controller =====
+# ===== FIXED Attitude Handler =====
+class AttitudeHandler:
+    def __init__(self):
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
+        self.current_roll = 0.0
+        self.target_yaw = 0.0
+        self.yaw_tolerance = 3.0  # เพิ่ม tolerance เพราะมีการ drift
+        self.is_monitoring = False
+        
+        # FIXED: Gimbal coordinate มันคงที่ตาม physical gimbal
+        # เมื่อ robot หัน gimbal จะอ่านค่าตาม physical orientation ของ gimbal เอง
+        self.standard_gimbal_angles = {
+            'front': 0,      # gimbal หัน front = 0°
+            'left': -90,     # gimbal หัน left = -90°
+            'right': 90,     # gimbal หัน right = 90°
+            'back': 180      # gimbal หัน back = 180° หรือ -180°
+        }
+        
+    def attitude_handler(self, attitude_info):
+        if not self.is_monitoring:
+            return
+            
+        yaw, pitch, roll = attitude_info
+        self.current_yaw = yaw
+        self.current_pitch = pitch
+        self.current_roll = roll
+        print(f"🧭 Current gimbal attitude: yaw={yaw:.1f}°, pitch={pitch:.1f}°, roll={roll:.1f}°")
+        
+    def start_monitoring(self, chassis):
+        """เริ่มการติดตาม attitude"""
+        self.is_monitoring = True
+        chassis.sub_attitude(freq=20, callback=self.attitude_handler)
+        
+    def stop_monitoring(self, chassis):
+        """หยุดการติดตาม attitude"""
+        self.is_monitoring = False
+        try:
+            chassis.unsub_attitude()
+        except:
+            pass
+            
+    def normalize_angle(self, angle):
+        """ปรับมุมให้อยู่ในช่วง -180 ถึง 180"""
+        while angle > 180:
+            angle -= 360
+        while angle < -180:
+            angle += 360
+        return angle
+        
+    def is_gimbal_at_standard_angle(self, target_gimbal_angle):
+        """ตรวจสอบว่า gimbal อยู่ที่มุมมาตรฐานหรือไม่"""
+        # สำหรับ back position ตรวจสอบทั้ง 180° และ -180°
+        if target_gimbal_angle == 180:
+            diff_180 = abs(self.normalize_angle(self.current_yaw - 180))
+            diff_neg180 = abs(self.normalize_angle(self.current_yaw - (-180)))
+            diff = min(diff_180, diff_neg180)
+        else:
+            diff = abs(self.normalize_angle(self.current_yaw - target_gimbal_angle))
+        
+        is_correct = diff <= self.yaw_tolerance
+        print(f"🎯 Gimbal angle check: current={self.current_yaw:.1f}°, target={target_gimbal_angle}°, diff={diff:.1f}°, correct={is_correct}")
+        return is_correct
+        
+    def correct_gimbal_to_standard_angle(self, chassis, target_gimbal_angle):
+        """แก้ไข gimbal ให้อยู่ในมุมมาตรฐาน"""
+        if self.is_gimbal_at_standard_angle(target_gimbal_angle):
+            print(f"✅ Gimbal already at correct angle: {self.current_yaw:.1f}° (target: {target_gimbal_angle}°)")
+            return True
+            
+        # คำนวณ angle difference
+        if target_gimbal_angle == 180:
+            # สำหรับ back position เลือก 180° หรือ -180° ตามที่ใกล้ที่สุด
+            diff_180 = self.normalize_angle(180 - self.current_yaw)
+            diff_neg180 = self.normalize_angle(-180 - self.current_yaw)
+            if abs(diff_180) < abs(diff_neg180):
+                angle_diff = diff_180
+                target_display = 180
+            else:
+                angle_diff = diff_neg180
+                target_display = -180
+        else:
+            angle_diff = self.normalize_angle(target_gimbal_angle - self.current_yaw)
+            target_display = target_gimbal_angle
+            
+        print(f"🔧 Correcting gimbal: from {self.current_yaw:.1f}° to {target_display}° (diff: {angle_diff:.1f}°)")
+        
+        # หมุน chassis เพื่อปรับ gimbal orientation
+        try:
+            if abs(angle_diff) > self.yaw_tolerance:
+                # หมุน chassis ในทิศทางตรงข้ามกับที่ต้องการปรับ gimbal
+                # เพราะ gimbal coordinate เป็น relative กับ chassis
+                correction_speed = 30
+                correction_angle = -angle_diff  # ตรงข้ามเพราะเป็น relative
+                
+                print(f"🔄 Rotating chassis {correction_angle:.1f}° to correct gimbal orientation")
+                chassis.move(x=0, y=0, z=correction_angle, z_speed=correction_speed).wait_for_completed()
+                time.sleep(0.5)
+            
+            # ตรวจสอบผลลัพธ์
+            final_check = self.is_gimbal_at_standard_angle(target_gimbal_angle)
+            
+            if final_check:
+                print(f"✅ Successfully corrected gimbal to {self.current_yaw:.1f}°")
+                return True
+            else:
+                print(f"⚠️ Gimbal correction incomplete: {self.current_yaw:.1f}° (target: {target_gimbal_angle}°)")
+                # ลองอีกครั้งด้วยการปรับเล็กน้อย
+                remaining_diff = self.normalize_angle(target_gimbal_angle - self.current_yaw)
+                if abs(remaining_diff) > self.yaw_tolerance and abs(remaining_diff) < 15:
+                    print(f"🔧 Fine-tuning with additional {-remaining_diff:.1f}°")
+                    chassis.move(x=0, y=0, z=-remaining_diff, z_speed=20).wait_for_completed()
+                    time.sleep(0.3)
+                    return self.is_gimbal_at_standard_angle(target_gimbal_angle)
+                return False
+                
+        except Exception as e:
+            print(f"❌ Failed to correct gimbal attitude: {e}")
+            return False
+
+# ===== FIXED Movement Controller =====
 class MovementController:
     def __init__(self, chassis):
         self.chassis = chassis
@@ -44,10 +163,12 @@ class MovementController:
         self.current_y = 0.0
         self.current_z = 0.0
         
+        self.attitude_handler = AttitudeHandler()
+        
         # PID Parameters
         self.KP = 1.5
-        self.KI = 0.05
-        self.KD = 8
+        self.KI = 0.3
+        self.KD = 4
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
@@ -55,24 +176,47 @@ class MovementController:
         # Subscribe to position updates
         self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
-    
+
+    def ensure_standard_gimbal_attitude(self, expected_gimbal_direction='front'):
+        """FIXED: ตรวจสอบและปรับ gimbal ให้อยู่ในมุมมาตรฐาน"""
+        print(f"🧭 Ensuring standard gimbal attitude - expected direction: {expected_gimbal_direction}")
+        
+        # เริ่มติดตาม attitude
+        self.attitude_handler.start_monitoring(self.chassis)
+        time.sleep(0.8)  # รอให้ได้ข้อมูล attitude ที่แม่นยำ
+        
+        # กำหนดมุม gimbal ที่ควรจะเป็น
+        expected_angle = self.attitude_handler.standard_gimbal_angles.get(expected_gimbal_direction, 0)
+        
+        # แก้ไขมุมถ้าจำเป็น
+        success = self.attitude_handler.correct_gimbal_to_standard_angle(self.chassis, expected_angle)
+        
+        # หยุดติดตาม attitude
+        self.attitude_handler.stop_monitoring(self.chassis)
+        
+        if success:
+            print(f"✅ Gimbal attitude corrected to {expected_gimbal_direction} position")
+        else:
+            print(f"⚠️ Gimbal attitude correction may be incomplete")
+        
+        return success
+
     def position_handler(self, position_info):
         self.current_x = position_info[0]
         self.current_y = position_info[1]
         self.current_z = position_info[2]
     
-    def move_forward_with_pid(self, target_distance, axis, direction=1):
-        """Move forward using PID control"""
+    def move_forward_with_pid(self, target_distance, axis, direction=1, gimbal=None, tof_handler=None, sensor=None):
+        """Move forward/backward using PID control with gimbal obstacle check"""
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
-        
+
         start_time = time.time()
         last_time = start_time
         target_reached = False
-        
-        # Ramp-up parameters
+
         min_speed = 0.1
         max_speed = 1.5
-        
+
         if axis == 'x':
             start_position = self.current_x
         else:
@@ -80,48 +224,65 @@ class MovementController:
 
         direction_text = "FORWARD" if direction == 1 else "BACKWARD"
         print(f"🚀 Moving {direction_text} {target_distance}m on {axis}-axis, direction: {direction}")
-        
+
+        # Set gimbal direction
+        if gimbal:
+            yaw_angle = 0 if direction == 1 else 180
+            gimbal.moveto(pitch=0, yaw=yaw_angle, pitch_speed=300, yaw_speed=300).wait_for_completed()
+            time.sleep(0.1)
+
+        # Subscribe ToF for continuous obstacle check
+        if tof_handler and sensor:
+            tof_handler.start_scanning('front')
+            sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+
         try:
             while not target_reached:
                 now = time.time()
                 dt = now - last_time
                 last_time = now
                 elapsed_time = now - start_time
-                
+
                 if axis == 'x':
                     current_position = self.current_x
                 else:
                     current_position = self.current_y
-                
+
                 relative_position = abs(current_position - start_position)
+
+                # Obstacle check
+                if tof_handler and tof_handler.is_wall_detected('front'):
+                    print("🛑 Obstacle detected ahead! Stopping movement.")
+                    self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
+                    break
 
                 # PID calculation
                 output = pid.compute(relative_position, dt)
-                
+
                 # Ramp-up logic
                 if elapsed_time < self.RAMP_UP_TIME:
                     ramp_multiplier = min_speed + (elapsed_time / self.RAMP_UP_TIME) * (1.0 - min_speed)
                 else:
                     ramp_multiplier = 1.0
-                
+
                 ramped_output = output * ramp_multiplier
                 speed = max(min(ramped_output, max_speed), -max_speed)
-                
-                if axis == 'x':
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
-                else:
-                    self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
-                # Stop condition
-                if abs(relative_position - target_distance) < 0.017:
+                self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+
+                if abs(relative_position - target_distance) < 0.02:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
                     break
-                    
+
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
-    
+        finally:
+            # Stop ToF scanning
+            if tof_handler and sensor:
+                tof_handler.stop_scanning(sensor.unsub_distance)
+                
     def rotate_90_degrees_right(self):
         """Rotate 90 degrees clockwise"""
         print("🔄 Rotating 90° RIGHT...")
@@ -160,7 +321,7 @@ class MovementController:
         print("✅ Reverse from dead end completed!")
 
     def reverse_to_previous_node(self):
-        """NEW: Reverse 0.6m to go back to previous node without rotating"""
+        """Reverse 0.6m to go back to previous node without rotating"""
         global ROBOT_FACE
         print("🔙 BACKTRACKING - Reversing to previous node...")
         
@@ -182,6 +343,7 @@ class MovementController:
         """Clean up position subscription"""
         try:
             self.chassis.unsub_position()
+            self.attitude_handler.stop_monitoring(self.chassis)
         except:
             pass
 
@@ -191,19 +353,13 @@ class GraphNode:
         self.id = node_id
         self.position = position  # (x, y)
 
-        # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
+        # Wall detection (absolute directions)
         self.walls = {
             'north': False,
             'south': False,
             'east': False,
             'west': False
         }
-
-        # Legacy support (will be removed)
-        self.wallLeft = False
-        self.wallRight = False
-        self.wallFront = False
-        self.wallBack = False
 
         # Neighbors (connected nodes)
         self.neighbors = {
@@ -243,8 +399,7 @@ class GraphMapper:
         self.visitedNodes = set()
         self.previous_node = None
         # Override methods เพื่อใช้ priority-based exploration
-        self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
-        self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+    # Use only absolute direction logic
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -264,114 +419,57 @@ class GraphMapper:
         return self.nodes.get(node_id)
     
     def update_current_node_walls_absolute(self, left_wall, right_wall, front_wall):
-        """NEW: Update walls using ABSOLUTE directions"""
         current_node = self.get_current_node()
         if current_node:
-            # Map relative sensor readings to absolute directions
             direction_map = {
                 'north': {'front': 'north', 'left': 'west', 'right': 'east'},
                 'south': {'front': 'south', 'left': 'east', 'right': 'west'},
                 'east': {'front': 'east', 'left': 'north', 'right': 'south'},
                 'west': {'front': 'west', 'left': 'south', 'right': 'north'}
             }
-            
             current_mapping = direction_map[self.currentDirection]
-            
-            # Update absolute wall information
             current_node.walls[current_mapping['front']] = front_wall
             current_node.walls[current_mapping['left']] = left_wall
             current_node.walls[current_mapping['right']] = right_wall
-            
-            # Legacy support - update old format too
-            current_node.wallFront = front_wall
-            current_node.wallLeft = left_wall
-            current_node.wallRight = right_wall
-            
             current_node.lastVisited = datetime.now().isoformat()
-            
-            # NEW: Mark node as fully scanned
             current_node.fullyScanned = True
             current_node.scanTimestamp = datetime.now().isoformat()
-            
             self.update_unexplored_exits_absolute(current_node)
             self.build_connections()
 
     def update_unexplored_exits_absolute(self, node):
-        """FIXED: Update unexplored exits using ABSOLUTE directions"""
         node.unexploredExits = []
-        
         x, y = node.position
-        
-        # Define all possible directions from this node (ABSOLUTE)
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
             'east': (x + 1, y),
             'west': (x - 1, y)
         }
-        
-        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-        print(f"🔍 Wall status: {node.walls}")
-        
-        # Check each ABSOLUTE direction for unexplored exits
         for direction, target_pos in possible_directions.items():
             target_node_id = self.get_node_id(target_pos)
-            
-            # Check if this direction is blocked by wall
             is_blocked = node.walls.get(direction, True)
-            
-            # Check if already explored
             already_explored = direction in node.exploredDirections
-            
-            # Check if target node exists and is fully explored
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-            
-            print(f"   📍 Direction {direction}:")
-            print(f"      🚧 Blocked: {is_blocked}")
-            print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🏗️  Target exists: {target_exists}")
-            print(f"      🔍 Target fully explored: {target_fully_explored}")
-            
-            # Add to unexplored exits if:
-            # 1. Not blocked by wall AND
-            # 2. Not already explored from this node AND
-            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
             should_explore = (not is_blocked and 
-                            not already_explored and 
-                            (not target_exists or not target_fully_explored))
-            
+                             not already_explored and 
+                             (not target_exists or not target_fully_explored))
             if should_explore:
                 node.unexploredExits.append(direction)
-                print(f"      ✅ ADDED to unexplored exits!")
-            else:
-                print(f"      ❌ NOT added to unexplored exits")
-        
-        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        
-        # Update frontier queue
         has_unexplored = len(node.unexploredExits) > 0
-        
         if has_unexplored and node.id not in self.frontierQueue:
             self.frontierQueue.append(node.id)
-            print(f"🚀 Added {node.id} to frontier queue")
         elif not has_unexplored and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
-            print(f"🧹 Removed {node.id} from frontier queue")
-        
-        # Dead end detection using absolute directions
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
+        is_dead_end = blocked_count >= 3
         node.isDeadEnd = is_dead_end
-        
-        if is_dead_end:
-            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
-            if node.id in self.frontierQueue:
-                self.frontierQueue.remove(node.id)
-                print(f"🧹 Removed dead end {node.id} from frontier queue")
+        if is_dead_end and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
     
     def build_connections(self):
         """Build connections between adjacent nodes"""
@@ -532,7 +630,7 @@ class GraphMapper:
         print(f"🚀 Moving forward on {axis_test}-axis")
         
         # Move forward
-        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
+        movement_controller.move_forward_with_pid(0.6, axis_test, direction=1, gimbal=ep_gimbal, tof_handler=tof_handler, sensor=ep_sensor)
         
         # Update position
         self.currentPosition = self.get_next_position(target_direction)
@@ -981,132 +1079,6 @@ class GraphMapper:
             print("🎉 EXPLORATION COMPLETE - No more frontiers!")
         print("="*60)
 
-def save_walls_data(graph_mapper, filename="maze_walls.json"):
-    """เซฟข้อมูลกำแพงเป็น JSON สำหรับพลอต"""
-    import json
-    
-    walls_data = {
-        'nodes': {},
-        'metadata': {
-            'total_nodes': len(graph_mapper.nodes),
-            'exploration_complete': len(graph_mapper.frontierQueue) == 0,
-            'timestamp': datetime.now().isoformat()
-        }
-    }
-    
-    # เก็บข้อมูลแต่ละโหนด
-    for node_id, node in graph_mapper.nodes.items():
-        walls_data['nodes'][node_id] = {
-            'position': node.position,
-            'walls': node.walls,
-            'is_dead_end': node.isDeadEnd,
-            'fully_scanned': node.fullyScanned,
-            'sensor_readings': node.sensorReadings if hasattr(node, 'sensorReadings') else {}
-        }
-    
-    # เซฟไฟล์
-    with open(filename, 'w') as f:
-        json.dump(walls_data, f, indent=2)
-    
-    print(f"💾 Walls data saved to {filename}")
-    return filename
-
-def plot_maze_from_walls(filename="maze_walls.json", save_plot="maze_map.png"):
-    """พลอตแมพจากข้อมูลกำแพงที่เซฟไว้"""
-    import json
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    
-    # โหลดข้อมูล
-    with open(filename, 'r') as f:
-        walls_data = json.load(f)
-    
-    nodes = walls_data['nodes']
-    
-    if not nodes:
-        print("❌ No nodes data found!")
-        return
-    
-    # หาขอบเขตของแมพ
-    positions = [node['position'] for node in nodes.values()]
-    min_x = min(pos[0] for pos in positions) - 1
-    max_x = max(pos[0] for pos in positions) + 1
-    min_y = min(pos[1] for pos in positions) - 1
-    max_y = max(pos[1] for pos in positions) + 1
-    
-    # สร้างกราฟ
-    fig, ax = plt.subplots(figsize=(12, 10))
-    
-    # วาดกริด
-    for x in range(min_x, max_x + 1):
-        ax.axvline(x - 0.5, color='lightgray', linewidth=0.5, alpha=0.3)
-    for y in range(min_y, max_y + 1):
-        ax.axhline(y - 0.5, color='lightgray', linewidth=0.5, alpha=0.3)
-    
-    # วาดโหนดและกำแพง
-    for node_data in nodes.values():
-        x, y = node_data['position']
-        walls = node_data['walls']
-        is_dead_end = node_data['is_dead_end']
-        
-        # วาดโหนด
-        if is_dead_end:
-            # Dead end = สีแดง
-            circle = plt.Circle((x, y), 0.3, color='red', alpha=0.7)
-        else:
-            # Normal node = สีเขียว
-            circle = plt.Circle((x, y), 0.25, color='lightgreen', alpha=0.8)
-        ax.add_patch(circle)
-        
-        # วาดกำแพง (เส้นหนา)
-        wall_thickness = 4
-        
-        if walls.get('north', False):  # กำแพงทางเหนือ
-            ax.plot([x-0.4, x+0.4], [y+0.5, y+0.5], 'black', linewidth=wall_thickness)
-        
-        if walls.get('south', False):  # กำแพงทางใต้
-            ax.plot([x-0.4, x+0.4], [y-0.5, y-0.5], 'black', linewidth=wall_thickness)
-        
-        if walls.get('east', False):   # กำแพงทางตะวันออก
-            ax.plot([x+0.5, x+0.5], [y-0.4, y+0.4], 'black', linewidth=wall_thickness)
-        
-        if walls.get('west', False):   # กำแพงทางตะวันตก
-            ax.plot([x-0.5, x-0.5], [y-0.4, y+0.4], 'black', linewidth=wall_thickness)
-        
-        # ใส่ text แสดงพิกัด
-        ax.text(x, y-0.1, f'({x},{y})', ha='center', va='center', fontsize=8, weight='bold')
-    
-    # ตั้งค่ากราฟ
-    ax.set_xlim(min_x - 0.7, max_x + 0.7)
-    ax.set_ylim(min_y - 0.7, max_y + 0.7)
-    ax.set_aspect('equal')
-    ax.grid(True, alpha=0.3)
-    
-    # ใส่ legend
-    legend_elements = [
-        plt.Circle((0, 0), 0.1, color='lightgreen', alpha=0.8, label='Normal Node'),
-        plt.Circle((0, 0), 0.1, color='red', alpha=0.7, label='Dead End'),
-        plt.Line2D([0], [0], color='black', linewidth=4, label='Wall')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right')
-    
-    # ใส่ title และ label
-    total_nodes = len(nodes)
-    dead_ends = sum(1 for node in nodes.values() if node['is_dead_end'])
-    ax.set_title(f'Maze Map - {total_nodes} Nodes, {dead_ends} Dead Ends', fontsize=14, weight='bold')
-    ax.set_xlabel('X Coordinate', fontsize=12)
-    ax.set_ylabel('Y Coordinate', fontsize=12)
-    
-    # เซฟกราฟ
-    plt.tight_layout()
-    plt.savefig(save_plot, dpi=300, bbox_inches='tight')
-    print(f"📊 Maze plot saved to {save_plot}")
-    
-    # แสดงกราฟ
-    plt.show()
-    
-    return save_plot
-
 # ===== ToF Sensor Handler =====
 class ToFSensorHandler:
     def __init__(self):
@@ -1201,14 +1173,8 @@ class ToFSensorHandler:
         
         return is_wall
 
-# ===== Main Exploration Functions =====
-def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
-    """NEW: Scan current node and update graph with ABSOLUTE directions"""
+def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller):
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
-    def sub_attitude_info_handler(attitude_info):
-        yaw, pitch, roll = attitude_info
-        print("chassis attitude: yaw:{0}, pitch:{1}, roll:{2} ".format(yaw, pitch, roll))
-
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
     
     # Check if node has been fully scanned before
@@ -1223,102 +1189,91 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         print("⚡ Skipping physical scan - using cached data")
         return current_node.sensorReadings
     
-    # Only scan if node hasn't been fully scanned before
     print(f"🆕 First time visiting node {current_node.id} - performing full scan")
     print(f"🧭 Robot currently facing: {graph_mapper.currentDirection}")
     
-    # Lock wheels
+    # FIXED: ตรวจสอบ gimbal attitude ก่อนสแกน
+    print("🧭 Ensuring correct gimbal attitude before scanning...")
+    movement_controller.ensure_standard_gimbal_attitude('front')
+    
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     time.sleep(0.2)
     
     speed = 480
     scan_results = {}
-    ep_chassis_fix = ep_robot.chassis
-    count = 0
     
     # Scan front (0°)
     print("🔍 Scanning FRONT (0°)...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
     time.sleep(0.2)
-    
     tof_handler.start_scanning('front')
     sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     front_distance = tof_handler.get_average_distance('front')
     front_wall = tof_handler.is_wall_detected('front')
     scan_results['front'] = front_distance
-    
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
-    if front_distance <= 18.0 : # ถ้าใกล้เกิน19เซน
-        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
-        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2)
-        time.sleep(0.5)
-    elif front_distance < 50.0 and front_distance >= 30.0:
-        move_distance_font = (front_distance-30)
-        ep_chassis.move(x=move_distance_font/100, y=0, xy_speed=0.4)
-        time.sleep(0.5)
-
-    # Scan left (physical: -90°)
-    print("🔍 Scanning LEFT (physical: -90°)...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
     
+    # Scan left (-90°)
+    print("🔍 Scanning LEFT (-90°)...")
+    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    time.sleep(0.2)
     tof_handler.start_scanning('left')
     sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.5)
+    time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
-
-    
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
-    if left_distance < 15:
-        move_distance = 20 - left_distance
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(1.0)
-    
-    # Scan right (physical: 90°)
-    print("🔍 Scanning RIGHT (physical: 90°)...")
+    # Scan right (90°)
+    print("🔍 Scanning RIGHT (90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
-    count +=1
+    time.sleep(0.2)
     tof_handler.start_scanning('right')
     sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.5)
+    time.sleep(0.2)
     tof_handler.stop_scanning(sensor.unsub_distance)
-    
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
-
-
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
     
-    if right_distance < 15:
-        move_distance = -(21 - right_distance)
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
-        
+    # Scan back (180°) ONLY for (0,0)
+    if graph_mapper.currentPosition == (0, 0):
+        print("🔍 Scanning BACK (180°) at (0,0)...")
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        time.sleep(0.2)
+        tof_handler.start_scanning('back')
+        sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+        time.sleep(0.2)
+        tof_handler.stop_scanning(sensor.unsub_distance)
+        back_distance = tof_handler.get_average_distance('back')
+        back_wall = tof_handler.is_wall_detected('back')
+        scan_results['back'] = back_distance
+        print(f"📏 BACK scan result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
     
-
-
-    # Return to center
+    # Return gimbal to center
+    print("🔄 Returning gimbal to center position...")
     gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.5)
+    time.sleep(0.2)
     
-    # Unlock wheels
+    # Stop wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
-    time.sleep(0.3)
+    time.sleep(0.2)
     
-    # NEW: Update graph with wall information using ABSOLUTE directions
+    # FIXED: ตรวจสอบ gimbal attitude หลังสแกน
+    print("🧭 Checking and correcting gimbal attitude after scanning...")
+    attitude_corrected = movement_controller.ensure_standard_gimbal_attitude('front')
+    
+    if attitude_corrected:
+        print("✅ Gimbal attitude corrected successfully after scanning")
+    else:
+        print("⚠️ Gimbal attitude correction may have failed - continuing anyway")
+    
+    # Update node data
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
     
@@ -1326,6 +1281,8 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    if graph_mapper.currentPosition == (0, 0):
+        print(f"   📏 Back: {scan_results['back']:.1f}cm")
     
     return scan_results
 
@@ -1346,16 +1303,20 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
     while nodes_explored < max_nodes:
         print(f"\n{'='*50}")
         print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
+        
+        # ===== แก้ไข: ส่ง robot direction เข้าไป =====
+        print("🧭 Checking attitude before step...")
+        movement_controller.ensure_standard_attitude(graph_mapper.currentDirection)
+        
         print(f"🤖 Current position: {graph_mapper.currentPosition}")
         print(f"🧭 Current direction (absolute): {graph_mapper.currentDirection}")
         print(f"{'='*50}")
-        
         # Check if current node needs scanning
         current_node = graph_mapper.create_node(graph_mapper.currentPosition)
         
         if not current_node.fullyScanned:
             print("🔍 NEW NODE - Performing full scan...")
-            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper)
+            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller)
             scanning_iterations += 1
             
             # Check if this scan revealed a dead end
@@ -1494,14 +1455,6 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     """Generate comprehensive exploration report with absolute direction info"""
     print(f"\n{'='*60}")
     print("📋 FINAL EXPLORATION REPORT (ABSOLUTE DIRECTIONS)")
-    
-    # เซฟข้อมูลและสร้างพลอต
-    print(f"\n💾 === SAVING EXPLORATION DATA ===")
-    walls_file = save_walls_data(graph_mapper)
-    plot_file = plot_maze_from_walls(walls_file)
-    print(f"✅ Data saved: {walls_file}")
-    print(f"📊 Plot saved: {plot_file}")
-
     print(f"{'='*60}")
     
     # Basic statistics
@@ -1610,10 +1563,15 @@ if __name__ == '__main__':
         ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
         time.sleep(1)
         
+        # เพิ่มการปรับ attitude เริ่มต้น
+        print("🧭 Setting initial standard attitude...")
+        movement_controller.ensure_standard_attitude()
+        
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
         print("🧭 ABSOLUTE DIRECTIONS: North is always North, regardless of robot facing!")
         print("🔙 REVERSE BACKTRACKING: Efficient movement without 180° turns!")
         print("⚡ SMART CACHING: Previously scanned nodes reuse cached data!")
+        print("🔧 ATTITUDE CORRECTION: Robot maintains standard angles (0°, 90°, -90°, 180°)!")
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
@@ -1631,16 +1589,5 @@ if __name__ == '__main__':
             movement_controller.cleanup()
         except:
             pass
-        print("\n💾 Saving final exploration data...")
-        try:
-            walls_file = save_walls_data(graph_mapper, f"maze_exploration_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
-            plot_file = plot_maze_from_walls(walls_file, f"maze_plot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png")
-        except Exception as e:
-            print(f"❌ Error saving data: {e}")
-        
         ep_robot.close()
         print("🔌 Connection closed")
-def load_and_plot_saved_maze(json_file):
-    """โหลดและพลอตแมพจากไฟล์ที่เซฟไว้"""
-    plot_file = json_file.replace('.json', '_plot.png')
-    return plot_maze_from_walls(json_file, plot_file)
