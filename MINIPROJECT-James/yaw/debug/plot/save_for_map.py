@@ -6,6 +6,7 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+from plot_graph_map import plot_graph_from_file
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
@@ -1355,6 +1356,20 @@ class GraphMapper:
             print("🎉 EXPLORATION COMPLETE - No more frontiers!")
         print("="*60)
 
+    def save_graph(self, filename="mapped_nodes.json"):
+        """บันทึกข้อมูลโหนดทั้งหมดลงไฟล์ JSON"""
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                json.dump(
+                    {node_id: node.__dict__ for node_id, node in self.nodes.items()},
+                    f,
+                    indent=4,
+                    ensure_ascii=False
+                )
+            print(f"✅ Saved graph to {filename} ({len(self.nodes)} nodes)")
+        except Exception as e:
+            print(f"❌ Failed to save graph: {e}")
+
 # ===== ToF Sensor Handler =====
 class ToFSensorHandler:
     def __init__(self):
@@ -1502,8 +1517,6 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
-    # if front_distance >= 25:
-    #     move_distance=  (front_distance)
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
     gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1715,6 +1728,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 continue
             else:
                 print("🎉 EXPLORATION DEFINITELY COMPLETE!")
+                graph_mapper.save_graph("mapped_nodes.json")
+
                 break
         
         if nodes_explored >= max_nodes:
@@ -1868,6 +1883,12 @@ if __name__ == '__main__':
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
                            graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+        
+        # บันทึกข้อมูลแผนที่
+        graph_mapper.save_graph("mapped_nodes.json")       
+       
+        # แสดงแผนที่หลังจบการสำรวจ
+        plot_graph_from_file("mapped_nodes.json")
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
