@@ -78,8 +78,8 @@ class AttitudeHandler:
         self.current_yaw = 0.0
         self.current_pitch = 0.0
         self.current_roll = 0.0
-        self.target_yaw = 0
-        self.yaw_tolerance = 0.1
+        self.target_yaw = 0.0
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -139,11 +139,11 @@ class AttitudeHandler:
         
         try:
             if abs(robot_rotation) > self.yaw_tolerance:
-                correction_speed = 30
+                correction_speed = 60
                 
                 print(f"🔄 Rotating robot {robot_rotation:.1f}°")
                 chassis.move(x=0, y=0, z=robot_rotation, z_speed=correction_speed).wait_for_completed()
-                time.sleep(1.0)
+                time.sleep(0.3)
             
             final_check = self.is_at_target_yaw(target_yaw)
             
@@ -161,8 +161,8 @@ class AttitudeHandler:
                 
                 if abs(remaining_robot) > self.yaw_tolerance and abs(remaining_robot) < 45:
                     print(f"🔧 Fine-tuning robot with additional {remaining_robot:.1f}°")
-                    chassis.move(x=0, y=0, z=remaining_robot, z_speed=80).wait_for_completed()
-                    time.sleep(0.5)
+                    chassis.move(x=0, y=0, z=remaining_robot, z_speed=60).wait_for_completed()
+                    time.sleep(0.3)
                     return self.is_at_target_yaw(target_yaw)
                 else:
                     print(f"⚠️ Remaining rotation too large ({remaining_robot:.1f}°), may need multiple corrections")
@@ -216,6 +216,15 @@ class MovementController:
         # เพิ่ม MovementTracker
         self.movement_tracker = MovementTracker()
 
+        # เพิ่มระบบติดตาม attitude drift correction
+        self.nodes_visited_count = 0  # นับจำนวนโหนดที่ผ่านไป
+        self.DRIFT_CORRECTION_INTERVAL = 10  # ทุก 9 โหนด
+        self.DRIFT_CORRECTION_ANGLE = 2  # หมุนเพิ่ม 3 องศาไปทางขวา
+        self.total_drift_corrections = 0  # นับจำนวนครั้งที่แก้ไข
+        
+        # *** เพิ่มตัวแปรใหม่สำหรับป้องกัน drift correction ซ้ำ ***
+        self.last_correction_at = 0  # เก็บ node count ครั้งสุดท้ายที่ทำ correction
+
         # Subscribe to position updates
         self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
@@ -224,7 +233,110 @@ class MovementController:
         self.current_x = position_info[0]
         self.current_y = position_info[1]
         self.current_z = position_info[2]
-    
+
+    def increment_node_visit_for_backtrack_with_correction(self, attitude_handler):
+        """เพิ่มจำนวนโหนดที่เยียมชมสำหรับการ backtrack และ trigger drift correction ถ้าถึงเวลา"""
+        self.nodes_visited_count += 1
+        print(f"📊 Backtrack node visit count: {self.nodes_visited_count}")
+        
+        # เช็คว่าต้องทำ drift correction หรือไม่ และยังไม่เคยทำที่ count นี้
+        if (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL == 0 and 
+            self.nodes_visited_count != self.last_correction_at):
+            
+            print(f"🔧 BACKTRACK DRIFT CORRECTION TRIGGERED!")
+            print(f"   📍 After {self.nodes_visited_count} total nodes visited (including backtrack)")
+            print(f"   🔄 Correction #{self.total_drift_corrections + 1}")
+            
+            # ทำ drift correction
+            success = self.perform_attitude_drift_correction(attitude_handler)
+            self.last_correction_at = self.nodes_visited_count  # บันทึกว่าทำ correction แล้ว
+            
+            if success:
+                print(f"✅ Backtrack drift correction completed!")
+                return True
+            else:
+                print(f"⚠️ Backtrack drift correction had issues, but continuing...")
+                return False
+                
+        return False
+
+    def increment_node_visit_main_exploration(self, attitude_handler):
+        """เพิ่มจำนวนโหนดที่เยียมชมสำหรับ main exploration loop และ trigger drift correction ถ้าถึงเวลา"""
+        self.nodes_visited_count += 1
+        print(f"📊 Main exploration node visit count: {self.nodes_visited_count}")
+        
+        # เช็คว่าต้องทำ drift correction หรือไม่ และยังไม่เคยทำที่ count นี้
+        if (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL == 0 and 
+            self.nodes_visited_count != self.last_correction_at):
+            
+            print(f"🔧 MAIN EXPLORATION DRIFT CORRECTION TRIGGERED!")
+            print(f"   📍 After {self.nodes_visited_count} total nodes visited")
+            print(f"   🔄 Correction #{self.total_drift_corrections + 1}")
+            
+            # ทำ drift correction
+            success = self.perform_attitude_drift_correction(attitude_handler)
+            self.last_correction_at = self.nodes_visited_count  # บันทึกว่าทำ correction แล้ว
+            
+            if success:
+                print(f"✅ Main exploration drift correction completed!")
+                return True
+            else:
+                print(f"⚠️ Main exploration drift correction had issues, but continuing...")
+                return False
+                
+        return False
+
+    def perform_attitude_drift_correction(self, attitude_handler):
+        """ทำการแก้ไข attitude drift โดยหมุนขวาเพิ่ม 10 องศา"""
+        global CURRENT_TARGET_YAW
+        
+        print(f"⚙️ === PERFORMING ATTITUDE DRIFT CORRECTION ===")
+        print(f"🔧 Correcting attitude drift after {self.nodes_visited_count} nodes")
+        print(f"📐 Adding {self.DRIFT_CORRECTION_ANGLE}° clockwise correction")
+        
+        # เก็บ yaw ปัจจุบันก่อนแก้ไข
+        current_yaw_before = attitude_handler.current_yaw
+        target_before = CURRENT_TARGET_YAW
+        
+        # เพิ่มองศาไปทางขวา (บวกเพิ่มเติม)
+        CURRENT_TARGET_YAW += self.DRIFT_CORRECTION_ANGLE
+        target_after_correction = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+        
+        print(f"📊 Drift correction details:")
+        print(f"   🧭 Current yaw before: {current_yaw_before:.1f}°")
+        print(f"   🎯 Target before: {target_before:.1f}°")
+        print(f"   ➕ Correction angle: +{self.DRIFT_CORRECTION_ANGLE}°")
+        print(f"   🎯 New target: {target_after_correction:.1f}°")
+        
+        try:
+            # ทำการหมุนไปยังตำแหน่งใหม่
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_after_correction)
+            
+            if success:
+                self.total_drift_corrections += 1
+                current_yaw_after = attitude_handler.current_yaw
+                
+                print(f"✅ Attitude drift correction completed!")
+                print(f"   🧭 Final yaw: {current_yaw_after:.1f}°")
+                print(f"   📈 Total corrections performed: {self.total_drift_corrections}")
+                print(f"   📐 Total accumulated correction: {self.total_drift_corrections * self.DRIFT_CORRECTION_ANGLE}°")
+                
+                # บันทึกการหมุนใน movement tracker
+                self.movement_tracker.record_movement('rotation')
+                
+                return True
+            else:
+                print(f"⚠️ Attitude drift correction may be incomplete!")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error during attitude drift correction: {e}")
+            return False
+        
+        finally:
+            print(f"⚙️ === ATTITUDE DRIFT CORRECTION END ===")
+            time.sleep(0.3)  # หน่วงเวลาหลังแก้ไข
+
     def move_forward_with_pid(self, target_distance, axis, direction=1):
         """Move forward using PID control with movement tracking"""
         # บันทึกการเคลื่อนไหว
@@ -234,11 +346,18 @@ class MovementController:
         # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่
         if self.movement_tracker.has_consecutive_forward_moves(2):
             print("⚠️ DETECTED: 2 consecutive forward moves!")
-            # คุณสามารถเพิ่ม logic เพิ่มเติมที่นี่
+            # print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
+            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+            
+            print(f"🎯 Target yaw: {target_angle}°")
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
             
         if self.movement_tracker.has_consecutive_backward_moves(2):
             print("⚠️ DETECTED: 2 consecutive backward moves!")
-            # คุณสามารถเพิ่ม logic เพิ่มเติมที่นี่
+            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+            
+            print(f"🎯 Target yaw: {target_angle}°")
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
         
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
@@ -390,6 +509,24 @@ class MovementController:
             self.chassis.unsub_position()
         except:
             pass
+
+    def get_drift_correction_status(self):
+        """ส่งคืนสถานะการแก้ไข drift ปัจจุบัน"""
+        return {
+            'nodes_visited': self.nodes_visited_count,
+            'next_correction_at': ((self.nodes_visited_count // self.DRIFT_CORRECTION_INTERVAL) + 1) * self.DRIFT_CORRECTION_INTERVAL,
+            'nodes_until_correction': self.DRIFT_CORRECTION_INTERVAL - (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL),
+            'total_corrections': self.total_drift_corrections,
+            'correction_interval': self.DRIFT_CORRECTION_INTERVAL,
+            'correction_angle': self.DRIFT_CORRECTION_ANGLE,
+            'last_correction_at': self.last_correction_at
+        }
+    
+    def reset_drift_correction(self):
+        """รีเซ็ตระบบแก้ไข drift (สำหรับ testing หรือเริ่มใหม่)"""
+        self.nodes_visited_count = 0
+        self.total_drift_corrections = 0
+        print("🔄 Drift correction system reset!")
 
     def get_movement_status(self):
         """ส่งคืนสถานะการเคลื่อนไหวปัจจุบัน"""
@@ -769,7 +906,7 @@ class GraphMapper:
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
 
-    def reverse_to_absolute_direction(self, target_direction, movement_controller):
+    def reverse_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
         """NEW: Reverse to target ABSOLUTE direction for backtracking"""
         global ROBOT_FACE
         print(f"🔙 BACKTRACK: Reversing to ABSOLUTE direction: {target_direction}")
@@ -1006,25 +1143,39 @@ class GraphMapper:
         is_blocked = from_node.walls.get(direction, True)
         return not is_blocked
     
-    def execute_path_to_frontier_with_reverse(self, path, movement_controller):
-        """NEW: Execute path using reverse movements for backtracking"""
+    def execute_path_to_frontier_with_reverse(self, path, movement_controller, attitude_handler):
+        """NEW: Execute path using reverse movements for backtracking WITH NODE COUNTING"""
         print(f"🗺️ Executing REVERSE path to frontier: {path}")
         
         # เช็คสถานะการเคลื่อนไหวก่อนเริ่ม backtrack
         movement_status = movement_controller.get_movement_status()
         print(f"📊 Movement status before backtracking: {movement_status}")
 
+        drift_corrections_during_backtrack = 0
+        initial_correction_count = movement_controller.total_drift_corrections
+
         for i, step_direction in enumerate(path):
-            print(f"📍 Step {i+1}/{len(path)}: Current position: {self.currentPosition}, moving {step_direction}")
+            print(f"🔍 Step {i+1}/{len(path)}: Current position: {self.currentPosition}, moving {step_direction}")
             
             # Use reverse movement for backtracking (more efficient)
-            success = self.reverse_to_absolute_direction(step_direction, movement_controller)
+            success = self.reverse_to_absolute_direction(step_direction, movement_controller, attitude_handler)
             
             if not success:
                 print(f"❌ Failed to reverse {step_direction} during backtracking!")
                 return False
             
+            # *** เพิ่มการนับโหนดสำหรับการ backtrack และเช็ค drift correction ***
+            needs_correction = movement_controller.increment_node_visit_for_backtrack_with_correction(attitude_handler)
+            
+            # ถ้าเกิด drift correction ระหว่าง backtrack
+            if needs_correction:
+                drift_corrections_during_backtrack = movement_controller.total_drift_corrections - initial_correction_count
+                print(f"✅ Backtrack drift correction #{drift_corrections_during_backtrack} completed during step {i+1}!")
+            
             time.sleep(0.2)  # Brief pause between moves
+        
+        if drift_corrections_during_backtrack > 0:
+            print(f"🔧 Total drift corrections during this backtrack: {drift_corrections_during_backtrack}")
         
         print(f"✅ Successfully reached frontier at {self.currentPosition}")
         return True
@@ -1349,7 +1500,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
         ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(0.2)
 
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
@@ -1372,7 +1523,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         move_distance = 20 - left_distance
         print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(1.0)
+        time.sleep(0.3)
 
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
@@ -1392,7 +1543,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.5)
+        time.sleep(0.3)
 
 
 
@@ -1418,14 +1569,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     return scan_results
 
 def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
-    """NEW: Main autonomous exploration using ABSOLUTE directions and reverse backtracking"""
-    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH ABSOLUTE DIRECTIONS ===")
+    """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-    print("⚡ OPTIMIZATION: Previously scanned nodes will NOT be re-scanned!")
-    print("🔙 NEW: Backtracking uses REVERSE movement (no 180° turns)!")
-    print("🧭 ENHANCED: Uses ABSOLUTE directions (North is always North)!")
+    print(f"🔧 Attitude Drift Correction: Every {movement_controller.DRIFT_CORRECTION_INTERVAL} nodes (+{movement_controller.DRIFT_CORRECTION_ANGLE}° right)")
     
-    global CURRENT_TARGET_YAW
     nodes_explored = 0
     scanning_iterations = 0
     dead_end_reversals = 0
@@ -1437,28 +1585,23 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
         print(f"🤖 Current position: {graph_mapper.currentPosition}")
         print(f"🧭 Current direction (absolute): {graph_mapper.currentDirection}")
+        
+        # แสดงสถานะ drift correction
+        drift_status = movement_controller.get_drift_correction_status()
+        print(f"🔧 Comprehensive Drift Correction Status:")
+        print(f"   📊 Total nodes visited (including backtrack): {drift_status['nodes_visited']}")
+        print(f"   ⏳ Next correction at node: {drift_status['next_correction_at']}")
+        print(f"   ⏰ Nodes until correction: {drift_status['nodes_until_correction']}")
+        print(f"   🔄 Total corrections done: {drift_status['total_corrections']}")
+        print(f"   📍 Last correction at node: {drift_status['last_correction_at']}")
         print(f"{'='*50}")
         
-        # แสดงสถานะการเคลื่อนไหวปัจจุบัน
-        movement_status = movement_controller.get_movement_status()
-        print(f"📊 Movement Status: Forward={movement_status['consecutive_forward']}, Backward={movement_status['consecutive_backward']}")
-        print(f"{'='*50}")
+        # *** เพิ่มจำนวนโหนดสำหรับ main exploration และเช็ค drift correction ***
+        needs_drift_correction = movement_controller.increment_node_visit_main_exploration(attitude_handler)
         
-        # ตรวจจับรูปแบบการเคลื่อนไหวที่น่าสนใจ
-        if movement_controller.movement_tracker.has_consecutive_forward_moves(2):
-            print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(chassis, target_angle)
-            
-        if movement_controller.movement_tracker.has_consecutive_backward_moves(2):
-            print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
-            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
-            
-            print(f"🎯 Target yaw: {target_angle}°")
-            success = attitude_handler.correct_yaw_to_target(chassis, target_angle)
-
+        if needs_drift_correction:
+            print(f"✅ Main exploration drift correction completed!")
+        
         # Check if current node needs scanning
         current_node = graph_mapper.create_node(graph_mapper.currentPosition)
         
@@ -1476,14 +1619,13 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 if success:
                     dead_end_reversals += 1
                     print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
-                    nodes_explored += 1  # Count the dead end node
+                    nodes_explored += 1
                     continue
                 else:
                     print(f"❌ Failed to reverse from dead end!")
                     break
         else:
             print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
-            # Update unexplored exits properly for revisited nodes
             graph_mapper.update_unexplored_exits_absolute(current_node)
             graph_mapper.build_connections()
         
@@ -1501,13 +1643,11 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         if next_direction:
             print(f"\n🎯 Next exploration direction (absolute): {next_direction}")
             
-            # Double-check wall detection before moving
             can_move = graph_mapper.can_move_to_direction_absolute(next_direction)
             print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
             
             if can_move:
                 try:
-                    # Move to next direction using absolute direction system
                     success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller, attitude_handler)
                     if success:
                         print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
@@ -1515,7 +1655,6 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                         continue
                     else:
                         print(f"❌ Movement failed - wall detected!")
-                        # Remove this direction from unexplored exits
                         if current_node and next_direction in current_node.unexploredExits:
                             current_node.unexploredExits.remove(next_direction)
                         continue
@@ -1525,14 +1664,11 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                     break
             else:
                 print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
-                # Remove this direction from unexplored exits
                 if current_node and next_direction in current_node.unexploredExits:
                     current_node.unexploredExits.remove(next_direction)
                 continue
         
-        # STEP 2: No local exploration possible - try smart backtracking with REVERSE
-        print(f"\n🔍 No unexplored directions from current node")
-        print(f"🔙 Attempting REVERSE BACKTRACK to nearest frontier...")
+        # STEP 2: Backtracking logic
         backtrack_attempts += 1
         
         frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
@@ -1540,19 +1676,23 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         if frontier_id and path is not None and frontier_direction:
             print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
             print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
-            print("🔙 REVERSE BACKTRACK: Using reverse movements (no 180° turns)!")
+            print("🔙 REVERSE BACKTRACK: Using reverse movements WITH drift correction!")
             
             try:
-                # Execute backtracking path using REVERSE movements
-                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller)
+                # *** เปลี่ยนการเรียกใช้ให้ส่ง attitude_handler ไปด้วย ***
+                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler)
                 
                 if success:
                     reverse_backtracks += 1
                     print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
                     print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
-                    time.sleep(0.2)
                     
-                    # The next iteration will handle the frontier node
+                    # แสดงสถานะ drift correction หลัง backtrack
+                    updated_drift_status = movement_controller.get_drift_correction_status()
+                    print(f"   🔧 Total nodes after backtrack: {updated_drift_status['nodes_visited']}")
+                    print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
+                    
+                    time.sleep(0.2)
                     continue
                     
                 else:
@@ -1563,10 +1703,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 print(f"❌ Error during reverse backtracking: {e}")
                 break
         else:
-            # STEP 3: No frontiers found - exploration complete
+            # STEP 3: Final check
             print("🎉 No more frontiers found!")
-            
-            # FINAL CHECK: Rebuild frontier queue and try one more time
             print("🔄 Performing final frontier scan...")
             graph_mapper.rebuild_frontier_queue()
             
@@ -1574,41 +1712,46 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 print(f"🚀 Found {len(graph_mapper.frontierQueue)} missed frontiers - continuing...")
                 continue
             else:
-                print("🎉 EXPLORATION DEFINITELY COMPLETE - No more areas to explore!")
+                print("🎉 EXPLORATION DEFINITELY COMPLETE!")
                 break
         
-        # Safety check - prevent infinite loops
         if nodes_explored >= max_nodes:
             print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
             break
-
+    
+    # Final statistics
+    final_drift_status = movement_controller.get_drift_correction_status()
+    
     print(f"\n🎉 === EXPLORATION COMPLETED ===")
-
-    # แสดงสถิติการเคลื่อนไหวสุดท้าย
-    final_movement_status = movement_controller.get_movement_status()
-    print(f"📊 FINAL MOVEMENT STATISTICS:")
-    print(f"   🔢 Total movement history: {final_movement_status['history_length']}")
-    print(f"   ➡️ Final consecutive forward: {final_movement_status['consecutive_forward']}")
-    print(f"   ↩️ Final consecutive backward: {final_movement_status['consecutive_backward']}")
-    print(f"   📝 Last movement type: {final_movement_status['last_movement']}")
-
-    # print(f"📊 PERFORMANCE SUMMARY:")
-    # print(f"   🗺️ Total nodes visited: {nodes_explored}")
-    # print(f"   🔍 Physical scans performed: {scanning_iterations}")
-    # print(f"   🔙 Dead end reversals: {dead_end_reversals}")
-    # print(f"   🔄 Backtrack attempts: {backtrack_attempts}")
-    # print(f"   🔙 Reverse backtracks: {reverse_backtracks}")
-    # print(f"   ⚡ Scans saved by caching: {nodes_explored - scanning_iterations}")
-    if nodes_explored > 0:
-        print(f"   📈 Efficiency gain: {((nodes_explored - scanning_iterations) / nodes_explored * 100):.1f}% less scanning")
-    print(f"   🎯 Reverse movement efficiency: {reverse_backtracks} efficient backtracks")
+    print(f"📊 PERFORMANCE SUMMARY:")
+    print(f"   🗺️ Total exploration steps: {nodes_explored}")
+    print(f"   📊 Total nodes visited (including backtrack): {final_drift_status['nodes_visited']}")
+    print(f"   🔍 Physical scans performed: {scanning_iterations}")
+    print(f"   🔙 Dead end reversals: {dead_end_reversals}")
+    print(f"   🔄 Backtrack attempts: {backtrack_attempts}")
+    print(f"   🔙 Reverse backtracks: {reverse_backtracks}")
+    print(f"   ⚡ Scans saved by caching: {nodes_explored - scanning_iterations}")
+    
+    print(f"\n🔧 COMPREHENSIVE ATTITUDE DRIFT CORRECTION SUMMARY:")
+    print(f"   📊 Total nodes counted: {final_drift_status['nodes_visited']} (exploration + backtracking)")
+    print(f"   🔄 Total corrections performed: {final_drift_status['total_corrections']}")
+    print(f"   🎯 Total angle corrected: {final_drift_status['total_corrections'] * final_drift_status['correction_angle']}°")
+    print(f"   📍 Correction interval: Every {final_drift_status['correction_interval']} nodes")
+    print(f"   🔧 Correction angle: +{final_drift_status['correction_angle']}° per correction")
+    print(f"   📈 Last correction at node: {final_drift_status['last_correction_at']}")
+    
+    backtrack_node_count = final_drift_status['nodes_visited'] - nodes_explored
+    if final_drift_status['nodes_visited'] > 0:
+        drift_frequency = final_drift_status['total_corrections'] / final_drift_status['nodes_visited']
+        backtrack_percentage = (backtrack_node_count / final_drift_status['nodes_visited']) * 100
+        print(f"   📊 Drift correction frequency: {drift_frequency:.2f} corrections per total node")
+        print(f"   🔙 Backtrack nodes: {backtrack_node_count} ({backtrack_percentage:.1f}% of total)")
     
     graph_mapper.print_graph_summary()
-    
-    # Generate final exploration report
-    generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks)
+    generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
 
-def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0):
+
+def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0, final_drift_status=None):
     """Generate comprehensive exploration report with absolute direction info"""
     print(f"\n{'='*60}")
     print("📋 FINAL EXPLORATION REPORT (ABSOLUTE DIRECTIONS)")
@@ -1691,10 +1834,6 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
             print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
-    print(f"   🧭 Consistent navigation regardless of robot orientation")
-    print(f"   🔙 Efficient reverse movements for backtracking")
-    print(f"   📍 Accurate wall mapping using global coordinates")
-    print(f"   🎯 Reliable frontier detection and path planning")
     
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
@@ -1720,12 +1859,9 @@ if __name__ == '__main__':
         print("✅ Recalibrating gimbal...")
         ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
         ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
-        time.sleep(1)
+        time.sleep(0.3)
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-        print("🧭 ABSOLUTE DIRECTIONS: North is always North, regardless of robot facing!")
-        print("🔙 REVERSE BACKTRACKING: Efficient movement without 180° turns!")
-        print("⚡ SMART CACHING: Previously scanned nodes reuse cached data!")
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
