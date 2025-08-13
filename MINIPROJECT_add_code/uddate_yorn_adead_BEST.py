@@ -12,7 +12,7 @@ import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import threading
 
-ROBOT_FACE = 1 # 0 1
+ROBOT_FACE = 1 
 CURRENT_TARGET_YAW = 0.0
 
 
