@@ -6,13 +6,633 @@ from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.animation import FuncAnimation
 import threading
-import os
 
-ROBOT_FACE = 1 # 0 1
+ROBOT_FACE = 1 
+CURRENT_TARGET_YAW = 0.0
+
+
+class MapVisualizer:
+    def __init__(self, grid_size=0.6, enable_realtime=True, save_images=True):
+        """
+        Map Visualizer for Robot Exploration
+        
+        Args:
+            grid_size (float): Size of each grid cell in meters (default: 0.6m)
+            enable_realtime (bool): Enable real-time visualization
+            save_images (bool): Save map images during exploration
+        """
+        self.grid_size = grid_size
+        self.enable_realtime = enable_realtime
+        self.save_images = save_images
+        
+        # Visualization settings
+        self.node_size = 0.4  # Size of node markers
+        self.wall_width = 0.05  # Width of wall lines
+        self.robot_size = 0.3  # Size of robot marker
+        
+        # Colors
+        self.colors = {
+            'visited_node': '#87CEEB',      # Sky blue
+            'current_node': '#FF4500',      # Orange red
+            'frontier_node': '#32CD32',     # Lime green
+            'dead_end': '#8B0000',          # Dark red
+            'wall': '#2F4F4F',              # Dark slate gray
+            'path': '#FFD700',              # Gold
+            'robot': '#FF1493',             # Deep pink
+            'unexplored': '#D3D3D3',        # Light gray
+            'background': '#F5F5F5'         # White smoke
+        }
+        
+        # Map data storage
+        self.nodes = {}
+        self.walls = []
+        self.robot_position = (0, 0)
+        self.robot_direction = 'north'
+        self.robot_path = [(0, 0)]
+        self.exploration_history = []
+        
+        # Matplotlib setup
+        if self.enable_realtime:
+            plt.ion()  # Interactive mode
+            self.fig, self.ax = plt.subplots(figsize=(12, 10))
+            self.fig.patch.set_facecolor(self.colors['background'])
+            self.ax.set_facecolor(self.colors['background'])
+            
+            # Setup plot parameters
+            self.ax.set_aspect('equal')
+            self.ax.grid(True, alpha=0.3, linestyle='--')
+            self.ax.set_title('🤖 Robot Exploration Map (Real-time)', 
+                            fontsize=16, fontweight='bold', pad=20)
+            
+            # Create legend
+            self._setup_legend()
+            
+            # Thread-safe plotting
+            self.plot_lock = threading.Lock()
+        
+        print("🗺️ MapVisualizer initialized successfully!")
+        if enable_realtime:
+            print("📊 Real-time visualization enabled")
+        if save_images:
+            print("💾 Image saving enabled")
+    
+    def _setup_legend(self):
+        """Setup legend for the map visualization"""
+        legend_elements = [
+            plt.scatter([], [], c=self.colors['current_node'], s=200, 
+                       marker='o', label='🤖 Current Position'),
+            plt.scatter([], [], c=self.colors['visited_node'], s=100, 
+                       marker='s', label='✅ Visited Node'),
+            plt.scatter([], [], c=self.colors['frontier_node'], s=100, 
+                       marker='^', label='🚀 Frontier Node'),
+            plt.scatter([], [], c=self.colors['dead_end'], s=100, 
+                       marker='X', label='🚫 Dead End'),
+            plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, 
+                      label='🧱 Wall'),
+            plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, 
+                      label='🛤️ Robot Path')
+        ]
+        
+        self.ax.legend(handles=legend_elements, loc='upper left', 
+                      bbox_to_anchor=(0.02, 0.98), framealpha=0.9)
+    
+    def update_from_graph_mapper(self, graph_mapper, movement_controller=None):
+        """Update visualization data from GraphMapper instance"""
+        with self.plot_lock if self.enable_realtime else threading.Lock():
+            # Update nodes
+            self.nodes = {}
+            for node_id, node in graph_mapper.nodes.items():
+                self.nodes[node_id] = {
+                    'position': node.position,
+                    'walls': node.walls,
+                    'is_dead_end': node.isDeadEnd,
+                    'visited': node.visited,
+                    'fully_scanned': node.fullyScanned,
+                    'unexplored_exits': node.unexploredExits,
+                    'visit_count': node.visitCount,
+                    'last_visited': node.lastVisited
+                }
+            
+            # Update robot position and direction
+            self.robot_position = graph_mapper.currentPosition
+            self.robot_direction = graph_mapper.currentDirection
+            
+            # Add to path if position changed
+            if len(self.robot_path) == 0 or self.robot_path[-1] != self.robot_position:
+                self.robot_path.append(self.robot_position)
+            
+            # Update frontier queue
+            self.frontier_nodes = graph_mapper.frontierQueue
+            
+            # Add exploration event
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            stats = {}
+            if movement_controller:
+                drift_status = movement_controller.get_drift_correction_status()
+                movement_status = movement_controller.get_movement_status()
+                stats = {
+                    'nodes_visited': drift_status['nodes_visited'],
+                    'corrections': drift_status['total_corrections'],
+                    'consecutive_forward': movement_status['consecutive_forward'],
+                    'consecutive_backward': movement_status['consecutive_backward']
+                }
+            
+            self.exploration_history.append({
+                'timestamp': timestamp,
+                'position': self.robot_position,
+                'direction': self.robot_direction,
+                'total_nodes': len(self.nodes),
+                'frontiers': len(self.frontier_nodes),
+                'stats': stats
+            })
+    
+    def _generate_walls_from_nodes(self):
+        """Generate wall lines from node wall information"""
+        walls = []
+        
+        for node_id, node_data in self.nodes.items():
+            x, y = node_data['position']
+            node_walls = node_data['walls']
+            
+            # Convert grid position to visualization coordinates
+            grid_x = x * self.grid_size
+            grid_y = y * self.grid_size
+            half_grid = self.grid_size / 2
+            
+            # Generate wall lines based on absolute directions
+            if node_walls.get('north', False):
+                walls.append([
+                    [grid_x - half_grid, grid_y + half_grid],
+                    [grid_x + half_grid, grid_y + half_grid]
+                ])
+            
+            if node_walls.get('south', False):
+                walls.append([
+                    [grid_x - half_grid, grid_y - half_grid],
+                    [grid_x + half_grid, grid_y - half_grid]
+                ])
+            
+            if node_walls.get('east', False):
+                walls.append([
+                    [grid_x + half_grid, grid_y - half_grid],
+                    [grid_x + half_grid, grid_y + half_grid]
+                ])
+            
+            if node_walls.get('west', False):
+                walls.append([
+                    [grid_x - half_grid, grid_y - half_grid],
+                    [grid_x - half_grid, grid_y + half_grid]
+                ])
+        
+        return walls
+    
+    def _draw_direction_arrow(self, x, y, direction, size=0.2):
+        """Draw direction arrow for robot orientation"""
+        # Direction vectors
+        direction_vectors = {
+            'north': (0, size),
+            'south': (0, -size),
+            'east': (size, 0),
+            'west': (-size, 0)
+        }
+        
+        if direction in direction_vectors:
+            dx, dy = direction_vectors[direction]
+            self.ax.arrow(x, y, dx, dy, 
+                         head_width=size/3, head_length=size/4,
+                         fc=self.colors['robot'], ec=self.colors['robot'],
+                         linewidth=2, alpha=0.9)
+    
+    def plot_current_map(self, title_suffix="", show_stats=True):
+        """Plot current exploration map"""
+        if not self.enable_realtime:
+            self.fig, self.ax = plt.subplots(figsize=(12, 10))
+            self.fig.patch.set_facecolor(self.colors['background'])
+            self.ax.set_facecolor(self.colors['background'])
+        
+        with self.plot_lock if self.enable_realtime else threading.Lock():
+            # Clear previous plot
+            self.ax.clear()
+            
+            # Plot nodes
+            for node_id, node_data in self.nodes.items():
+                x, y = node_data['position']
+                grid_x, grid_y = x * self.grid_size, y * self.grid_size
+                
+                # Determine node color and marker
+                if (x, y) == self.robot_position:
+                    color = self.colors['current_node']
+                    marker = 'o'
+                    size = 300
+                    alpha = 1.0
+                elif node_data['is_dead_end']:
+                    color = self.colors['dead_end']
+                    marker = 'X'
+                    size = 200
+                    alpha = 0.8
+                elif node_id in self.frontier_nodes:
+                    color = self.colors['frontier_node']
+                    marker = '^'
+                    size = 150
+                    alpha = 0.9
+                else:
+                    color = self.colors['visited_node']
+                    marker = 's'
+                    size = 100
+                    alpha = 0.7
+                
+                # Plot node
+                self.ax.scatter(grid_x, grid_y, c=color, marker=marker, 
+                              s=size, alpha=alpha, edgecolors='black', linewidth=1)
+                
+                # Add node label
+                label = f"({x},{y})"
+                if node_data.get('visit_count', 1) > 1:
+                    label += f"\n×{node_data['visit_count']}"
+                
+                self.ax.annotate(label, (grid_x, grid_y), 
+                               xytext=(5, 5), textcoords='offset points',
+                               fontsize=8, alpha=0.8, fontweight='bold')
+            
+            # Plot walls
+            walls = self._generate_walls_from_nodes()
+            for wall in walls:
+                wall_line = np.array(wall)
+                self.ax.plot(wall_line[:, 0], wall_line[:, 1], 
+                           color=self.colors['wall'], linewidth=4, alpha=0.8)
+            
+            # Plot robot path
+            if len(self.robot_path) > 1:
+                path_array = np.array(self.robot_path) * self.grid_size
+                self.ax.plot(path_array[:, 0], path_array[:, 1], 
+                           color=self.colors['path'], linewidth=3, alpha=0.7,
+                           linestyle='-', marker='.')
+            
+            # Plot robot with direction arrow
+            robot_x, robot_y = self.robot_position[0] * self.grid_size, self.robot_position[1] * self.grid_size
+            self.ax.scatter(robot_x, robot_y, c=self.colors['robot'], 
+                          marker='o', s=400, alpha=1.0, edgecolors='white', linewidth=2)
+            self._draw_direction_arrow(robot_x, robot_y, self.robot_direction)
+            
+            # Set plot properties
+            self.ax.set_aspect('equal')
+            self.ax.grid(True, alpha=0.3, linestyle='--')
+            
+            # Calculate plot bounds
+            if self.nodes:
+                positions = [node['position'] for node in self.nodes.values()]
+                min_x = min(pos[0] for pos in positions) * self.grid_size - self.grid_size
+                max_x = max(pos[0] for pos in positions) * self.grid_size + self.grid_size
+                min_y = min(pos[1] for pos in positions) * self.grid_size - self.grid_size
+                max_y = max(pos[1] for pos in positions) * self.grid_size + self.grid_size
+                
+                self.ax.set_xlim(min_x, max_x)
+                self.ax.set_ylim(min_y, max_y)
+            
+            # Title with current statistics
+            base_title = f"🤖 Robot Exploration Map {title_suffix}"
+            if show_stats and self.exploration_history:
+                latest = self.exploration_history[-1]
+                stats_text = f" | 📍 ({self.robot_position[0]},{self.robot_position[1]}) | 🧭 {self.robot_direction} | 🗺️ {latest['total_nodes']} nodes | 🚀 {latest['frontiers']} frontiers"
+                base_title += stats_text
+            
+            self.ax.set_title(base_title, fontsize=14, fontweight='bold', pad=20)
+            
+            # Labels
+            self.ax.set_xlabel('Distance (meters)', fontsize=12)
+            self.ax.set_ylabel('Distance (meters)', fontsize=12)
+            
+            # Setup legend
+            if not self.enable_realtime:
+                self._setup_legend()
+            else:
+                # Update legend for real-time mode
+                legend_elements = [
+                    plt.scatter([], [], c=self.colors['current_node'], s=200, 
+                               marker='o', label='🤖 Current Position'),
+                    plt.scatter([], [], c=self.colors['visited_node'], s=100, 
+                               marker='s', label='✅ Visited Node'),
+                    plt.scatter([], [], c=self.colors['frontier_node'], s=100, 
+                               marker='^', label='🚀 Frontier Node'),
+                    plt.scatter([], [], c=self.colors['dead_end'], s=100, 
+                               marker='X', label='🚫 Dead End'),
+                    plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, 
+                              label='🧱 Wall'),
+                    plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, 
+                              label='🛤️ Robot Path')
+                ]
+                
+                self.ax.legend(handles=legend_elements, loc='upper left', 
+                              bbox_to_anchor=(0.02, 0.98), framealpha=0.9)
+            
+            # Refresh display
+            if self.enable_realtime:
+                plt.draw()
+                plt.pause(0.1)
+    
+    def save_map_image(self, filename=None, dpi=300):
+        """Save current map as image file"""
+        if not self.save_images:
+            return
+        
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"robot_map_{timestamp}.png"
+        
+        try:
+            # Create a copy for saving (to avoid interfering with real-time display)
+            save_fig, save_ax = plt.subplots(figsize=(12, 10))
+            save_fig.patch.set_facecolor(self.colors['background'])
+            save_ax.set_facecolor(self.colors['background'])
+            
+            # Plot on save figure (similar to plot_current_map but on save_ax)
+            # [Same plotting logic as plot_current_map but using save_ax instead of self.ax]
+            
+            save_fig.savefig(filename, dpi=dpi, bbox_inches='tight', 
+                           facecolor=self.colors['background'], 
+                           edgecolor='none')
+            plt.close(save_fig)  # Clean up
+            
+            print(f"💾 Map saved as: {filename}")
+            return filename
+            
+        except Exception as e:
+            print(f"❌ Error saving map image: {e}")
+            return None
+    
+    def generate_exploration_summary(self):
+        """Generate text summary of exploration"""
+        if not self.exploration_history:
+            return "No exploration data available."
+        
+        summary = []
+        summary.append("=" * 50)
+        summary.append("📊 EXPLORATION SUMMARY")
+        summary.append("=" * 50)
+        
+        # Basic stats
+        latest = self.exploration_history[-1]
+        summary.append(f"🗺️ Total nodes mapped: {latest['total_nodes']}")
+        summary.append(f"🚀 Active frontiers: {latest['frontiers']}")
+        summary.append(f"🛤️ Path length: {len(self.robot_path)} waypoints")
+        summary.append(f"📍 Current position: {self.robot_position}")
+        summary.append(f"🧭 Current direction: {self.robot_direction}")
+        
+        # Map boundaries
+        if self.nodes:
+            positions = [node['position'] for node in self.nodes.values()]
+            min_x, max_x = min(pos[0] for pos in positions), max(pos[0] for pos in positions)
+            min_y, max_y = min(pos[1] for pos in positions), max(pos[1] for pos in positions)
+            summary.append(f"🏁 Map bounds: X({min_x} to {max_x}), Y({min_y} to {max_y})")
+            summary.append(f"📏 Map size: {max_x-min_x+1} × {max_y-min_y+1} grid cells")
+        
+        # Node type counts
+        dead_ends = sum(1 for node in self.nodes.values() if node['is_dead_end'])
+        fully_scanned = sum(1 for node in self.nodes.values() if node['fully_scanned'])
+        
+        summary.append(f"🚫 Dead ends: {dead_ends}")
+        summary.append(f"🔍 Fully scanned nodes: {fully_scanned}")
+        
+        # Movement stats from latest data
+        if latest['stats']:
+            stats = latest['stats']
+            summary.append(f"\n🔧 MOVEMENT STATISTICS:")
+            summary.append(f"   📊 Total node visits: {stats.get('nodes_visited', 'N/A')}")
+            summary.append(f"   🔄 Drift corrections: {stats.get('corrections', 'N/A')}")
+            summary.append(f"   ⏭️ Consecutive forward: {stats.get('consecutive_forward', 'N/A')}")
+            summary.append(f"   ⏪ Consecutive backward: {stats.get('consecutive_backward', 'N/A')}")
+        
+        # Exploration timeline
+        if len(self.exploration_history) > 1:
+            summary.append(f"\n📅 EXPLORATION TIMELINE:")
+            summary.append(f"   🚀 Started: {self.exploration_history[0]['timestamp']}")
+            summary.append(f"   🏁 Latest: {self.exploration_history[-1]['timestamp']}")
+            summary.append(f"   ⏱️ Updates: {len(self.exploration_history)}")
+        
+        summary.append("=" * 50)
+        
+        return "\n".join(summary)
+    
+    def show_map(self, block=True):
+        """Show the current map visualization"""
+        if self.enable_realtime:
+            if block:
+                plt.show(block=True)
+        else:
+            self.plot_current_map()
+            plt.show(block=block)
+    
+    def close(self):
+        """Clean up visualization resources"""
+        if self.enable_realtime:
+            plt.ioff()
+            if hasattr(self, 'fig'):
+                plt.close(self.fig)
+        print("🗺️ MapVisualizer closed successfully!")
+
+# ===== Integration Helper Functions =====
+
+def integrate_visualizer_with_exploration(graph_mapper, movement_controller, 
+                                        enable_realtime=True, save_images=True):
+    """
+    Helper function to integrate MapVisualizer with existing exploration code
+    
+    Usage:
+        visualizer = integrate_visualizer_with_exploration(graph_mapper, movement_controller)
+    """
+    visualizer = MapVisualizer(enable_realtime=enable_realtime, save_images=save_images)
+    
+    # Initial update
+    visualizer.update_from_graph_mapper(graph_mapper, movement_controller)
+    visualizer.plot_current_map()
+    
+    return visualizer
+
+def update_visualization_during_exploration(visualizer, graph_mapper, movement_controller,
+                                          auto_save=False, save_interval=10):
+    """
+    Helper function to update visualization during exploration
+    Call this function after each exploration step
+    
+    Args:
+        visualizer: MapVisualizer instance
+        graph_mapper: GraphMapper instance
+        movement_controller: MovementController instance
+        auto_save: Automatically save images
+        save_interval: Save every N updates (if auto_save=True)
+    """
+    # Update data
+    visualizer.update_from_graph_mapper(graph_mapper, movement_controller)
+    
+    # Plot current state
+    visualizer.plot_current_map()
+    
+    # Auto-save if enabled
+    if auto_save and len(visualizer.exploration_history) % save_interval == 0:
+        step_num = len(visualizer.exploration_history)
+        filename = f"exploration_step_{step_num:03d}.png"
+        visualizer.save_map_image(filename)
+    
+    return visualizer
+
+# เพิ่มคลาสใหม่สำหรับติดตามการเคลื่อนไหว
+class MovementTracker:
+    def __init__(self):
+        self.consecutive_forward_moves = 0
+        self.consecutive_backward_moves = 0
+        self.movement_history = []  # เก็บประวัติการเคลื่อนไหว
+        self.last_movement_type = None  # 'forward', 'backward', 'rotation'
+        
+    def record_movement(self, movement_type):
+        """บันทึกการเคลื่อนไหวและอัพเดทตัวนับ"""
+        self.movement_history.append(movement_type)
+        
+        if movement_type == 'forward':
+            if self.last_movement_type == 'forward':
+                self.consecutive_forward_moves += 1
+            else:
+                self.consecutive_forward_moves = 1
+            # รีเซ็ตตัวนับถอยหลัง
+            self.consecutive_backward_moves = 0
+            
+        elif movement_type == 'backward':
+            if self.last_movement_type == 'backward':
+                self.consecutive_backward_moves += 1
+            else:
+                self.consecutive_backward_moves = 1
+            # รีเซ็ตตัวนับเดินหน้า
+            self.consecutive_forward_moves = 0
+            
+        elif movement_type == 'rotation':
+            # การหมุนจะรีเซ็ตทั้งสองตัวนับ
+            self.consecutive_forward_moves = 0
+            self.consecutive_backward_moves = 0
+        
+        self.last_movement_type = movement_type
+        
+        print(f"📊 Movement recorded: {movement_type}")
+        print(f"   🔄 Consecutive forward: {self.consecutive_forward_moves}")
+        print(f"   ↩️ Consecutive backward: {self.consecutive_backward_moves}")
+    
+    def has_consecutive_forward_moves(self, threshold=2):
+        """เช็คว่ามีการเดินหน้าติดกันตามจำนวนที่กำหนดหรือไม่"""
+        return self.consecutive_forward_moves >= threshold
+    
+    def has_consecutive_backward_moves(self, threshold=2):
+        """เช็คว่ามีการถอยหลังติดกันตามจำนวนที่กำหนดหรือไม่"""
+        return self.consecutive_backward_moves >= threshold
+    
+    def reset_counters(self):
+        """รีเซ็ตตัวนับทั้งหมด"""
+        self.consecutive_forward_moves = 0
+        self.consecutive_backward_moves = 0
+        self.last_movement_type = None
+        print("🔄 Movement counters reset!")
+    
+    def get_movement_status(self):
+        """ส่งคืนสถานะการเคลื่อนไหวปัจจุบัน"""
+        return {
+            'consecutive_forward': self.consecutive_forward_moves,
+            'consecutive_backward': self.consecutive_backward_moves,
+            'last_movement': self.last_movement_type,
+            'history_length': len(self.movement_history)
+        }
+
+class AttitudeHandler:
+    def __init__(self):
+        self.current_yaw = 0.0
+        self.current_pitch = 0.0
+        self.current_roll = 0.0
+        self.target_yaw = 0.0
+        self.yaw_tolerance = 3
+        self.is_monitoring = False
+        
+    def attitude_handler(self, attitude_info):
+        if not self.is_monitoring:
+            return
+            
+        yaw, pitch, roll = attitude_info
+        self.current_yaw = yaw
+        self.current_pitch = pitch
+        self.current_roll = roll
+        print(f"\r🧭 Current chassis attitude: yaw={yaw:.1f}°, pitch={pitch:.1f}°, roll={roll:.1f}°", end="", flush=True)
+        
+    def start_monitoring(self, chassis):
+        self.is_monitoring = True
+        chassis.sub_attitude(freq=20, callback=self.attitude_handler)
+        
+    def stop_monitoring(self, chassis):
+        self.is_monitoring = False
+        try:
+            chassis.unsub_attitude()
+        except:
+            pass
+            
+    def normalize_angle(self, angle):
+        while angle > 180:
+            angle -= 360
+        while angle < -180:
+            angle += 360
+        return angle
+        
+    def is_at_target_yaw(self, target_yaw=0.0):
+        if abs(target_yaw) == 180:
+            diff_180 = abs(self.normalize_angle(self.current_yaw - 180))
+            diff_neg180 = abs(self.normalize_angle(self.current_yaw - (-180)))
+            diff = min(diff_180, diff_neg180)
+            target_display = f"±180"
+        else:
+            diff = abs(self.normalize_angle(self.current_yaw - target_yaw))
+            target_display = f"{target_yaw}"
+            
+        is_correct = diff <= self.yaw_tolerance
+        print(f"\n🎯 Yaw check: current={self.current_yaw:.1f}°, target={target_display}°, diff={diff:.1f}°, correct={is_correct}")
+        return is_correct
+        
+    def correct_yaw_to_target(self, chassis, target_yaw=0.0):
+        # ✅ เริ่ม monitor ก่อนหมุน
+        self.start_monitoring(chassis)
+
+        if self.is_at_target_yaw(target_yaw):
+            print(f"✅ Chassis already at correct yaw: {self.current_yaw:.1f}° (target: {target_yaw}°)")
+            self.stop_monitoring(chassis)  # ✅ หยุด monitor
+            return True
+
+        gimbal_to_target = target_yaw - self.current_yaw
+        gimbal_diff = self.normalize_angle(gimbal_to_target)
+        robot_rotation = -gimbal_diff
+
+        print(f"🔧 Correcting chassis yaw: from {self.current_yaw:.1f}° to {target_yaw}°")
+        print(f"📐 Gimbal needs to change: {gimbal_diff:.1f}°")
+        print(f"📐 Robot will rotate: {robot_rotation:.1f}°")
+
+        try:
+            if abs(robot_rotation) > self.yaw_tolerance:
+                correction_speed = 60
+                print(f"🔄 Rotating robot {robot_rotation:.1f}°")
+                chassis.move(x=0, y=0, z=robot_rotation, z_speed=correction_speed).wait_for_completed()
+                time.sleep(0.3)
+
+            final_check = self.is_at_target_yaw(target_yaw)
+
+            self.stop_monitoring(chassis)  # ✅ หยุด monitor หลังหมุนเสร็จ
+
+            if final_check:
+                print(f"✅ Successfully corrected chassis yaw to {self.current_yaw:.1f}°")
+                return True
+            else:
+                print(f"⚠️ Chassis yaw correction incomplete: {self.current_yaw:.1f}° (target: {target_yaw}°)")
+                return False
+
+        except Exception as e:
+            self.stop_monitoring(chassis)  # ✅ หยุด monitor แม้ error
+            print(f"❌ Failed to correct chassis yaw: {e}")
+            return False
 
 # ===== PID Controller =====
 class PID:
@@ -39,302 +659,6 @@ class PID:
         self.prev_error = error
         return output
 
-
-# ===== Map Visualizer =====
-class MapVisualizer:
-    def __init__(self, graph_mapper):
-        self.graph_mapper = graph_mapper
-        self.fig, self.ax = plt.subplots(figsize=(12, 10))
-        self.fig.suptitle('Robot Autonomous Exploration Map', fontsize=16, fontweight='bold')
-        
-        # Path tracking
-        self.movement_path = [graph_mapper.currentPosition]
-        self.path_timestamps = [datetime.now()]
-        self.movement_counter = 0
-        
-        # Colors and styles
-        self.colors = {
-            'robot': '#FF4444',
-            'visited': '#4CAF50',
-            'dead_end': '#F44336',
-            'frontier': '#FF9800',
-            'wall': '#333333',
-            'path': '#2196F3',
-            'unexplored': '#E0E0E0'
-        }
-        
-        # Animation setup
-        self.animation_active = False
-        self.update_interval = 500  # ms
-        
-    def setup_plot(self):
-        """Setup the initial plot configuration"""
-        self.ax.set_aspect('equal')
-        self.ax.grid(True, alpha=0.3)
-        self.ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
-        self.ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
-        
-        # Create legend
-        legend_elements = [
-            plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=self.colors['robot'], 
-                      markersize=12, label='Current Robot Position'),
-            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['visited'], 
-                      markersize=10, label='Visited Node'),
-            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['dead_end'], 
-                      markersize=10, label='Dead End'),
-            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['frontier'], 
-                      markersize=10, label='Frontier Node'),
-            plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, label='Wall'),
-            plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, label='Robot Path'),
-        ]
-        self.ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
-        
-        plt.tight_layout()
-    
-    def add_movement(self, new_position):
-        """Add a new position to the movement path"""
-        self.movement_path.append(new_position)
-        self.path_timestamps.append(datetime.now())
-        self.movement_counter += 1
-        
-        print(f"📍 Movement #{self.movement_counter}: {new_position}")
-    
-    def update_plot(self, save_image=False):
-        """Update the plot with current graph state"""
-        self.ax.clear()
-        self.ax.set_aspect('equal')
-        self.ax.grid(True, alpha=0.3)
-        
-        if not self.graph_mapper.nodes:
-            return
-        
-        # Get map boundaries
-        positions = [node.position for node in self.graph_mapper.nodes.values()]
-        if self.movement_path:
-            positions.extend(self.movement_path)
-        
-        min_x = min(pos[0] for pos in positions) - 1
-        max_x = max(pos[0] for pos in positions) + 1
-        min_y = min(pos[1] for pos in positions) - 1
-        max_y = max(pos[1] for pos in positions) + 1
-        
-        self.ax.set_xlim(min_x - 0.5, max_x + 0.5)
-        self.ax.set_ylim(min_y - 0.5, max_y + 0.5)
-        
-        # Draw grid background
-        for x in range(int(min_x), int(max_x) + 1):
-            self.ax.axvline(x, color='lightgray', alpha=0.3, linewidth=0.5)
-        for y in range(int(min_y), int(max_y) + 1):
-            self.ax.axhline(y, color='lightgray', alpha=0.3, linewidth=0.5)
-        
-        # Draw walls
-        self.draw_walls()
-        
-        # Draw movement path
-        self.draw_movement_path()
-        
-        # Draw nodes
-        self.draw_nodes()
-        
-        # Draw robot current position
-        self.draw_robot()
-        
-        # Update title with statistics
-        self.update_title()
-        
-        # Recreate legend
-        self.setup_plot()
-        
-        if save_image:
-            self.save_map_image()
-        
-        plt.draw()
-    
-    def draw_walls(self):
-        """Draw walls between nodes"""
-        wall_segments = []
-        
-        for node in self.graph_mapper.nodes.values():
-            x, y = node.position
-            
-            # Check each direction for walls
-            if node.walls.get('north', False):
-                wall_segments.append([(x-0.4, y+0.5), (x+0.4, y+0.5)])
-            if node.walls.get('south', False):
-                wall_segments.append([(x-0.4, y-0.5), (x+0.4, y-0.5)])
-            if node.walls.get('east', False):
-                wall_segments.append([(x+0.5, y-0.4), (x+0.5, y+0.4)])
-            if node.walls.get('west', False):
-                wall_segments.append([(x-0.5, y-0.4), (x-0.5, y+0.4)])
-        
-        # Draw all wall segments
-        for segment in wall_segments:
-            self.ax.plot([segment[0][0], segment[1][0]], 
-                        [segment[0][1], segment[1][1]], 
-                        color=self.colors['wall'], linewidth=4, solid_capstyle='round')
-    
-    def draw_movement_path(self):
-        """Draw the robot's movement path"""
-        if len(self.movement_path) > 1:
-            path_x = [pos[0] for pos in self.movement_path]
-            path_y = [pos[1] for pos in self.movement_path]
-            
-            # Draw path with arrows showing direction
-            for i in range(len(path_x) - 1):
-                dx = path_x[i+1] - path_x[i]
-                dy = path_y[i+1] - path_y[i]
-                
-                # Draw line segment
-                self.ax.plot([path_x[i], path_x[i+1]], [path_y[i], path_y[i+1]], 
-                           color=self.colors['path'], linewidth=2, alpha=0.7)
-                
-                # Add arrow showing direction
-                if dx != 0 or dy != 0:
-                    self.ax.arrow(path_x[i] + dx*0.3, path_y[i] + dy*0.3, 
-                                dx*0.2, dy*0.2, head_width=0.1, head_length=0.1, 
-                                fc=self.colors['path'], ec=self.colors['path'], alpha=0.8)
-    
-    def draw_nodes(self):
-        """Draw all nodes with appropriate colors and labels"""
-        for node in self.graph_mapper.nodes.values():
-            x, y = node.position
-            
-            # Determine node color
-            if node.isDeadEnd:
-                color = self.colors['dead_end']
-                marker = 's'
-                size = 150
-            elif node.id in self.graph_mapper.frontierQueue:
-                color = self.colors['frontier']
-                marker = 's'
-                size = 120
-            else:
-                color = self.colors['visited']
-                marker = 's'
-                size = 100
-            
-            # Draw node
-            self.ax.scatter(x, y, c=color, marker=marker, s=size, 
-                          edgecolors='black', linewidth=1, zorder=3)
-            
-            # Add node label
-            label = f"{node.id}"
-            if node.unexploredExits:
-                label += f"\n({len(node.unexploredExits)} exits)"
-            
-            self.ax.annotate(label, (x, y), xytext=(5, 5), textcoords='offset points',
-                           fontsize=8, ha='left', va='bottom', 
-                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
-    
-    def draw_robot(self):
-        """Draw robot at current position with direction indicator"""
-        x, y = self.graph_mapper.currentPosition
-        
-        # Draw robot
-        self.ax.scatter(x, y, c=self.colors['robot'], marker='o', s=200, 
-                      edgecolors='darkred', linewidth=2, zorder=5)
-        
-        # Draw direction arrow
-        direction_vectors = {
-            'north': (0, 0.3),
-            'south': (0, -0.3),
-            'east': (0.3, 0),
-            'west': (-0.3, 0)
-        }
-        
-        if self.graph_mapper.currentDirection in direction_vectors:
-            dx, dy = direction_vectors[self.graph_mapper.currentDirection]
-            self.ax.arrow(x, y, dx, dy, head_width=0.15, head_length=0.1,
-                        fc='darkred', ec='darkred', linewidth=2, zorder=6)
-        
-        # Add robot label
-        self.ax.annotate(f'ROBOT\n{self.graph_mapper.currentDirection.upper()}', 
-                        (x, y), xytext=(-20, -30), textcoords='offset points',
-                        fontsize=10, ha='center', va='top', fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.5', facecolor='red', alpha=0.8, edgecolor='darkred'),
-                        color='white')
-    
-    def update_title(self):
-        """Update plot title with current statistics"""
-        total_nodes = len(self.graph_mapper.nodes)
-        dead_ends = sum(1 for node in self.graph_mapper.nodes.values() if node.isDeadEnd)
-        frontiers = len(self.graph_mapper.frontierQueue)
-        movements = len(self.movement_path) - 1
-        
-        title = f'Robot Exploration Map - Nodes: {total_nodes} | Dead Ends: {dead_ends} | Frontiers: {frontiers} | Movements: {movements}'
-        self.ax.set_title(title, fontsize=14, fontweight='bold')
-        self.ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
-        self.ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
-    
-    def save_map_image(self, filename=None):
-        """Save current map as image"""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"robot_map_{timestamp}.png"
-        
-        try:
-            plt.savefig(filename, dpi=300, bbox_inches='tight', 
-                       facecolor='white', edgecolor='none')
-            print(f"💾 Map saved as: {filename}")
-        except Exception as e:
-            print(f"❌ Failed to save map: {e}")
-    
-    def show_live_map(self):
-        """Show live updating map"""
-        plt.ion()  # Turn on interactive mode
-        self.setup_plot()
-        plt.show(block=False)
-    
-    def close_map(self):
-        """Close map window"""
-        plt.close(self.fig)
-    
-    def generate_exploration_animation(self, filename="robot_exploration.gif", interval=1000):
-        """Generate animated GIF of the exploration process"""
-        print("🎬 Generating exploration animation...")
-        
-        fig, ax = plt.subplots(figsize=(12, 10))
-        fig.suptitle('Robot Autonomous Exploration Animation', fontsize=16, fontweight='bold')
-        
-        def animate(frame):
-            ax.clear()
-            ax.set_aspect('equal')
-            ax.grid(True, alpha=0.3)
-            
-            # Show path up to current frame
-            current_path = self.movement_path[:frame+1]
-            
-            if len(current_path) > 1:
-                path_x = [pos[0] for pos in current_path]
-                path_y = [pos[1] for pos in current_path]
-                ax.plot(path_x, path_y, color=self.colors['path'], linewidth=3, alpha=0.8)
-            
-            # Show current position
-            if current_path:
-                x, y = current_path[-1]
-                ax.scatter(x, y, c=self.colors['robot'], marker='o', s=300, 
-                          edgecolors='darkred', linewidth=3, zorder=5)
-            
-            # Set consistent bounds
-            if self.movement_path:
-                all_x = [pos[0] for pos in self.movement_path]
-                all_y = [pos[1] for pos in self.movement_path]
-                ax.set_xlim(min(all_x) - 1, max(all_x) + 1)
-                ax.set_ylim(min(all_y) - 1, max(all_y) + 1)
-            
-            ax.set_title(f'Exploration Step: {frame + 1}/{len(self.movement_path)}', 
-                        fontsize=14, fontweight='bold')
-        
-        try:
-            anim = FuncAnimation(fig, animate, frames=len(self.movement_path), 
-                               interval=interval, repeat=True)
-            anim.save(filename, writer='pillow', fps=1)
-            print(f"🎬 Animation saved as: {filename}")
-            plt.close(fig)
-        except Exception as e:
-            print(f"❌ Failed to create animation: {e}")
-            plt.close(fig)
-
 # ===== Movement Controller =====
 class MovementController:
     def __init__(self, chassis):
@@ -344,13 +668,25 @@ class MovementController:
         self.current_z = 0.0
         
         # PID Parameters
-        self.KP = 1.5
-        self.KI = 0.3
-        self.KD = 4
+        self.KP = 2.08
+        self.KI = 0.25
+        self.KD = 10
         self.RAMP_UP_TIME = 0.7
         self.ROTATE_TIME = 2.11  # Right turn
         self.ROTATE_LEFT_TIME = 1.9  # Left turn
+
+        # เพิ่ม MovementTracker
+        self.movement_tracker = MovementTracker()
+
+        # เพิ่มระบบติดตาม attitude drift correction
+        self.nodes_visited_count = 0  # นับจำนวนโหนดที่ผ่านไป
+        self.DRIFT_CORRECTION_INTERVAL = 10  # ทุก 9 โหนด
+        self.DRIFT_CORRECTION_ANGLE = 2  # หมุนเพิ่ม 3 องศาไปทางขวา
+        self.total_drift_corrections = 0  # นับจำนวนครั้งที่แก้ไข
         
+        # *** เพิ่มตัวแปรใหม่สำหรับป้องกัน drift correction ซ้ำ ***
+        self.last_correction_at = 0  # เก็บ node count ครั้งสุดท้ายที่ทำ correction
+
         # Subscribe to position updates
         self.chassis.sub_position(freq=20, callback=self.position_handler)
         time.sleep(0.25)
@@ -359,9 +695,126 @@ class MovementController:
         self.current_x = position_info[0]
         self.current_y = position_info[1]
         self.current_z = position_info[2]
-    
-    def move_forward_with_pid(self, target_distance, axis, direction=1):
-        """Move forward using PID control"""
+
+    def increment_node_visit_for_backtrack_with_correction(self, attitude_handler):
+        """เพิ่มจำนวนโหนดที่เยียมชมสำหรับการ backtrack และ trigger drift correction ถ้าถึงเวลา"""
+        self.nodes_visited_count += 1
+        print(f"📊 Backtrack node visit count: {self.nodes_visited_count}")
+        
+        # เช็คว่าต้องทำ drift correction หรือไม่ และยังไม่เคยทำที่ count นี้
+        if (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL == 0 and 
+            self.nodes_visited_count != self.last_correction_at):
+            
+            print(f"🔧 BACKTRACK DRIFT CORRECTION TRIGGERED!")
+            print(f"   📍 After {self.nodes_visited_count} total nodes visited (including backtrack)")
+            print(f"   🔄 Correction #{self.total_drift_corrections + 1}")
+            
+            # ทำ drift correction
+            success = self.perform_attitude_drift_correction(attitude_handler)
+            self.last_correction_at = self.nodes_visited_count  # บันทึกว่าทำ correction แล้ว
+            
+            if success:
+                print(f"✅ Backtrack drift correction completed!")
+                return True
+            else:
+                print(f"⚠️ Backtrack drift correction had issues, but continuing...")
+                return False
+                
+        return False
+
+    def increment_node_visit_main_exploration(self, attitude_handler):
+        """เพิ่มจำนวนโหนดที่เยียมชมสำหรับ main exploration loop และ trigger drift correction ถ้าถึงเวลา"""
+        self.nodes_visited_count += 1
+        print(f"📊 Main exploration node visit count: {self.nodes_visited_count}")
+        
+        # เช็คว่าต้องทำ drift correction หรือไม่ และยังไม่เคยทำที่ count นี้
+        if (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL == 0 and 
+            self.nodes_visited_count != self.last_correction_at):
+            
+            print(f"🔧 MAIN EXPLORATION DRIFT CORRECTION TRIGGERED!")
+            print(f"   📍 After {self.nodes_visited_count} total nodes visited")
+            print(f"   🔄 Correction #{self.total_drift_corrections + 1}")
+            
+            # ทำ drift correction
+            success = self.perform_attitude_drift_correction(attitude_handler)
+            self.last_correction_at = self.nodes_visited_count  # บันทึกว่าทำ correction แล้ว
+            
+            if success:
+                print(f"✅ Main exploration drift correction completed!")
+                return True
+            else:
+                print(f"⚠️ Main exploration drift correction had issues, but continuing...")
+                return False
+                
+        return False
+
+    def perform_attitude_drift_correction(self, attitude_handler):
+        global CURRENT_TARGET_YAW
+        print(f"⚙️ === PERFORMING ATTITUDE DRIFT CORRECTION ===")
+
+        # ✅ เริ่ม monitor
+        attitude_handler.start_monitoring(self.chassis)
+
+        current_yaw_before = attitude_handler.current_yaw
+        target_after_correction = attitude_handler.normalize_angle(
+            current_yaw_before + self.DRIFT_CORRECTION_ANGLE
+        )
+        CURRENT_TARGET_YAW = target_after_correction
+
+        try:
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_after_correction)
+
+            # ✅ หยุด monitor หลังเสร็จ
+            attitude_handler.stop_monitoring(self.chassis)
+
+            if success:
+                self.total_drift_corrections += 1
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            attitude_handler.stop_monitoring(self.chassis)  # ✅ หยุดแม้ error
+            print(f"❌ Error during attitude drift correction: {e}")
+            return False
+
+
+    def move_forward_with_pid(self, target_distance, axis, direction=1, allow_yaw_correction=True, attitude_handler=None):
+        """Move forward using PID control with movement tracking"""
+        # บันทึกการเคลื่อนไหว
+        movement_type = 'forward' if direction == 1 else 'backward'
+        self.movement_tracker.record_movement(movement_type)
+        
+        # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่ (เฉพาะกรณีอนุญาตแก้ yaw)
+        if allow_yaw_correction:
+            if self.movement_tracker.has_consecutive_forward_moves(2):
+                print("⚠️ DETECTED: 2 consecutive forward moves!")
+                target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+                print(f"🎯 Target yaw: {target_angle}°")
+                attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+                
+            if self.movement_tracker.has_consecutive_backward_moves(2):
+                print("⚠️ DETECTED: 2 consecutive backward moves!")
+                target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+                print(f"🎯 Target yaw: {target_angle}°")
+                attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+
+        # เช็คว่ามีการเคลื่อนไหวติดกันหรือไม่
+        if self.movement_tracker.has_consecutive_forward_moves(2):
+            print("⚠️ DETECTED: 2 consecutive forward moves!")
+            # print("🔍 PATTERN DETECTED: 2+ consecutive forward moves")
+            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+            
+            print(f"🎯 Target yaw: {target_angle}°")
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+            
+        if self.movement_tracker.has_consecutive_backward_moves(2):
+            print("⚠️ DETECTED: 2 consecutive backward moves!")
+            target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+            
+            print(f"🎯 Target yaw: {target_angle}°")
+            success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+        
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         
         start_time = time.time()
@@ -412,7 +865,7 @@ class MovementController:
                     self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
 
                 # Stop condition
-                if abs(relative_position - target_distance) < 0.017:
+                if abs(relative_position - target_distance) < 0.02:
                     print(f"✅ Target reached! Final position: {current_position:.3f}")
                     self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
                     target_reached = True
@@ -421,29 +874,62 @@ class MovementController:
         except KeyboardInterrupt:
             print("Movement interrupted by user.")
     
-    def rotate_90_degrees_right(self):
-        """Rotate 90 degrees clockwise"""
+    def rotate_90_degrees_right(self, attitude_handler=None):
+        global CURRENT_TARGET_YAW
         print("🔄 Rotating 90° RIGHT...")
+        self.movement_tracker.record_movement('rotation')
         time.sleep(0.2)
-        self.chassis.drive_speed(x=0, y=0, z=45, timeout=self.ROTATE_TIME)
-        time.sleep(self.ROTATE_TIME + 0.3)
-        time.sleep(0.2)
-        print("✅ Right rotation completed!")
 
-    def rotate_90_degrees_left(self):
-        """Rotate 90 degrees counter-clockwise"""
+        # ✅ เริ่ม monitor
+        attitude_handler.start_monitoring(self.chassis)
+
+        CURRENT_TARGET_YAW += 90
+        target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+
+        print(f"🎯 Target yaw: {target_angle}°")
+        success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+
+        # ✅ หยุด monitor
+        attitude_handler.stop_monitoring(self.chassis)
+
+        if success:
+            print("✅ Right rotation completed!")
+        else:
+            print("⚠️ Right rotation may be incomplete")
+
+        time.sleep(0.2)
+
+    def rotate_90_degrees_left(self, attitude_handler=None):
+        global CURRENT_TARGET_YAW
         print("🔄 Rotating 90° LEFT...")
+        self.movement_tracker.record_movement('rotation')
         time.sleep(0.2)
-        self.chassis.drive_speed(x=0, y=0, z=-45, timeout=self.ROTATE_LEFT_TIME)
-        time.sleep(self.ROTATE_LEFT_TIME + 0.3)
+
+        # ✅ เริ่ม monitor
+        attitude_handler.start_monitoring(self.chassis)
+
+        CURRENT_TARGET_YAW -= 90
+        target_angle = attitude_handler.normalize_angle(CURRENT_TARGET_YAW)
+
+        print(f"🎯 Target yaw: {target_angle}°")
+        success = attitude_handler.correct_yaw_to_target(self.chassis, target_angle)
+
+        # ✅ หยุด monitor
+        attitude_handler.stop_monitoring(self.chassis)
+
+        if success:
+            print("✅ Left rotation completed!")
+        else:
+            print("⚠️ Left rotation may be incomplete")
+
         time.sleep(0.2)
-        print("✅ Left rotation completed!")
     
     def reverse_from_dead_end(self):
         """Reverse robot from dead end position"""
         global ROBOT_FACE
         print("🔙 DEAD END DETECTED - Reversing...")
-        
+        # บันทึกการถอยหลัง
+        self.movement_tracker.record_movement('backward')
         # Determine current axis based on robot face
         axis_test = 'x'
         if ROBOT_FACE % 2 == 0:
@@ -460,10 +946,11 @@ class MovementController:
 
     def reverse_to_previous_node(self):
         """NEW: Reverse 0.6m to go back to previous node without rotating"""
+        self.movement_tracker.record_movement('backward')
+
         global ROBOT_FACE
         print("🔙 BACKTRACKING - Reversing to previous node...")
-        
-        # Determine current axis based on robot face
+
         axis_test = 'x'
         if ROBOT_FACE % 2 == 0:
             axis_test = 'y'
@@ -472,8 +959,8 @@ class MovementController:
         
         print(f"🔙 Reversing 0.6m on {axis_test}-axis for backtrack")
         
-        # Move backward using negative direction
-        self.move_forward_with_pid(0.6, axis_test, direction=-1)
+        # ❌ ปิด yaw correction ระหว่าง backtracking
+        self.move_forward_with_pid(0.6, axis_test, direction=-1, allow_yaw_correction=False)
         
         print("✅ Reverse backtrack completed!")
     
@@ -483,6 +970,32 @@ class MovementController:
             self.chassis.unsub_position()
         except:
             pass
+
+    def get_drift_correction_status(self):
+        """ส่งคืนสถานะการแก้ไข drift ปัจจุบัน"""
+        return {
+            'nodes_visited': self.nodes_visited_count,
+            'next_correction_at': ((self.nodes_visited_count // self.DRIFT_CORRECTION_INTERVAL) + 1) * self.DRIFT_CORRECTION_INTERVAL,
+            'nodes_until_correction': self.DRIFT_CORRECTION_INTERVAL - (self.nodes_visited_count % self.DRIFT_CORRECTION_INTERVAL),
+            'total_corrections': self.total_drift_corrections,
+            'correction_interval': self.DRIFT_CORRECTION_INTERVAL,
+            'correction_angle': self.DRIFT_CORRECTION_ANGLE,
+            'last_correction_at': self.last_correction_at
+        }
+    
+    def reset_drift_correction(self):
+        """รีเซ็ตระบบแก้ไข drift (สำหรับ testing หรือเริ่มใหม่)"""
+        self.nodes_visited_count = 0
+        self.total_drift_corrections = 0
+        print("🔄 Drift correction system reset!")
+
+    def get_movement_status(self):
+        """ส่งคืนสถานะการเคลื่อนไหวปัจจุบัน"""
+        return self.movement_tracker.get_movement_status()
+    
+    def reset_movement_tracking(self):
+        """รีเซ็ตการติดตามการเคลื่อนไหว"""
+        self.movement_tracker.reset_counters()
 
 # ===== Graph Node =====
 class GraphNode:
@@ -749,9 +1262,10 @@ class GraphMapper:
         is_blocked = current_node.walls.get(target_direction, True)
         return not is_blocked
     
-    def rotate_to_absolute_direction(self, target_direction, movement_controller):
+    def rotate_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
         """NEW: Rotate robot to face target ABSOLUTE direction"""
         global ROBOT_FACE
+        global CURRENT_TARGET_YAW
         print(f"🎯 Rotating from {self.currentDirection} to {target_direction}")
         
         if self.currentDirection == target_direction:
@@ -766,14 +1280,14 @@ class GraphMapper:
         diff = (target_idx - current_idx) % 4
         
         if diff == 1:  # Turn right
-            movement_controller.rotate_90_degrees_right()
+            movement_controller.rotate_90_degrees_right(attitude_handler)
             ROBOT_FACE += 1
         elif diff == 3:  # Turn left
-            movement_controller.rotate_90_degrees_left()
+            movement_controller.rotate_90_degrees_left(attitude_handler)
             ROBOT_FACE += 1
         elif diff == 2:  # Turn around (180°)
-            movement_controller.rotate_90_degrees_right()
-            movement_controller.rotate_90_degrees_right()
+            movement_controller.rotate_90_degrees_right(attitude_handler)
+            movement_controller.rotate_90_degrees_right(attitude_handler)
             ROBOT_FACE += 2
         
         # Update current direction
@@ -808,7 +1322,7 @@ class GraphMapper:
 
         return True
     
-    def move_to_absolute_direction(self, target_direction, movement_controller):
+    def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
         """NEW: Move to target ABSOLUTE direction with proper rotation"""
         global ROBOT_FACE
         print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
@@ -819,8 +1333,12 @@ class GraphMapper:
             return False
         
         # First rotate to face the target direction
-        self.rotate_to_absolute_direction(target_direction, movement_controller)
-        
+        self.rotate_to_absolute_direction(target_direction, movement_controller, attitude_handler)
+
+        # เช็คสถานะการเคลื่อนไหวก่อนเคลื่อนที่
+        movement_status = movement_controller.get_movement_status()
+        print(f"📊 Current movement status: {movement_status}")
+
         # Determine axis for movement
         axis_test = 'x'
         if ROBOT_FACE % 2 == 0:
@@ -829,8 +1347,8 @@ class GraphMapper:
             axis_test = 'x'
         
         print(f"🚀 Moving forward on {axis_test}-axis")
-        
-        # Move forward
+
+        # Move forward (จะบันทึกเป็น 'forward' ใน MovementTracker)
         movement_controller.move_forward_with_pid(0.6, axis_test, direction=1)
         
         # Update position
@@ -849,7 +1367,7 @@ class GraphMapper:
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
 
-    def reverse_to_absolute_direction(self, target_direction, movement_controller):
+    def reverse_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
         """NEW: Reverse to target ABSOLUTE direction for backtracking"""
         global ROBOT_FACE
         print(f"🔙 BACKTRACK: Reversing to ABSOLUTE direction: {target_direction}")
@@ -865,7 +1383,7 @@ class GraphMapper:
         required_facing_direction = reverse_direction_map[target_direction]
         
         # First rotate to face the direction OPPOSITE to where we want to go
-        self.rotate_to_absolute_direction(required_facing_direction, movement_controller)
+        self.rotate_to_absolute_direction(required_facing_direction, movement_controller, attitude_handler)
         
         # Now reverse (which will move us in the target direction)
         movement_controller.reverse_to_previous_node()
@@ -1086,21 +1604,39 @@ class GraphMapper:
         is_blocked = from_node.walls.get(direction, True)
         return not is_blocked
     
-    def execute_path_to_frontier_with_reverse(self, path, movement_controller):
-        """NEW: Execute path using reverse movements for backtracking"""
+    def execute_path_to_frontier_with_reverse(self, path, movement_controller, attitude_handler):
+        """NEW: Execute path using reverse movements for backtracking WITH NODE COUNTING"""
         print(f"🗺️ Executing REVERSE path to frontier: {path}")
         
+        # เช็คสถานะการเคลื่อนไหวก่อนเริ่ม backtrack
+        movement_status = movement_controller.get_movement_status()
+        print(f"📊 Movement status before backtracking: {movement_status}")
+
+        drift_corrections_during_backtrack = 0
+        initial_correction_count = movement_controller.total_drift_corrections
+
         for i, step_direction in enumerate(path):
-            print(f"📍 Step {i+1}/{len(path)}: Current position: {self.currentPosition}, moving {step_direction}")
+            print(f"🔍 Step {i+1}/{len(path)}: Current position: {self.currentPosition}, moving {step_direction}")
             
             # Use reverse movement for backtracking (more efficient)
-            success = self.reverse_to_absolute_direction(step_direction, movement_controller)
+            success = self.reverse_to_absolute_direction(step_direction, movement_controller, attitude_handler)
             
             if not success:
                 print(f"❌ Failed to reverse {step_direction} during backtracking!")
                 return False
             
+            # *** เพิ่มการนับโหนดสำหรับการ backtrack และเช็ค drift correction ***
+            needs_correction = movement_controller.increment_node_visit_for_backtrack_with_correction(attitude_handler)
+            
+            # ถ้าเกิด drift correction ระหว่าง backtrack
+            if needs_correction:
+                drift_corrections_during_backtrack = movement_controller.total_drift_corrections - initial_correction_count
+                print(f"✅ Backtrack drift correction #{drift_corrections_during_backtrack} completed during step {i+1}!")
+            
             time.sleep(0.2)  # Brief pause between moves
+        
+        if drift_corrections_during_backtrack > 0:
+            print(f"🔧 Total drift corrections during this backtrack: {drift_corrections_during_backtrack}")
         
         print(f"✅ Successfully reached frontier at {self.currentPosition}")
         return True
@@ -1421,7 +1957,16 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
 
-    
+    if front_distance <= 19.0 : # ถ้าใกล้เกิน19เซน
+        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
+        print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
+        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        time.sleep(0.2)
+
+    # if 45 > front_distance >= 25:
+    #     move_distance=  (front_distance-28)
+    #     ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+    #     time.sleep(0.2)
 
     # Scan left (physical: -90°)
     print("🔍 Scanning LEFT (physical: -90°)...")
@@ -1440,6 +1985,12 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
     
+    if left_distance < 15:
+        move_distance = 20 - left_distance
+        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
+        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        time.sleep(0.3)
+
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
@@ -1453,6 +2004,13 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
+
+    if right_distance < 15:
+        move_distance = -(21 - right_distance)
+        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
+        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        time.sleep(0.3)
+
 
 
     print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
@@ -1476,13 +2034,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     return scan_results
 
-def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, max_nodes=20):
-    """NEW: Main autonomous exploration using ABSOLUTE directions and reverse backtracking"""
-    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH ABSOLUTE DIRECTIONS ===")
+def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
+    """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-    print("⚡ OPTIMIZATION: Previously scanned nodes will NOT be re-scanned!")
-    print("🔙 NEW: Backtracking uses REVERSE movement (no 180° turns)!")
-    print("🧭 ENHANCED: Uses ABSOLUTE directions (North is always North)!")
+    print(f"🔧 Attitude Drift Correction: Every {movement_controller.DRIFT_CORRECTION_INTERVAL} nodes (+{movement_controller.DRIFT_CORRECTION_ANGLE}° right)")
     
     nodes_explored = 0
     scanning_iterations = 0
@@ -1495,7 +2051,30 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         print(f"--- EXPLORATION STEP {nodes_explored + 1} ---")
         print(f"🤖 Current position: {graph_mapper.currentPosition}")
         print(f"🧭 Current direction (absolute): {graph_mapper.currentDirection}")
+        
+        # แสดงสถานะ drift correction
+        drift_status = movement_controller.get_drift_correction_status()
+        print(f"🔧 Comprehensive Drift Correction Status:")
+        print(f"   📊 Total nodes visited (including backtrack): {drift_status['nodes_visited']}")
+        print(f"   ⏳ Next correction at node: {drift_status['next_correction_at']}")
+        print(f"   ⏰ Nodes until correction: {drift_status['nodes_until_correction']}")
+        print(f"   🔄 Total corrections done: {drift_status['total_corrections']}")
+        print(f"   📍 Last correction at node: {drift_status['last_correction_at']}")
         print(f"{'='*50}")
+        
+        if nodes_explored % 5 == 0:  # แสดง map ทุกๆ 5 nodes
+            print(f"\n📊 === INTERMEDIATE MAP (Node {nodes_explored}) ===")
+            plot_exploration_map(graph_mapper, show_plot=True)
+
+        print(f"\n🎉 === FINAL EXPLORATION MAP ===")
+        plot_exploration_map(graph_mapper, show_plot=True)
+        plot_exploration_progress(graph_mapper)
+            
+        # *** เพิ่มจำนวนโหนดสำหรับ main exploration และเช็ค drift correction ***
+        needs_drift_correction = movement_controller.increment_node_visit_main_exploration(attitude_handler)
+        
+        if needs_drift_correction:
+            print(f"✅ Main exploration drift correction completed!")
         
         # Check if current node needs scanning
         current_node = graph_mapper.create_node(graph_mapper.currentPosition)
@@ -1514,14 +2093,13 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 if success:
                     dead_end_reversals += 1
                     print(f"✅ Successfully reversed from dead end (Total reversals: {dead_end_reversals})")
-                    nodes_explored += 1  # Count the dead end node
+                    nodes_explored += 1
                     continue
                 else:
                     print(f"❌ Failed to reverse from dead end!")
                     break
         else:
             print("⚡ REVISITED NODE - Using cached scan data (no physical scanning)")
-            # Update unexplored exits properly for revisited nodes
             graph_mapper.update_unexplored_exits_absolute(current_node)
             graph_mapper.build_connections()
         
@@ -1539,21 +2117,18 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         if next_direction:
             print(f"\n🎯 Next exploration direction (absolute): {next_direction}")
             
-            # Double-check wall detection before moving
             can_move = graph_mapper.can_move_to_direction_absolute(next_direction)
             print(f"🚦 Movement check: {'ALLOWED' if can_move else 'BLOCKED'}")
             
             if can_move:
                 try:
-                    # Move to next direction using absolute direction system
-                    success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller)
+                    success = graph_mapper.move_to_absolute_direction(next_direction, movement_controller, attitude_handler)
                     if success:
                         print(f"✅ Successfully moved to {graph_mapper.currentPosition}")
                         time.sleep(0.2)
                         continue
                     else:
                         print(f"❌ Movement failed - wall detected!")
-                        # Remove this direction from unexplored exits
                         if current_node and next_direction in current_node.unexploredExits:
                             current_node.unexploredExits.remove(next_direction)
                         continue
@@ -1563,14 +2138,11 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                     break
             else:
                 print(f"🚫 Cannot move to {next_direction} - blocked by wall!")
-                # Remove this direction from unexplored exits
                 if current_node and next_direction in current_node.unexploredExits:
                     current_node.unexploredExits.remove(next_direction)
                 continue
         
-        # STEP 2: No local exploration possible - try smart backtracking with REVERSE
-        print(f"\n🔍 No unexplored directions from current node")
-        print(f"🔙 Attempting REVERSE BACKTRACK to nearest frontier...")
+        # STEP 2: Backtracking logic
         backtrack_attempts += 1
         
         frontier_id, frontier_direction, path = graph_mapper.find_nearest_frontier()
@@ -1578,19 +2150,23 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         if frontier_id and path is not None and frontier_direction:
             print(f"🎯 Found frontier node {frontier_id} with unexplored direction: {frontier_direction}")
             print(f"🗺️ Path to frontier: {path} (distance: {len(path)} steps)")
-            print("🔙 REVERSE BACKTRACK: Using reverse movements (no 180° turns)!")
+            print("🔙 REVERSE BACKTRACK: Using reverse movements WITH drift correction!")
             
             try:
-                # Execute backtracking path using REVERSE movements
-                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller)
+                # *** เปลี่ยนการเรียกใช้ให้ส่ง attitude_handler ไปด้วย ***
+                success = graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler)
                 
                 if success:
                     reverse_backtracks += 1
                     print(f"✅ Successfully REVERSE backtracked to frontier at {graph_mapper.currentPosition}")
                     print(f"   📊 Total reverse backtracks: {reverse_backtracks}")
-                    time.sleep(0.2)
                     
-                    # The next iteration will handle the frontier node
+                    # แสดงสถานะ drift correction หลัง backtrack
+                    updated_drift_status = movement_controller.get_drift_correction_status()
+                    print(f"   🔧 Total nodes after backtrack: {updated_drift_status['nodes_visited']}")
+                    print(f"   🔄 Total corrections: {updated_drift_status['total_corrections']}")
+                    
+                    time.sleep(0.2)
                     continue
                     
                 else:
@@ -1601,10 +2177,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 print(f"❌ Error during reverse backtracking: {e}")
                 break
         else:
-            # STEP 3: No frontiers found - exploration complete
+            # STEP 3: Final check
             print("🎉 No more frontiers found!")
-            
-            # FINAL CHECK: Rebuild frontier queue and try one more time
             print("🔄 Performing final frontier scan...")
             graph_mapper.rebuild_frontier_queue()
             
@@ -1612,32 +2186,46 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 print(f"🚀 Found {len(graph_mapper.frontierQueue)} missed frontiers - continuing...")
                 continue
             else:
-                print("🎉 EXPLORATION DEFINITELY COMPLETE - No more areas to explore!")
+                print("🎉 EXPLORATION DEFINITELY COMPLETE!")
                 break
         
-        # Safety check - prevent infinite loops
         if nodes_explored >= max_nodes:
             print(f"⚠️ Reached maximum nodes limit ({max_nodes})")
             break
     
+    # Final statistics
+    final_drift_status = movement_controller.get_drift_correction_status()
+    
     print(f"\n🎉 === EXPLORATION COMPLETED ===")
     print(f"📊 PERFORMANCE SUMMARY:")
-    print(f"   🗺️ Total nodes visited: {nodes_explored}")
+    print(f"   🗺️ Total exploration steps: {nodes_explored}")
+    print(f"   📊 Total nodes visited (including backtrack): {final_drift_status['nodes_visited']}")
     print(f"   🔍 Physical scans performed: {scanning_iterations}")
     print(f"   🔙 Dead end reversals: {dead_end_reversals}")
     print(f"   🔄 Backtrack attempts: {backtrack_attempts}")
     print(f"   🔙 Reverse backtracks: {reverse_backtracks}")
     print(f"   ⚡ Scans saved by caching: {nodes_explored - scanning_iterations}")
-    if nodes_explored > 0:
-        print(f"   📈 Efficiency gain: {((nodes_explored - scanning_iterations) / nodes_explored * 100):.1f}% less scanning")
-    print(f"   🎯 Reverse movement efficiency: {reverse_backtracks} efficient backtracks")
+    
+    print(f"\n🔧 COMPREHENSIVE ATTITUDE DRIFT CORRECTION SUMMARY:")
+    print(f"   📊 Total nodes counted: {final_drift_status['nodes_visited']} (exploration + backtracking)")
+    print(f"   🔄 Total corrections performed: {final_drift_status['total_corrections']}")
+    print(f"   🎯 Total angle corrected: {final_drift_status['total_corrections'] * final_drift_status['correction_angle']}°")
+    print(f"   📍 Correction interval: Every {final_drift_status['correction_interval']} nodes")
+    print(f"   🔧 Correction angle: +{final_drift_status['correction_angle']}° per correction")
+    print(f"   📈 Last correction at node: {final_drift_status['last_correction_at']}")
+    
+    backtrack_node_count = final_drift_status['nodes_visited'] - nodes_explored
+    if final_drift_status['nodes_visited'] > 0:
+        drift_frequency = final_drift_status['total_corrections'] / final_drift_status['nodes_visited']
+        backtrack_percentage = (backtrack_node_count / final_drift_status['nodes_visited']) * 100
+        print(f"   📊 Drift correction frequency: {drift_frequency:.2f} corrections per total node")
+        print(f"   🔙 Backtrack nodes: {backtrack_node_count} ({backtrack_percentage:.1f}% of total)")
     
     graph_mapper.print_graph_summary()
-    
-    # Generate final exploration report
-    generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks)
+    generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
 
-def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0):
+
+def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0, final_drift_status=None):
     """Generate comprehensive exploration report with absolute direction info"""
     print(f"\n{'='*60}")
     print("📋 FINAL EXPLORATION REPORT (ABSOLUTE DIRECTIONS)")
@@ -1720,10 +2308,6 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
             print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
-    print(f"   🧭 Consistent navigation regardless of robot orientation")
-    print(f"   🔙 Efficient reverse movements for backtracking")
-    print(f"   📍 Accurate wall mapping using global coordinates")
-    print(f"   🎯 Reliable frontier detection and path planning")
     
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
@@ -1742,21 +2326,20 @@ if __name__ == '__main__':
     tof_handler = ToFSensorHandler()
     graph_mapper = GraphMapper()
     movement_controller = MovementController(ep_chassis)
+    attitude_handler = AttitudeHandler()
+    attitude_handler.start_monitoring(ep_chassis)
     
     try:
         print("✅ Recalibrating gimbal...")
         ep_gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
         ep_gimbal.moveto(pitch=0, yaw=0, pitch_speed=50, yaw_speed=50).wait_for_completed()
-        time.sleep(1)
+        time.sleep(0.3)
         
         print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
-        print("🧭 ABSOLUTE DIRECTIONS: North is always North, regardless of robot facing!")
-        print("🔙 REVERSE BACKTRACKING: Efficient movement without 180° turns!")
-        print("⚡ SMART CACHING: Previously scanned nodes reuse cached data!")
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
@@ -1768,7 +2351,11 @@ if __name__ == '__main__':
         try:
             ep_sensor.unsub_distance()
             movement_controller.cleanup()
+            attitude_handler.stop_monitoring(ep_chassis)
         except:
             pass
         ep_robot.close()
         print("🔌 Connection closed")
+
+print(f"\n📊 Generating visual reports...")
+create_final_map_report(graph_mapper)
