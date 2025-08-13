@@ -97,34 +97,34 @@ class RobotMapVisualizer:
         self.stats['walls_detected'] = self._count_walls()
         self.stats['dead_ends_found'] = sum(1 for node in self.nodes.values() if node.isDeadEnd)
     
-def add_robot_position(self, position, direction=None, live_update=False):
-    """
-    Add robot position to path history
-    Args:
-        position (tuple): (x, y) coordinates
-        direction (str): Robot facing direction
-        live_update (bool): ถ้า True จะวาดตำแหน่งนี้ทันที
-    """
-    self.robot_path.append({
-        'position': position,
-        'direction': direction or self.current_direction,
-        'timestamp': datetime.now(),
-        'step': len(self.robot_path)
-    })
-    
-    self.current_position = position
-    if direction:
-        self.current_direction = direction
-    
-    # Calculate total distance
-    if len(self.robot_path) > 1:
-        prev_pos = self.robot_path[-2]['position']
-        curr_pos = position
-        distance = np.sqrt((curr_pos[0] - prev_pos[0])**2 + (curr_pos[1] - prev_pos[1])**2)
-        self.stats['total_distance'] += distance
+    def add_robot_position(self, position, direction=None, live_update=False):
+        """
+        Add robot position to path history
+        Args:
+            position (tuple): (x, y) coordinates
+            direction (str): Robot facing direction
+            live_update (bool): ถ้า True จะวาดตำแหน่งนี้ทันที
+        """
+        self.robot_path.append({
+            'position': position,
+            'direction': direction or self.current_direction,
+            'timestamp': datetime.now(),
+            'step': len(self.robot_path)
+        })
+        
+        self.current_position = position
+        if direction:
+            self.current_direction = direction
+        
+        # Calculate total distance
+        if len(self.robot_path) > 1:
+            prev_pos = self.robot_path[-2]['position']
+            curr_pos = position
+            distance = np.sqrt((curr_pos[0] - prev_pos[0])**2 + (curr_pos[1] - prev_pos[1])**2)
+            self.stats['total_distance'] += distance
 
-    if live_update:
-        self._plot_last_step()
+        if live_update:
+            self._plot_last_step()
 
     def _plot_last_step(self):
         if len(self.robot_path) < 2:
@@ -139,12 +139,12 @@ def add_robot_position(self, position, direction=None, live_update=False):
             [prev_pos[1], curr_pos[1]],
             color=self.colors['path'], linewidth=2, alpha=0.7
         )
-    
-    # update robot marker
-    self._plot_robot()
-    
-    plt.draw()
-    plt.pause(0.01)
+        
+        # update robot marker
+        self._plot_robot()
+        
+        plt.draw()
+        plt.pause(0.01)
 
 
     
