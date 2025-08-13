@@ -11,17 +11,26 @@ ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
 
 
+import time
+import numpy as np
+from datetime import datetime
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+import json
+import os
+
 # ===== Map Visualizer =====
 class MapVisualizer:
     def __init__(self, graph_mapper):
         self.graph_mapper = graph_mapper
-        self.fig, self.ax = plt.subplots(figsize=(12, 10))
-        self.fig.suptitle('Robot Autonomous Exploration Map', fontsize=16, fontweight='bold')
+        self.fig, self.ax = plt.subplots(figsize=(14, 10))
+        self.fig.suptitle('Robot Autonomous Exploration Map (Absolute Directions)', fontsize=16, fontweight='bold')
         
         # Path tracking
         self.movement_path = [graph_mapper.currentPosition]
         self.path_timestamps = [datetime.now()]
         self.movement_counter = 0
+        self.direction_history = [graph_mapper.currentDirection]  # Track direction changes
         
         # Colors and styles
         self.colors = {
@@ -31,12 +40,24 @@ class MapVisualizer:
             'frontier': '#FF9800',
             'wall': '#333333',
             'path': '#2196F3',
-            'unexplored': '#E0E0E0'
+            'unexplored': '#E0E0E0',
+            'scan_cached': '#81C784',  # Light green for cached scans
+            'backtrack': '#9C27B0'     # Purple for backtrack movements
         }
         
         # Animation setup
         self.animation_active = False
         self.update_interval = 500  # ms
+        
+        # Tracking statistics
+        self.stats = {
+            'total_moves': 0,
+            'dead_end_reversals': 0,
+            'backtracks': 0,
+            'scans_performed': 0,
+            'scans_cached': 0,
+            'drift_corrections': 0
+        }
         
     def setup_plot(self):
         """Setup the initial plot configuration"""
@@ -45,38 +66,66 @@ class MapVisualizer:
         self.ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
         self.ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
         
-        # Create legend
+        # Create comprehensive legend
         legend_elements = [
             plt.Line2D([0], [0], marker='o', color='w', markerfacecolor=self.colors['robot'], 
                       markersize=12, label='Current Robot Position'),
             plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['visited'], 
                       markersize=10, label='Visited Node'),
+            plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['scan_cached'], 
+                      markersize=10, label='Cached Scan Node'),
             plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['dead_end'], 
                       markersize=10, label='Dead End'),
             plt.Line2D([0], [0], marker='s', color='w', markerfacecolor=self.colors['frontier'], 
                       markersize=10, label='Frontier Node'),
             plt.Line2D([0], [0], color=self.colors['wall'], linewidth=4, label='Wall'),
-            plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, label='Robot Path'),
+            plt.Line2D([0], [0], color=self.colors['path'], linewidth=2, label='Forward Path'),
+            plt.Line2D([0], [0], color=self.colors['backtrack'], linewidth=2, linestyle='--', label='Backtrack Path'),
         ]
         self.ax.legend(handles=legend_elements, loc='upper left', bbox_to_anchor=(1.02, 1))
         
         plt.tight_layout()
     
-    def add_movement(self, new_position):
-        """Add a new position to the movement path"""
+    def add_movement(self, new_position, movement_type='forward', direction=None):
+        """Add a new position to the movement path with movement type tracking"""
         self.movement_path.append(new_position)
         self.path_timestamps.append(datetime.now())
         self.movement_counter += 1
         
-        print(f"📍 Movement #{self.movement_counter}: {new_position}")
+        if direction:
+            self.direction_history.append(direction)
+        else:
+            self.direction_history.append(self.graph_mapper.currentDirection)
+        
+        # Update statistics based on movement type
+        if movement_type == 'forward':
+            self.stats['total_moves'] += 1
+        elif movement_type == 'backtrack':
+            self.stats['backtracks'] += 1
+        elif movement_type == 'dead_end_reversal':
+            self.stats['dead_end_reversals'] += 1
+        
+        print(f"📍 Movement #{self.movement_counter}: {new_position} ({movement_type})")
     
-    def update_plot(self, save_image=False):
+    def add_scan_event(self, position, scan_type='new'):
+        """Track scanning events"""
+        if scan_type == 'new':
+            self.stats['scans_performed'] += 1
+        elif scan_type == 'cached':
+            self.stats['scans_cached'] += 1
+    
+    def add_drift_correction(self):
+        """Track drift correction events"""
+        self.stats['drift_corrections'] += 1
+    
+    def update_plot(self, save_image=False, show_statistics=True):
         """Update the plot with current graph state"""
         self.ax.clear()
         self.ax.set_aspect('equal')
         self.ax.grid(True, alpha=0.3)
         
         if not self.graph_mapper.nodes:
+            self.ax.text(0, 0, 'No exploration data yet...', ha='center', va='center', fontsize=14)
             return
         
         # Get map boundaries
@@ -98,20 +147,18 @@ class MapVisualizer:
         for y in range(int(min_y), int(max_y) + 1):
             self.ax.axhline(y, color='lightgray', alpha=0.3, linewidth=0.5)
         
-        # Draw walls
+        # Draw components in order
         self.draw_walls()
-        
-        # Draw movement path
         self.draw_movement_path()
-        
-        # Draw nodes
         self.draw_nodes()
-        
-        # Draw robot current position
         self.draw_robot()
         
-        # Update title with statistics
-        self.update_title()
+        # Update title and statistics
+        if show_statistics:
+            self.update_title_with_stats()
+            self.draw_statistics_box()
+        else:
+            self.update_title()
         
         # Recreate legend
         self.setup_plot()
@@ -122,13 +169,13 @@ class MapVisualizer:
         plt.draw()
     
     def draw_walls(self):
-        """Draw walls between nodes"""
+        """Draw walls between nodes using absolute directions"""
         wall_segments = []
         
         for node in self.graph_mapper.nodes.values():
             x, y = node.position
             
-            # Check each direction for walls
+            # Draw walls based on absolute directions
             if node.walls.get('north', False):
                 wall_segments.append([(x-0.4, y+0.5), (x+0.4, y+0.5)])
             if node.walls.get('south', False):
@@ -145,110 +192,242 @@ class MapVisualizer:
                         color=self.colors['wall'], linewidth=4, solid_capstyle='round')
     
     def draw_movement_path(self):
-        """Draw the robot's movement path"""
+        """Draw the robot's movement path with different styles for different movement types"""
         if len(self.movement_path) > 1:
             path_x = [pos[0] for pos in self.movement_path]
             path_y = [pos[1] for pos in self.movement_path]
             
-            # Draw path with arrows showing direction
+            # Draw path segments with appropriate styling
             for i in range(len(path_x) - 1):
                 dx = path_x[i+1] - path_x[i]
                 dy = path_y[i+1] - path_y[i]
                 
+                # Determine if this is a backtrack move (distance > 1 indicates jump/backtrack)
+                distance = abs(dx) + abs(dy)
+                if distance > 1.5:  # Backtrack or long jump
+                    line_color = self.colors['backtrack']
+                    line_style = '--'
+                    alpha = 0.6
+                else:  # Normal forward movement
+                    line_color = self.colors['path']
+                    line_style = '-'
+                    alpha = 0.8
+                
                 # Draw line segment
                 self.ax.plot([path_x[i], path_x[i+1]], [path_y[i], path_y[i+1]], 
-                           color=self.colors['path'], linewidth=2, alpha=0.7)
+                           color=line_color, linewidth=2, alpha=alpha, linestyle=line_style)
                 
-                # Add arrow showing direction
-                if dx != 0 or dy != 0:
-                    self.ax.arrow(path_x[i] + dx*0.3, path_y[i] + dy*0.3, 
-                                dx*0.2, dy*0.2, head_width=0.1, head_length=0.1, 
-                                fc=self.colors['path'], ec=self.colors['path'], alpha=0.8)
+                # Add directional arrows for forward movements only
+                if dx != 0 or dy != 0 and distance <= 1.5:
+                    arrow_scale = 0.15
+                    self.ax.arrow(path_x[i] + dx*0.4, path_y[i] + dy*0.4, 
+                                dx*arrow_scale, dy*arrow_scale, 
+                                head_width=0.08, head_length=0.06, 
+                                fc=line_color, ec=line_color, alpha=alpha)
     
     def draw_nodes(self):
-        """Draw all nodes with appropriate colors and labels"""
+        """Draw all nodes with appropriate colors and detailed labels"""
         for node in self.graph_mapper.nodes.values():
             x, y = node.position
             
-            # Determine node color
+            # Determine node color and properties
             if node.isDeadEnd:
                 color = self.colors['dead_end']
                 marker = 's'
                 size = 150
+                edge_color = 'darkred'
             elif node.id in self.graph_mapper.frontierQueue:
                 color = self.colors['frontier']
                 marker = 's'
                 size = 120
+                edge_color = 'darkorange'
+            elif hasattr(node, 'fullyScanned') and node.fullyScanned:
+                # Check if this node was scanned multiple times (cached)
+                visit_count = getattr(node, 'visitCount', 1)
+                if visit_count > 1:
+                    color = self.colors['scan_cached']
+                else:
+                    color = self.colors['visited']
+                marker = 's'
+                size = 100
+                edge_color = 'darkgreen'
             else:
                 color = self.colors['visited']
                 marker = 's'
                 size = 100
+                edge_color = 'darkgreen'
             
             # Draw node
             self.ax.scatter(x, y, c=color, marker=marker, s=size, 
-                          edgecolors='black', linewidth=1, zorder=3)
+                          edgecolors=edge_color, linewidth=1.5, zorder=3)
             
-            # Add node label
-            label = f"{node.id}"
-            if node.unexploredExits:
-                label += f"\n({len(node.unexploredExits)} exits)"
+            # Create detailed node label
+            label_parts = []
+            label_parts.append(f"{node.id}")
             
-            self.ax.annotate(label, (x, y), xytext=(5, 5), textcoords='offset points',
-                           fontsize=8, ha='left', va='bottom', 
-                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.8))
+            if hasattr(node, 'unexploredExits') and node.unexploredExits:
+                label_parts.append(f"Exits: {node.unexploredExits}")
+            
+            if hasattr(node, 'visitCount') and node.visitCount > 1:
+                label_parts.append(f"Visits: {node.visitCount}")
+            
+            # Add wall information compactly
+            if hasattr(node, 'walls') and node.walls:
+                walls = [direction[0].upper() for direction, has_wall in node.walls.items() if has_wall]
+                if walls:
+                    label_parts.append(f"Walls: {''.join(walls)}")
+            
+            label = '\n'.join(label_parts)
+            
+            # Position label to avoid overlap
+            offset_x = 8 if x >= 0 else -8
+            offset_y = 8 if y >= 0 else -8
+            ha = 'left' if x >= 0 else 'right'
+            
+            self.ax.annotate(label, (x, y), xytext=(offset_x, offset_y), textcoords='offset points',
+                           fontsize=7, ha=ha, va='bottom', 
+                           bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='gray'))
     
     def draw_robot(self):
-        """Draw robot at current position with direction indicator"""
+        """Draw robot at current position with enhanced direction indicator"""
         x, y = self.graph_mapper.currentPosition
         
-        # Draw robot
-        self.ax.scatter(x, y, c=self.colors['robot'], marker='o', s=200, 
-                      edgecolors='darkred', linewidth=2, zorder=5)
+        # Draw robot with pulsing effect
+        self.ax.scatter(x, y, c=self.colors['robot'], marker='o', s=250, 
+                      edgecolors='darkred', linewidth=3, zorder=5)
+        self.ax.scatter(x, y, c='white', marker='o', s=100, zorder=6)  # Inner white circle
         
-        # Draw direction arrow
+        # Draw direction arrow with better styling
         direction_vectors = {
-            'north': (0, 0.3),
-            'south': (0, -0.3),
-            'east': (0.3, 0),
-            'west': (-0.3, 0)
+            'north': (0, 0.35),
+            'south': (0, -0.35),
+            'east': (0.35, 0),
+            'west': (-0.35, 0)
         }
         
         if self.graph_mapper.currentDirection in direction_vectors:
             dx, dy = direction_vectors[self.graph_mapper.currentDirection]
-            self.ax.arrow(x, y, dx, dy, head_width=0.15, head_length=0.1,
-                        fc='darkred', ec='darkred', linewidth=2, zorder=6)
+            self.ax.arrow(x, y, dx, dy, head_width=0.12, head_length=0.08,
+                        fc='darkred', ec='darkred', linewidth=3, zorder=7)
         
-        # Add robot label
-        self.ax.annotate(f'ROBOT\n{self.graph_mapper.currentDirection.upper()}', 
-                        (x, y), xytext=(-20, -30), textcoords='offset points',
+        # Enhanced robot label with current stats
+        current_node = self.graph_mapper.get_current_node()
+        node_info = ""
+        if current_node:
+            if current_node.isDeadEnd:
+                node_info = "\n(DEAD END)"
+            elif current_node.id in self.graph_mapper.frontierQueue:
+                node_info = f"\n({len(current_node.unexploredExits)} exits)"
+        
+        robot_label = f'ROBOT\n{self.graph_mapper.currentDirection.upper()}{node_info}'
+        self.ax.annotate(robot_label, 
+                        (x, y), xytext=(-25, -40), textcoords='offset points',
                         fontsize=10, ha='center', va='top', fontweight='bold',
-                        bbox=dict(boxstyle='round,pad=0.5', facecolor='red', alpha=0.8, edgecolor='darkred'),
-                        color='white')
+                        bbox=dict(boxstyle='round,pad=0.5', facecolor='red', alpha=0.9, edgecolor='darkred'),
+                        color='white', zorder=8)
     
     def update_title(self):
-        """Update plot title with current statistics"""
+        """Update plot title with basic statistics"""
         total_nodes = len(self.graph_mapper.nodes)
         dead_ends = sum(1 for node in self.graph_mapper.nodes.values() if node.isDeadEnd)
         frontiers = len(self.graph_mapper.frontierQueue)
         movements = len(self.movement_path) - 1
         
         title = f'Robot Exploration Map - Nodes: {total_nodes} | Dead Ends: {dead_ends} | Frontiers: {frontiers} | Movements: {movements}'
-        self.ax.set_title(title, fontsize=14, fontweight='bold')
-        self.ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
-        self.ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
+        self.ax.set_title(title, fontsize=12, fontweight='bold')
+    
+    def update_title_with_stats(self):
+        """Update plot title with comprehensive statistics"""
+        total_nodes = len(self.graph_mapper.nodes)
+        dead_ends = sum(1 for node in self.graph_mapper.nodes.values() if node.isDeadEnd)
+        frontiers = len(self.graph_mapper.frontierQueue)
+        
+        title = (f'Robot Exploration Map | Nodes: {total_nodes} | Dead Ends: {dead_ends} | '
+                f'Frontiers: {frontiers} | Moves: {self.stats["total_moves"]} | '
+                f'Backtracks: {self.stats["backtracks"]} | Drift Corrections: {self.stats["drift_corrections"]}')
+        self.ax.set_title(title, fontsize=11, fontweight='bold')
+    
+    def draw_statistics_box(self):
+        """Draw statistics box on the plot"""
+        stats_text = (
+            f"📊 EXPLORATION STATS\n"
+            f"Total Movements: {self.stats['total_moves']}\n"
+            f"Backtracks: {self.stats['backtracks']}\n"
+            f"Dead End Reversals: {self.stats['dead_end_reversals']}\n"
+            f"Scans Performed: {self.stats['scans_performed']}\n"
+            f"Scans Cached: {self.stats['scans_cached']}\n"
+            f"Drift Corrections: {self.stats['drift_corrections']}\n"
+            f"Efficiency: {(self.stats['scans_cached']/(max(1, self.stats['scans_performed']+self.stats['scans_cached']))*100):.1f}%"
+        )
+        
+        # Position the text box
+        self.ax.text(0.02, 0.98, stats_text, transform=self.ax.transAxes,
+                    fontsize=9, verticalalignment='top', horizontalalignment='left',
+                    bbox=dict(boxstyle='round,pad=0.5', facecolor='lightblue', alpha=0.8))
     
     def save_map_image(self, filename=None):
-        """Save current map as image"""
+        """Save current map as high-quality image"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"robot_map_{timestamp}.png"
+            filename = f"robot_exploration_map_{timestamp}.png"
         
         try:
-            plt.savefig(filename, dpi=300, bbox_inches='tight', 
+            # Ensure directory exists
+            os.makedirs('maps', exist_ok=True)
+            full_path = os.path.join('maps', filename)
+            
+            plt.savefig(full_path, dpi=300, bbox_inches='tight', 
                        facecolor='white', edgecolor='none')
-            print(f"💾 Map saved as: {filename}")
+            print(f"💾 Map saved as: {full_path}")
+            return full_path
         except Exception as e:
             print(f"❌ Failed to save map: {e}")
+            return None
+    
+    def save_exploration_data(self, filename=None):
+        """Save exploration data as JSON"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"exploration_data_{timestamp}.json"
+        
+        try:
+            os.makedirs('data', exist_ok=True)
+            full_path = os.path.join('data', filename)
+            
+            # Prepare data for JSON serialization
+            nodes_data = {}
+            for node_id, node in self.graph_mapper.nodes.items():
+                nodes_data[node_id] = {
+                    'id': node.id,
+                    'position': node.position,
+                    'walls': node.walls,
+                    'unexplored_exits': getattr(node, 'unexploredExits', []),
+                    'explored_directions': getattr(node, 'exploredDirections', []),
+                    'is_dead_end': node.isDeadEnd,
+                    'fully_scanned': getattr(node, 'fullyScanned', False),
+                    'visit_count': getattr(node, 'visitCount', 1),
+                    'last_visited': node.lastVisited if hasattr(node, 'lastVisited') else None
+                }
+            
+            exploration_data = {
+                'timestamp': datetime.now().isoformat(),
+                'current_position': self.graph_mapper.currentPosition,
+                'current_direction': self.graph_mapper.currentDirection,
+                'movement_path': self.movement_path,
+                'direction_history': self.direction_history,
+                'statistics': self.stats,
+                'nodes': nodes_data,
+                'frontier_queue': self.graph_mapper.frontierQueue
+            }
+            
+            with open(full_path, 'w') as f:
+                json.dump(exploration_data, f, indent=2, default=str)
+            
+            print(f"💾 Exploration data saved as: {full_path}")
+            return full_path
+        except Exception as e:
+            print(f"❌ Failed to save exploration data: {e}")
+            return None
     
     def show_live_map(self):
         """Show live updating map"""
@@ -258,10 +437,15 @@ class MapVisualizer:
     
     def close_map(self):
         """Close map window"""
+        plt.ioff()  # Turn off interactive mode
         plt.close(self.fig)
     
-    def generate_exploration_animation(self, filename="robot_exploration.gif", interval=1000):
+    def generate_exploration_animation(self, filename=None, interval=1000):
         """Generate animated GIF of the exploration process"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"robot_exploration_animation_{timestamp}.gif"
+        
         print("🎬 Generating exploration animation...")
         
         fig, ax = plt.subplots(figsize=(12, 10))
@@ -273,38 +457,92 @@ class MapVisualizer:
             ax.grid(True, alpha=0.3)
             
             # Show path up to current frame
-            current_path = self.movement_path[:frame+1]
+            current_path = self.movement_path[:frame+2]  # +2 to include start position
+            current_directions = self.direction_history[:frame+2]
             
             if len(current_path) > 1:
+                # Draw path
                 path_x = [pos[0] for pos in current_path]
                 path_y = [pos[1] for pos in current_path]
                 ax.plot(path_x, path_y, color=self.colors['path'], linewidth=3, alpha=0.8)
+                
+                # Draw direction arrows
+                for i in range(len(path_x) - 1):
+                    dx = path_x[i+1] - path_x[i]
+                    dy = path_y[i+1] - path_y[i]
+                    if dx != 0 or dy != 0:
+                        ax.arrow(path_x[i] + dx*0.3, path_y[i] + dy*0.3, 
+                               dx*0.2, dy*0.2, head_width=0.1, head_length=0.08, 
+                               fc=self.colors['path'], ec=self.colors['path'], alpha=0.8)
             
-            # Show current position
+            # Show current robot position and direction
             if current_path:
                 x, y = current_path[-1]
+                current_dir = current_directions[-1] if current_directions else 'north'
+                
+                # Draw robot
                 ax.scatter(x, y, c=self.colors['robot'], marker='o', s=300, 
                           edgecolors='darkred', linewidth=3, zorder=5)
+                
+                # Draw direction arrow
+                direction_vectors = {
+                    'north': (0, 0.3), 'south': (0, -0.3),
+                    'east': (0.3, 0), 'west': (-0.3, 0)
+                }
+                if current_dir in direction_vectors:
+                    dx, dy = direction_vectors[current_dir]
+                    ax.arrow(x, y, dx, dy, head_width=0.15, head_length=0.1,
+                           fc='darkred', ec='darkred', linewidth=2, zorder=6)
             
             # Set consistent bounds
             if self.movement_path:
                 all_x = [pos[0] for pos in self.movement_path]
                 all_y = [pos[1] for pos in self.movement_path]
-                ax.set_xlim(min(all_x) - 1, max(all_x) + 1)
-                ax.set_ylim(min(all_y) - 1, max(all_y) + 1)
+                padding = 1.5
+                ax.set_xlim(min(all_x) - padding, max(all_x) + padding)
+                ax.set_ylim(min(all_y) - padding, max(all_y) + padding)
             
-            ax.set_title(f'Exploration Step: {frame + 1}/{len(self.movement_path)}', 
+            ax.set_title(f'Step: {frame + 1}/{len(self.movement_path)} | '
+                        f'Position: {current_path[-1] if current_path else (0,0)} | '
+                        f'Direction: {current_directions[-1] if current_directions else "N/A"}', 
                         fontsize=14, fontweight='bold')
+            ax.set_xlabel('X Position (Grid Units)', fontweight='bold')
+            ax.set_ylabel('Y Position (Grid Units)', fontweight='bold')
         
         try:
-            anim = FuncAnimation(fig, animate, frames=len(self.movement_path), 
-                               interval=interval, repeat=True)
-            anim.save(filename, writer='pillow', fps=1)
-            print(f"🎬 Animation saved as: {filename}")
+            os.makedirs('animations', exist_ok=True)
+            full_path = os.path.join('animations', filename)
+            
+            anim = FuncAnimation(fig, animate, frames=max(1, len(self.movement_path) - 1), 
+                               interval=interval, repeat=True, blit=False)
+            anim.save(full_path, writer='pillow', fps=1000//interval)
+            print(f"🎬 Animation saved as: {full_path}")
             plt.close(fig)
+            return full_path
         except Exception as e:
             print(f"❌ Failed to create animation: {e}")
             plt.close(fig)
+            return None
+    
+    def print_exploration_summary(self):
+        """Print comprehensive exploration summary"""
+        print(f"\n{'='*60}")
+        print("📊 VISUALIZATION SUMMARY")
+        print(f"{'='*60}")
+        print(f"🎯 Total Path Points: {len(self.movement_path)}")
+        print(f"🚀 Total Movements: {self.stats['total_moves']}")
+        print(f"🔙 Backtracks: {self.stats['backtracks']}")
+        print(f"🚫 Dead End Reversals: {self.stats['dead_end_reversals']}")
+        print(f"🔍 Scans Performed: {self.stats['scans_performed']}")
+        print(f"⚡ Scans Cached: {self.stats['scans_cached']}")
+        print(f"🔧 Drift Corrections: {self.stats['drift_corrections']}")
+        
+        if self.stats['scans_performed'] + self.stats['scans_cached'] > 0:
+            efficiency = (self.stats['scans_cached'] / 
+                         (self.stats['scans_performed'] + self.stats['scans_cached']) * 100)
+            print(f"⚡ Scan Efficiency: {efficiency:.1f}%")
+        
+        print(f"{'='*60}")
 
 
 # เพิ่มคลาสใหม่สำหรับติดตามการเคลื่อนไหว
@@ -991,7 +1229,7 @@ class GraphMapper:
         
         print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
         
-        # Update frontier queue
+        # Update frontier queu
         has_unexplored = len(node.unexploredExits) > 0
         
         if has_unexplored and node.id not in self.frontierQueue:
