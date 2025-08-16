@@ -2581,7 +2581,7 @@ if __name__ == '__main__':
     
     # Initialize components with STRICTER boundaries
     tof_handler = ToFSensorHandler()
-    graph_mapper = GraphMapper(min_x=-1, min_y=-1, max_x=1, max_y=1)  # 3x3 grid
+    graph_mapper = GraphMapper(min_x=-2, min_y=0, max_x=4, max_y=6)  # 3x3 grid
     movement_controller = MovementController(ep_chassis)
     attitude_handler = AttitudeHandler()
     attitude_handler.start_monitoring(ep_chassis)

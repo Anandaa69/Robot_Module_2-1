@@ -79,7 +79,7 @@ class AttitudeHandler:
         self.current_pitch = 0.0
         self.current_roll = 0.0
         self.target_yaw = 0.0
-        self.yaw_tolerance = 2
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -993,7 +993,7 @@ class GraphMapper:
         current_mapping = direction_map[self.currentDirection]
         
         # ลำดับความสำคัญ
-        priority_order = ['left', 'front', 'right', 'back']
+        priority_order = ['left', 'right', 'front', 'back']
         
         possible_directions = {
             'north': (x, y + 1),
