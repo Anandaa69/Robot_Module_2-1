@@ -5,6 +5,7 @@ import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
+import os
 from collections import deque
 
 ROBOT_FACE = 1 # 0 1
@@ -79,7 +80,7 @@ class AttitudeHandler:
         self.current_pitch = 0.0
         self.current_roll = 0.0
         self.target_yaw = 0.0
-        self.yaw_tolerance = 2
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -954,7 +955,7 @@ class GraphMapper:
         reverse_mapping = {v: k for k, v in current_mapping.items()}
         
         # ลำดับความสำคัญ: ซ้าย → หน้า → ขวา → หลัง
-        priority_order = ['left', 'front', 'right', 'back']
+        priority_order = ['left', 'right', 'front', 'back']
         
         print(f"🎯 Checking exploration priority order: {priority_order}")
         
@@ -993,7 +994,7 @@ class GraphMapper:
         current_mapping = direction_map[self.currentDirection]
         
         # ลำดับความสำคัญ
-        priority_order = ['left', 'front', 'right', 'back']
+        priority_order = ['front', 'left', 'right', 'back']
         
         possible_directions = {
             'north': (x, y + 1),
@@ -1601,6 +1602,11 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     print(f"🔧 Attitude Drift Correction: Every {movement_controller.DRIFT_CORRECTION_INTERVAL} nodes (+{movement_controller.DRIFT_CORRECTION_ANGLE}° right)")
+    # propagate threshold value for export metadata
+    try:
+        graph_mapper.WALL_THRESHOLD = tof_handler.WALL_THRESHOLD
+    except Exception:
+        pass
     
     nodes_explored = 0
     scanning_iterations = 0
@@ -1778,6 +1784,180 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
     graph_mapper.print_graph_summary()
     generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
 
+# --- Merged save/export helpers from hope_test ---
+def convert_to_json_serializable(obj):
+    import numpy as np
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, float)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray, list, tuple)):
+        return [convert_to_json_serializable(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_to_json_serializable(value) for key, value in obj.items()}
+    else:
+        return obj
+
+def print_node_detailed_info(node, node_id):
+    print(f"\n🔍 === DETAILED NODE INFO: {node_id} ===")
+    print(f"   📍 Position: {getattr(node, 'position', None)}")
+    print(f"   🏠 Visited: {getattr(node, 'visited', None)}, Count: {getattr(node, 'visitCount', None)}")
+    print(f"   🚫 Dead End: {getattr(node, 'isDeadEnd', None)}")
+    print(f"   🧱 Walls (absolute): {getattr(node, 'walls', {})}")
+    print(f"   ✅ Explored directions: {getattr(node, 'exploredDirections', [])}")
+    print(f"   ❓ Unexplored exits: {getattr(node, 'unexploredExits', [])}")
+    print(f"   🚧 Out of bounds exits: {getattr(node, 'outOfBoundsExits', [])}")
+    print(f"   📊 Out of bounds count: {getattr(node, 'outOfBoundsCount', 0)}")
+    print(f"   🔗 Neighbors:")
+    neighbors = getattr(node, 'neighbors', {})
+    for direction, neighbor in neighbors.items():
+        if neighbor:
+            print(f"      {direction}: {getattr(neighbor, 'position', None)}")
+        else:
+            print(f"      {direction}: None")
+    blocked_directions = []
+    for direction, has_wall in getattr(node, 'walls', {}).items():
+        if has_wall:
+            blocked_directions.append(direction)
+    if blocked_directions:
+        print(f"   🚫 Blocked directions: {blocked_directions}")
+    else:
+        print(f"   ✅ No walls detected")
+    print(f"   ⏰ Last visited: {getattr(node, 'lastVisited', None)}")
+    print(f"   🔬 Fully scanned: {getattr(node, 'fullyScanned', 'N/A')}")
+
+def export_maze_data_to_json(graph_mapper, filename):
+    try:
+        print(f"\n📤 === STARTING MAZE DATA EXPORT ===")
+        positions = [node.position for node in graph_mapper.nodes.values()]
+        if not positions:
+            print("❌ No maze data to export")
+            return
+        min_x = min(pos[0] for pos in positions)
+        max_x = max(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        max_y = max(pos[1] for pos in positions)
+        print(f"🗺️ Map boundaries: X[{min_x}, {max_x}], Y[{min_y}, {max_y}]")
+        print(f"📊 Total nodes to export: {len(graph_mapper.nodes)}")
+        for node_id, node in graph_mapper.nodes.items():
+            print_node_detailed_info(node, node_id)
+        maze_data = {
+            "metadata": {
+                "export_timestamp": datetime.now().isoformat(),
+                "total_nodes_explored": len(graph_mapper.nodes),
+                "boundaries": {
+                    "min_x": int(min_x),
+                    "max_x": int(max_x),
+                    "min_y": int(min_y),
+                    "max_y": int(max_y),
+                    "width": int(max_x - min_x + 1),
+                    "height": int(max_y - min_y + 1)
+                },
+                "robot_start_position": [0, 0],
+                "wall_threshold_cm": getattr(graph_mapper, 'WALL_THRESHOLD', getattr(graph_mapper, 'wall_threshold', None))
+            },
+            "nodes": {},
+            "robot_path": [],
+            "walls": {},
+            "grid_representation": {},
+            "node_analysis": {}
+        }
+        print(f"\n📋 === EXPORTING NODE DATA ===")
+        for node_id, node in graph_mapper.nodes.items():
+            print(f"🔄 Processing node: {node_id}")
+            node_data = {
+                "position": list(getattr(node, 'position', (0, 0))),
+                "walls": convert_to_json_serializable(getattr(node, 'walls', {})),
+                "visited": convert_to_json_serializable(getattr(node, 'visited', False)),
+                "visit_count": convert_to_json_serializable(getattr(node, 'visitCount', 0)),
+                "is_dead_end": convert_to_json_serializable(getattr(node, 'isDeadEnd', False)),
+                "fully_scanned": convert_to_json_serializable(getattr(node, 'fullyScanned', False)),
+                "last_visited": str(getattr(node, 'lastVisited', '')),
+                "neighbors": {},
+                "unexplored_exits": convert_to_json_serializable(getattr(node, 'unexploredExits', [])),
+                "explored_directions": convert_to_json_serializable(getattr(node, 'exploredDirections', [])),
+                "out_of_bounds_exits": convert_to_json_serializable(getattr(node, 'outOfBoundsExits', [])),
+                "out_of_bounds_count": convert_to_json_serializable(getattr(node, 'outOfBoundsCount', 0))
+            }
+            for direction, neighbor in getattr(node, 'neighbors', {}).items():
+                if neighbor:
+                    node_data["neighbors"][direction] = list(getattr(neighbor, 'position', (0, 0)))
+                else:
+                    node_data["neighbors"][direction] = None
+            maze_data["nodes"][node_id] = node_data
+            maze_data["node_analysis"][node_id] = {
+                "total_possible_exits": 4,
+                "walls_count": sum(1 for wall in getattr(node, 'walls', {}).values() if wall),
+                "available_exits": 4 - sum(1 for wall in getattr(node, 'walls', {}).values() if wall),
+                "out_of_bounds_blocked": len(getattr(node, 'outOfBoundsExits', [])),
+                "can_explore_count": len(getattr(node, 'unexploredExits', [])),
+                "movement_efficiency": f"{getattr(node, 'visitCount', 0)} visits"
+            }
+        print(f"\n🛤️ === CREATING ROBOT PATH ===")
+        visited_positions = [[0, 0]]
+        sorted_nodes = sorted(graph_mapper.nodes.values(), key=lambda n: (getattr(n, 'lastVisited', ''), getattr(n, 'position', (0, 0))))
+        for node in sorted_nodes:
+            if getattr(node, 'position', (0, 0)) != (0, 0):
+                pos = list(getattr(node, 'position', (0, 0)))
+                visited_positions.append(pos)
+        maze_data["robot_path"] = visited_positions
+        print(f"   📍 Path length: {len(visited_positions)} positions")
+        print(f"\n🧱 === PROCESSING WALLS ===")
+        wall_count = 0
+        for node in graph_mapper.nodes.values():
+            x, y = getattr(node, 'position', (0, 0))
+            for direction, has_wall in getattr(node, 'walls', {}).items():
+                has_wall = convert_to_json_serializable(has_wall)
+                if has_wall:
+                    wall_key = f"{x},{y},{direction}"
+                    maze_data["walls"][wall_key] = {
+                        "position": [int(x), int(y)],
+                        "direction": str(direction),
+                        "wall_type": "detected"
+                    }
+                    wall_count += 1
+        print(f"   🧱 Total walls processed: {wall_count}")
+        print(f"\n🎯 === CREATING GRID REPRESENTATION ===")
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                node_id = f"{x},{y}"
+                if node_id in graph_mapper.nodes:
+                    node = graph_mapper.nodes[node_id]
+                    maze_data["grid_representation"][f"{x},{y}"] = {
+                        "explored": True,
+                        "walls": convert_to_json_serializable(getattr(node, 'walls', {})),
+                        "visit_count": convert_to_json_serializable(getattr(node, 'visitCount', 0)),
+                        "is_dead_end": convert_to_json_serializable(getattr(node, 'isDeadEnd', False))
+                    }
+                else:
+                    maze_data["grid_representation"][f"{x},{y}"] = {
+                        "explored": False,
+                        "walls": {"north": True, "south": True, "east": True, "west": True},
+                        "visit_count": 0,
+                        "is_dead_end": False
+                    }
+        print(f"\n💾 === WRITING TO JSON FILE ===")
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(maze_data, f, indent=2, ensure_ascii=False)
+        print(f"\n✅ === EXPORT COMPLETED SUCCESSFULLY ===")
+        print(f"📁 Maze data exported successfully to: {filename}")
+        print(f"   📊 Nodes exported: {len(maze_data['nodes'])}")
+        print(f"   🗺️ Grid size: {maze_data['metadata']['boundaries']['width']}x{maze_data['metadata']['boundaries']['height']}")
+        print(f"   🧱 Walls detected: {len(maze_data['walls'])}")
+        print(f"   🛤️ Path length: {len(maze_data['robot_path'])} positions")
+        print(f"\n📈 === EXPORT STATISTICS ===")
+        total_walls = sum(sum(1 for wall in getattr(node, 'walls', {}).values() if wall) for node in graph_mapper.nodes.values())
+        print(f"   🧱 Total walls detected: {total_walls}")
+        try:
+            print(f"   🏁 Export file size: {os.path.getsize(filename)} bytes")
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"❌ Error exporting maze data: {e}")
+        import traceback
+        traceback.print_exc()
 
 def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals=0, reverse_backtracks=0, final_drift_status=None):
     """Generate comprehensive exploration report with absolute direction info"""
@@ -1862,7 +2042,9 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
             print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
-    
+    # Export maze data to JSON file using merged method from hope_test
+    export_maze_data_to_json(graph_mapper, "maze_data.json")
+     
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
@@ -1893,10 +2075,12 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                        graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
+        # เรียกฟังก์ชันเซฟข้อมูล เช่น
+        export_maze_data_to_json(graph_mapper, "maze_data.json")
     except Exception as e:
         print(f"\n❌ Error: {e}")
         import traceback

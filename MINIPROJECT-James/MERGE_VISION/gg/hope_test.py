@@ -5,6 +5,7 @@ import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
+import os
 from collections import deque
 
 ROBOT_FACE = 1 # 0 1
@@ -79,7 +80,7 @@ class AttitudeHandler:
         self.current_pitch = 0.0
         self.current_roll = 0.0
         self.target_yaw = 0.0
-        self.yaw_tolerance = 2
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -534,6 +535,8 @@ class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
         self.position = position  # (x, y)
+        self.outOfBoundsExits = []  # list ทิศทางที่เกินแมพ
+        self.outOfBoundsCount = 0   # จำนวนทางออกนอกแมพ
 
         # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
         self.walls = {
@@ -578,17 +581,43 @@ class GraphNode:
 
 # ===== Graph Mapper =====
 class GraphMapper:
-    def __init__(self):
+    def __init__(self, min_x=-4, min_y=-4, max_x=4, max_y=4):
         self.nodes = {}
         self.currentPosition = (0, 0)
-        self.currentDirection = 'north'  # ABSOLUTE direction robot is facing
+        self.currentDirection = 'north'
         self.frontierQueue = []
         self.pathStack = []
         self.visitedNodes = set()
         self.previous_node = None
+
+        # === Border limits ===
+        self.min_x = min_x
+        self.min_y = min_y
+        self.max_x = max_x
+        self.max_y = max_y
+
         # Override methods เพื่อใช้ priority-based exploration
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
         self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+
+    # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
+    def is_position_within_boundaries(self, position):
+        """Check if position is within map boundaries"""
+        x, y = position
+        return (self.min_x <= x <= self.max_x and 
+                self.min_y <= y <= self.max_y)
+
+    def get_boundary_status(self):
+        """Get current boundary configuration"""
+        return {
+            'min_x': self.min_x,
+            'max_x': self.max_x,
+            'min_y': self.min_y,
+            'max_y': self.max_y,
+            'width': self.max_x - self.min_x + 1,
+            'height': self.max_y - self.min_y + 1,
+            'total_cells': (self.max_x - self.min_x + 1) * (self.max_y - self.min_y + 1)
+        }
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -640,82 +669,91 @@ class GraphMapper:
             self.update_unexplored_exits_absolute(current_node)
             self.build_connections()
 
+    # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
     def update_unexplored_exits_absolute(self, node):
-        """FIXED: Update unexplored exits using ABSOLUTE directions"""
+        """Update unexplored exits using ABSOLUTE directions + outer border check"""
         node.unexploredExits = []
-        
+        node.outOfBoundsExits = []
+        node.outOfBoundsCount = 0
+
         x, y = node.position
-        
-        # Define all possible directions from this node (ABSOLUTE)
+
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
-            'east': (x + 1, y),
-            'west': (x - 1, y)
+            'east':  (x + 1, y),
+            'west':  (x - 1, y)
         }
-        
+
         print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
         print(f"🔍 Wall status: {node.walls}")
-        
-        # Check each ABSOLUTE direction for unexplored exits
+        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+
         for direction, target_pos in possible_directions.items():
+            target_x, target_y = target_pos
             target_node_id = self.get_node_id(target_pos)
-            
-            # Check if this direction is blocked by wall
+
+            # === ✅ แก้ไขการเช็ค outer border ===
+            is_outer_boundary = (
+                target_x < self.min_x or target_x > self.max_x or
+                target_y < self.min_y or target_y > self.max_y
+            )
+
+            # เช็ค wall / explored / target exist
             is_blocked = node.walls.get(direction, True)
-            
-            # Check if already explored
             already_explored = direction in node.exploredDirections
-            
-            # Check if target node exists and is fully explored
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-            
-            print(f"   📍 Direction {direction}:")
+
+            print(f"   🔍 Direction {direction}:")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🏗️  Target exists: {target_exists}")
+            print(f"      🗃️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
-            
-            # Add to unexplored exits if:
-            # 1. Not blocked by wall AND
-            # 2. Not already explored from this node AND
-            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
-            should_explore = (not is_blocked and 
-                            not already_explored and 
-                            (not target_exists or not target_fully_explored))
-            
+            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+
+            should_explore = (
+                not is_blocked and
+                not already_explored and
+                (not target_exists or not target_fully_explored)
+            )
+
             if should_explore:
-                node.unexploredExits.append(direction)
-                print(f"      ✅ ADDED to unexplored exits!")
+                if is_outer_boundary:
+                    node.outOfBoundsExits.append(direction)
+                    node.outOfBoundsCount = len(node.outOfBoundsExits)
+                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                else:
+                    node.unexploredExits.append(direction)
+                    print(f"      ✅ ADDED to unexplored exits!")
             else:
                 print(f"      ❌ NOT added to unexplored exits")
-        
+
         print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        
-        # Update frontier queue
+        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
+
+        # Frontier queue update
         has_unexplored = len(node.unexploredExits) > 0
-        
         if has_unexplored and node.id not in self.frontierQueue:
             self.frontierQueue.append(node.id)
             print(f"🚀 Added {node.id} to frontier queue")
         elif not has_unexplored and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
-        
-        # Dead end detection using absolute directions
+
+        # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
-        node.isDeadEnd = is_dead_end
-        
-        if is_dead_end:
+        node.isDeadEnd = blocked_count >= 3
+        if node.isDeadEnd:
             print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
             if node.id in self.frontierQueue:
                 self.frontierQueue.remove(node.id)
                 print(f"🧹 Removed dead end {node.id} from frontier queue")
+
+
     
     def build_connections(self):
         """Build connections between adjacent nodes"""
@@ -854,9 +892,36 @@ class GraphMapper:
 
         return True
     
+    # 2. เพิ่มการตรวจสอบในฟังก์ชัน move_to_absolute_direction
     def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
-        """NEW: Move to target ABSOLUTE direction with proper rotation"""
+        """NEW: Move to target ABSOLUTE direction with proper rotation and border check"""
         global ROBOT_FACE
+
+        current_node = self.get_current_node()
+        if not current_node:
+            print("❌ No current node - cannot move")
+            return False
+
+        # === ✅ เพิ่มการตรวจสอบ border แบบ double-check ===
+        target_pos = self.get_next_position(target_direction)
+        target_x, target_y = target_pos
+        
+        is_outside_map = (
+            target_x < self.min_x or target_x > self.max_x or
+            target_y < self.min_y or target_y > self.max_y
+        )
+        
+        if is_outside_map:
+            print(f"🚫 TARGET POSITION {target_pos} IS OUTSIDE MAP BOUNDARIES!")
+            print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+            print(f"🚫 Movement to {target_direction} CANCELLED!")
+            return False
+
+        # Prevent movement outside border (original check)
+        if target_direction in current_node.outOfBoundsExits:
+            print(f"🚫 Target direction {target_direction} is OUT OF BOUNDS! Movement cancelled.")
+            return False
+
         print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
         
         # Check if movement is possible
@@ -927,51 +992,51 @@ class GraphMapper:
         return True
 
     def find_next_exploration_direction_with_priority(self):
-        """Find next exploration direction with LEFT-first priority"""
+        """Find next exploration direction with LEFT-first priority, skipping out-of-bounds exits"""
         current_node = self.get_current_node()
         if not current_node:
             return None
-        
+
         if self.is_dead_end(current_node):
             print(f"🚫 Current node is a dead end - no exploration directions available")
             return None
-        
+
         print(f"🧭 Current robot facing: {self.currentDirection}")
         print(f"🔍 Available unexplored exits: {current_node.unexploredExits}")
-        
-        # กำหนดลำดับความสำคัญตามทิศทางสัมพันธ์ (LEFT-FIRST STRATEGY)
-        # แปลงทิศทางสัมบูรณ์กลับเป็นทิศทางสัมพันธ์เพื่อจัดลำดับ
+        print(f"🌐 Out-of-bounds exits: {current_node.outOfBoundsExits}")
+
+        # กำหนด mapping ทิศสัมพัทธ์
         direction_map = {
             'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
             'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
             'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
             'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
         }
-        
         current_mapping = direction_map[self.currentDirection]
-        
-        # สร้าง reverse mapping (จากทิศทางสัมบูรณ์เป็นทิศทางสัมพันธ์)
-        reverse_mapping = {v: k for k, v in current_mapping.items()}
-        
-        # ลำดับความสำคัญ: ซ้าย → หน้า → ขวา → หลัง
+
+        # ลำดับความสำคัญ
         priority_order = ['left', 'front', 'right', 'back']
-        
         print(f"🎯 Checking exploration priority order: {priority_order}")
-        
-        # ตรวจสอบตามลำดับความสำคัญ
+
         for relative_direction in priority_order:
-            # แปลงเป็นทิศทางสัมบูรณ์
             absolute_direction = current_mapping.get(relative_direction)
-            
-            if absolute_direction and absolute_direction in current_node.unexploredExits:
+            if not absolute_direction:
+                continue
+
+            # ข้ามทิศที่อยู่นอก border
+            if absolute_direction in current_node.outOfBoundsExits:
+                print(f"🚫 {relative_direction} ({absolute_direction}) is OUT OF BOUNDS! Skipping...")
+                continue
+
+            # เลือกทิศที่อยู่ใน unexplored exits และสามารถเดินได้
+            if absolute_direction in current_node.unexploredExits:
                 if self.can_move_to_direction_absolute(absolute_direction):
                     print(f"✅ Selected direction: {relative_direction} ({absolute_direction})")
                     return absolute_direction
                 else:
                     print(f"❌ {relative_direction} ({absolute_direction}) is blocked by wall!")
-                    # ลบออกจาก unexplored exits เพราะมีกำแพง
                     current_node.unexploredExits.remove(absolute_direction)
-        
+
         print(f"❌ No valid exploration direction found")
         return None
 
@@ -1051,7 +1116,7 @@ class GraphMapper:
         
         # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3
+        is_dead_end = blocked_count >= 3 and len(node.unexploredExits) == 0
         node.isDeadEnd = is_dead_end
         
         if is_dead_end:
@@ -1863,10 +1928,242 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
     
+    # Export maze data to JSON file
+    export_maze_data_to_json(graph_mapper, "maze_data.json")
+    
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
 
+
+def convert_to_json_serializable(obj):
+    """Convert numpy types and other non-serializable types to JSON-serializable types"""
+    import numpy as np
+    
+    if isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif isinstance(obj, (np.integer, int)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, float)):
+        return float(obj)
+    elif isinstance(obj, (np.ndarray, list, tuple)):
+        return [convert_to_json_serializable(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {key: convert_to_json_serializable(value) for key, value in obj.items()}
+    else:
+        return obj
+
+def print_node_detailed_info(node, node_id):
+    """Print detailed information about a node including exits and boundaries"""
+    print(f"\n🔍 === DETAILED NODE INFO: {node_id} ===")
+    print(f"   📍 Position: {node.position}")
+    print(f"   🏠 Visited: {node.visited}, Count: {node.visitCount}")
+    print(f"   🚫 Dead End: {node.isDeadEnd}")
+    print(f"   🧱 Walls (absolute): {node.walls}")
+    
+    # ตรวจสอบทางออกที่สำรวจแล้ว
+    print(f"   ✅ Explored directions: {node.exploredDirections}")
+    print(f"   ❓ Unexplored exits: {node.unexploredExits}")
+    
+    # ตรวจสอบทางออกนอกแมพ
+    print(f"   🚧 Out of bounds exits: {node.outOfBoundsExits}")
+    print(f"   📊 Out of bounds count: {node.outOfBoundsCount}")
+    
+    # ตรวจสอบ neighbors
+    print(f"   🔗 Neighbors:")
+    for direction, neighbor in node.neighbors.items():
+        if neighbor:
+            print(f"      {direction}: {neighbor.position}")
+        else:
+            print(f"      {direction}: None")
+    
+    # ตรวจสอบว่าทิศทางไหนถูกป้องกันไม่ให้ไป
+    blocked_directions = []
+    for direction, has_wall in node.walls.items():
+        if has_wall:
+            blocked_directions.append(direction)
+    
+    if blocked_directions:
+        print(f"   🚫 Blocked directions: {blocked_directions}")
+    else:
+        print(f"   ✅ No walls detected")
+    
+    print(f"   ⏰ Last visited: {node.lastVisited}")
+    print(f"   🔬 Fully scanned: {getattr(node, 'fullyScanned', 'N/A')}")
+
+def export_maze_data_to_json(graph_mapper, filename):
+    """
+    Export maze data (robot path and walls) to JSON file for visualization
+    """
+    try:
+        print(f"\n📤 === STARTING MAZE DATA EXPORT ===")
+        
+        # Get all positions and find boundaries
+        positions = [node.position for node in graph_mapper.nodes.values()]
+        if not positions:
+            print("❌ No maze data to export")
+            return
+        
+        min_x = min(pos[0] for pos in positions)
+        max_x = max(pos[0] for pos in positions)
+        min_y = min(pos[1] for pos in positions)
+        max_y = max(pos[1] for pos in positions)
+        
+        print(f"🗺️ Map boundaries: X[{min_x}, {max_x}], Y[{min_y}, {max_y}]")
+        print(f"📊 Total nodes to export: {len(graph_mapper.nodes)}")
+        
+        # Print detailed info for each node
+        for node_id, node in graph_mapper.nodes.items():
+            print_node_detailed_info(node, node_id)
+        
+        # Create maze data structure
+        maze_data = {
+            "metadata": {
+                "export_timestamp": datetime.now().isoformat(),
+                "total_nodes_explored": len(graph_mapper.nodes),
+                "boundaries": {
+                    "min_x": int(min_x),
+                    "max_x": int(max_x),
+                    "min_y": int(min_y),
+                    "max_y": int(max_y),
+                    "width": int(max_x - min_x + 1),
+                    "height": int(max_y - min_y + 1)
+                },
+                "robot_start_position": [0, 0],
+                "wall_threshold_cm": getattr(graph_mapper, 'WALL_THRESHOLD', 25)
+            },
+            "nodes": {},
+            "robot_path": [],
+            "walls": {},
+            "grid_representation": {},
+            "node_analysis": {}
+        }
+        
+        print(f"\n📋 === EXPORTING NODE DATA ===")
+        
+        # Export node data with proper type conversion
+        for node_id, node in graph_mapper.nodes.items():
+            print(f"🔄 Processing node: {node_id}")
+            
+            # Convert all data to JSON-serializable types
+            node_data = {
+                "position": list(node.position),
+                "walls": convert_to_json_serializable(node.walls),
+                "visited": convert_to_json_serializable(node.visited),
+                "visit_count": convert_to_json_serializable(node.visitCount),
+                "is_dead_end": convert_to_json_serializable(node.isDeadEnd),
+                "fully_scanned": convert_to_json_serializable(getattr(node, 'fullyScanned', False)),
+                "last_visited": str(node.lastVisited),
+                "neighbors": {},
+                "unexplored_exits": convert_to_json_serializable(node.unexploredExits),
+                "explored_directions": convert_to_json_serializable(node.exploredDirections),
+                "out_of_bounds_exits": convert_to_json_serializable(node.outOfBoundsExits),
+                "out_of_bounds_count": convert_to_json_serializable(node.outOfBoundsCount)
+            }
+            
+            # Handle neighbors carefully
+            for direction, neighbor in node.neighbors.items():
+                if neighbor:
+                    node_data["neighbors"][direction] = list(neighbor.position)
+                else:
+                    node_data["neighbors"][direction] = None
+            
+            maze_data["nodes"][node_id] = node_data
+            
+            # Add detailed analysis
+            maze_data["node_analysis"][node_id] = {
+                "total_possible_exits": 4,
+                "walls_count": sum(1 for wall in node.walls.values() if wall),
+                "available_exits": 4 - sum(1 for wall in node.walls.values() if wall),
+                "out_of_bounds_blocked": len(node.outOfBoundsExits),
+                "can_explore_count": len(node.unexploredExits),
+                "movement_efficiency": f"{node.visitCount} visits"
+            }
+        
+        # Create robot path from visited nodes (chronological order)
+        print(f"\n🛤️ === CREATING ROBOT PATH ===")
+        visited_positions = [[0, 0]]  # Start position
+        
+        # Sort nodes by visit time if possible, otherwise by position
+        sorted_nodes = sorted(graph_mapper.nodes.values(), 
+                            key=lambda n: (n.lastVisited, n.position))
+        
+        for node in sorted_nodes:
+            if node.position != (0, 0):
+                visited_positions.append(list(node.position))
+        
+        maze_data["robot_path"] = visited_positions
+        print(f"   📍 Path length: {len(visited_positions)} positions")
+        
+        # Create wall data for easier plotting
+        print(f"\n🧱 === PROCESSING WALLS ===")
+        wall_count = 0
+        for node in graph_mapper.nodes.values():
+            x, y = node.position
+            for direction, has_wall in node.walls.items():
+                has_wall = convert_to_json_serializable(has_wall)
+                if has_wall:
+                    wall_key = f"{x},{y},{direction}"
+                    maze_data["walls"][wall_key] = {
+                        "position": [int(x), int(y)],
+                        "direction": str(direction),
+                        "wall_type": "detected"
+                    }
+                    wall_count += 1
+        
+        print(f"   🧱 Total walls processed: {wall_count}")
+        
+        # Create grid representation for easy plotting
+        print(f"\n🎯 === CREATING GRID REPRESENTATION ===")
+        for y in range(min_y, max_y + 1):
+            for x in range(min_x, max_x + 1):
+                node_id = f"{x},{y}"
+                if node_id in graph_mapper.nodes:
+                    node = graph_mapper.nodes[node_id]
+                    maze_data["grid_representation"][f"{x},{y}"] = {
+                        "explored": True,
+                        "walls": convert_to_json_serializable(node.walls),
+                        "visit_count": convert_to_json_serializable(node.visitCount),
+                        "is_dead_end": convert_to_json_serializable(node.isDeadEnd)
+                    }
+                else:
+                    maze_data["grid_representation"][f"{x},{y}"] = {
+                        "explored": False,
+                        "walls": {"north": True, "south": True, "east": True, "west": True},
+                        "visit_count": 0,
+                        "is_dead_end": False
+                    }
+        
+        # Write to JSON file
+        print(f"\n💾 === WRITING TO JSON FILE ===")
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(maze_data, f, indent=2, ensure_ascii=False)
+        
+        print(f"\n✅ === EXPORT COMPLETED SUCCESSFULLY ===")
+        print(f"📁 Maze data exported successfully to: {filename}")
+        print(f"   📊 Nodes exported: {len(maze_data['nodes'])}")
+        print(f"   🗺️ Grid size: {maze_data['metadata']['boundaries']['width']}x{maze_data['metadata']['boundaries']['height']}")
+        print(f"   🧱 Walls detected: {len(maze_data['walls'])}")
+        print(f"   🛤️ Path length: {len(maze_data['robot_path'])} positions")
+        
+        # Summary statistics
+        print(f"\n📈 === EXPORT STATISTICS ===")
+        total_out_of_bounds = sum(len(node.outOfBoundsExits) for node in graph_mapper.nodes.values())
+        total_unexplored = sum(len(node.unexploredExits) for node in graph_mapper.nodes.values())
+        total_walls = sum(sum(1 for wall in node.walls.values() if wall) for node in graph_mapper.nodes.values())
+        
+        print(f"   🚧 Total out-of-bounds exits blocked: {total_out_of_bounds}")
+        print(f"   ❓ Total unexplored exits remaining: {total_unexplored}")
+        print(f"   🧱 Total walls detected: {total_walls}")
+        print(f"   🏁 Export file size: {os.path.getsize(filename)} bytes")
+        
+    except Exception as e:
+        print(f"❌ Error exporting maze data: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+# 4. แก้ไขการตั้งค่า boundary ใน main
 if __name__ == '__main__':
     print("🤖 Connecting to robot...")
     ep_robot = robot.Robot()
@@ -1876,12 +2173,20 @@ if __name__ == '__main__':
     ep_chassis = ep_robot.chassis
     ep_sensor = ep_robot.sensor
     
-    # Initialize components
+    # Initialize components with STRICTER boundaries
     tof_handler = ToFSensorHandler()
-    graph_mapper = GraphMapper()
+    graph_mapper = GraphMapper(min_x=-3, min_y=-3, max_x=3, max_y=3)  # 3x3 grid
     movement_controller = MovementController(ep_chassis)
     attitude_handler = AttitudeHandler()
     attitude_handler.start_monitoring(ep_chassis)
+    
+    # ✅ เพิ่มการแสดงข้อมูล boundary
+    boundary_info = graph_mapper.get_boundary_status()
+    print(f"🗺️ MAP BOUNDARIES CONFIGURED:")
+    print(f"   📏 X range: [{boundary_info['min_x']}, {boundary_info['max_x']}]")
+    print(f"   📏 Y range: [{boundary_info['min_y']}, {boundary_info['max_y']}]")
+    print(f"   📐 Map size: {boundary_info['width']}x{boundary_info['height']} = {boundary_info['total_cells']} cells")
+    print(f"   🎯 Valid positions: Only within these boundaries!")
     
     try:
         print("✅ Recalibrating gimbal...")

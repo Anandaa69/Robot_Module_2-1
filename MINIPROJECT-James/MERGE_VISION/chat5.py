@@ -1,14 +1,145 @@
+"""
+Enhanced Robot Exploration with Integrated Marker Detection
+
+This file combines the best exploration logic from best_code.py with marker detection
+capabilities from marker_red_part.py. Key features:
+
+🎯 MARKER DETECTION INTEGRATION:
+- Automatic marker scanning after each gimbal ToF scan (-90°, 0°, 90°)
+- Special back direction scanning (180°) for initial node (0,0)
+- MarkerVisionHandler for continuous marker detection
+- Comprehensive marker tracking per node and direction
+
+🔍 SCANNING PATTERN:
+- Primary: ToF wall detection + RED color filtering → marker scanning only where red detected
+- Red detection during ToF scan at 0°, -90°, 90° (and 180° for initial node)
+- Marker scanning with gimbal tilt (-20°) only in red-detected directions
+- Enhanced GraphNode with marker properties (markersFound, markerScanResults, hasMarkers)
+
+📊 REPORTING:
+- Marker statistics in exploration reports
+- Markers found by direction and node
+- Marker detection rate calculations
+"""
+
 import time
 import robomaster
-from robomaster import robot
+from robomaster import robot, vision
 import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+import cv2
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
+
+# ===== Marker Detection Classes =====
+class MarkerInfo:
+    def __init__(self, x, y, w, h, marker_id):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._id = marker_id
+
+    @property
+    def id(self):
+        return self._id
+
+class MarkerVisionHandler:
+    def __init__(self):
+        self.markers = []
+        self.marker_detected = False
+        self.is_active = False
+        self.detection_timeout = 1.0
+    
+    def on_detect_marker(self, marker_info):
+        if not self.is_active:
+            return
+            
+        if len(marker_info) > 0:
+            valid_markers = []
+            for i in range(len(marker_info)):
+                x, y, w, h, marker_id = marker_info[i]
+                marker = MarkerInfo(x, y, w, h, marker_id)
+                valid_markers.append(marker)
+            
+            if valid_markers:
+                self.marker_detected = True
+                self.markers = valid_markers
+    
+    def wait_for_markers(self, timeout=None):
+        if timeout is None:
+            timeout = self.detection_timeout
+        
+        print(f"⏱️ Waiting {timeout} seconds for marker detection...")
+        
+        self.marker_detected = False
+        self.markers.clear()
+        
+        start_time = time.time()
+        
+        while (time.time() - start_time) < timeout:
+            if self.marker_detected:
+                print(f"✅ Marker detected after {time.time() - start_time:.1f}s")
+                break
+            time.sleep(0.02)
+        
+        return self.marker_detected
+    
+    def start_continuous_detection(self, vision):
+        try:
+            self.stop_continuous_detection(vision)
+            time.sleep(0.3)
+            
+            result = vision.sub_detect_info(name="marker", callback=self.on_detect_marker)
+            if result:
+                self.is_active = True
+                print("✅ Marker detection activated")
+                return True
+            else:
+                print("❌ Failed to start marker detection")
+                return False
+        except Exception as e:
+            print(f"❌ Error starting marker detection: {e}")
+            return False
+    
+    def stop_continuous_detection(self, vision):
+        try:
+            self.is_active = False
+            vision.unsub_detect_info(name="marker")
+        except:
+            pass
+    
+    def reset_detection(self):
+        self.marker_detected = False
+        self.markers.clear()
+
+# ===== Direction Helper Functions =====
+def get_direction_name(angle):
+    """แปลงองศาเป็นชื่อทิศทาง"""
+    direction_map = {
+        0: "หน้า (Front)",
+        -90: "ซ้าย (Left)", 
+        90: "ขวา (Right)",
+        180: "หลัง (Back)",
+        -180: "หลัง (Back)"
+    }
+    return direction_map.get(angle, f"องศา {angle}")
+
+def get_compass_direction(angle):
+    """แปลงองศาเป็นทิศทางเข็มทิศ"""
+    # สำหรับ gimbal yaw: 0° = หน้า, -90° = ซ้าย, 90° = ขวา
+    compass_map = {
+        0: "เหนือ (N)",
+        -90: "ตะวันตก (W)",
+        90: "ตะวันออก (E)",
+        180: "ใต้ (S)",
+        -180: "ใต้ (S)"
+    }
+    return compass_map.get(angle, f"{angle}°")
 
 # เพิ่มคลาสใหม่สำหรับติดตามการเคลื่อนไหว
 class MovementTracker:
@@ -79,7 +210,7 @@ class AttitudeHandler:
         self.current_pitch = 0.0
         self.current_roll = 0.0
         self.target_yaw = 0.0
-        self.yaw_tolerance = 2
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -534,6 +665,8 @@ class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
         self.position = position  # (x, y)
+        self.outOfBoundsExits = []  # list ทิศทางที่เกินแมพ
+        self.outOfBoundsCount = 0   # จำนวนทางออกนอกแมพ
 
         # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
         self.walls = {
@@ -573,22 +706,53 @@ class GraphNode:
         self.lastVisited = datetime.now().isoformat()
         self.sensorReadings = {}
         
+        # NEW: Marker detection information
+        self.markersFound = {}  # Dictionary: {direction: [marker_ids]}
+        self.markerScanResults = {}  # Dictionary: {direction: {'marker_ids': [], 'distance': float, 'timestamp': str}}
+        self.hasMarkers = False  # Boolean flag if any markers found in any direction
+        
         # IMPORTANT: Store the ABSOLUTE direction robot was facing when first scanned
         self.initialScanDirection = None
 
 # ===== Graph Mapper =====
 class GraphMapper:
-    def __init__(self):
+    def __init__(self, min_x=-3, min_y=-3, max_x=3, max_y=3):
         self.nodes = {}
         self.currentPosition = (0, 0)
-        self.currentDirection = 'north'  # ABSOLUTE direction robot is facing
+        self.currentDirection = 'north'
         self.frontierQueue = []
         self.pathStack = []
         self.visitedNodes = set()
         self.previous_node = None
+
+        # === Border limits ===
+        self.min_x = min_x
+        self.min_y = min_y
+        self.max_x = max_x
+        self.max_y = max_y
+
         # Override methods เพื่อใช้ priority-based exploration
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
         self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+
+    # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
+    def is_position_within_boundaries(self, position):
+        """Check if position is within map boundaries"""
+        x, y = position
+        return (self.min_x <= x <= self.max_x and 
+                self.min_y <= y <= self.max_y)
+
+    def get_boundary_status(self):
+        """Get current boundary configuration"""
+        return {
+            'min_x': self.min_x,
+            'max_x': self.max_x,
+            'min_y': self.min_y,
+            'max_y': self.max_y,
+            'width': self.max_x - self.min_x + 1,
+            'height': self.max_y - self.min_y + 1,
+            'total_cells': (self.max_x - self.min_x + 1) * (self.max_y - self.min_y + 1)
+        }
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -640,82 +804,91 @@ class GraphMapper:
             self.update_unexplored_exits_absolute(current_node)
             self.build_connections()
 
+    # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
     def update_unexplored_exits_absolute(self, node):
-        """FIXED: Update unexplored exits using ABSOLUTE directions"""
+        """Update unexplored exits using ABSOLUTE directions + outer border check"""
         node.unexploredExits = []
-        
+        node.outOfBoundsExits = []
+        node.outOfBoundsCount = 0
+
         x, y = node.position
-        
-        # Define all possible directions from this node (ABSOLUTE)
+
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
-            'east': (x + 1, y),
-            'west': (x - 1, y)
+            'east':  (x + 1, y),
+            'west':  (x - 1, y)
         }
-        
+
         print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
         print(f"🔍 Wall status: {node.walls}")
-        
-        # Check each ABSOLUTE direction for unexplored exits
+        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+
         for direction, target_pos in possible_directions.items():
+            target_x, target_y = target_pos
             target_node_id = self.get_node_id(target_pos)
-            
-            # Check if this direction is blocked by wall
+
+            # === ✅ แก้ไขการเช็ค outer border ===
+            is_outer_boundary = (
+                target_x < self.min_x or target_x > self.max_x or
+                target_y < self.min_y or target_y > self.max_y
+            )
+
+            # เช็ค wall / explored / target exist
             is_blocked = node.walls.get(direction, True)
-            
-            # Check if already explored
             already_explored = direction in node.exploredDirections
-            
-            # Check if target node exists and is fully explored
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-            
-            print(f"   📍 Direction {direction}:")
+
+            print(f"   🔍 Direction {direction}:")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🏗️  Target exists: {target_exists}")
+            print(f"      🗃️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
-            
-            # Add to unexplored exits if:
-            # 1. Not blocked by wall AND
-            # 2. Not already explored from this node AND
-            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
-            should_explore = (not is_blocked and 
-                            not already_explored and 
-                            (not target_exists or not target_fully_explored))
-            
+            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+
+            should_explore = (
+                not is_blocked and
+                not already_explored and
+                (not target_exists or not target_fully_explored)
+            )
+
             if should_explore:
-                node.unexploredExits.append(direction)
-                print(f"      ✅ ADDED to unexplored exits!")
+                if is_outer_boundary:
+                    node.outOfBoundsExits.append(direction)
+                    node.outOfBoundsCount = len(node.outOfBoundsExits)
+                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                else:
+                    node.unexploredExits.append(direction)
+                    print(f"      ✅ ADDED to unexplored exits!")
             else:
                 print(f"      ❌ NOT added to unexplored exits")
-        
+
         print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        
-        # Update frontier queue
+        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
+
+        # Frontier queue update
         has_unexplored = len(node.unexploredExits) > 0
-        
         if has_unexplored and node.id not in self.frontierQueue:
             self.frontierQueue.append(node.id)
             print(f"🚀 Added {node.id} to frontier queue")
         elif not has_unexplored and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
-        
-        # Dead end detection using absolute directions
+
+        # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
-        node.isDeadEnd = is_dead_end
-        
-        if is_dead_end:
+        node.isDeadEnd = blocked_count >= 3
+        if node.isDeadEnd:
             print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
             if node.id in self.frontierQueue:
                 self.frontierQueue.remove(node.id)
                 print(f"🧹 Removed dead end {node.id} from frontier queue")
+
+
     
     def build_connections(self):
         """Build connections between adjacent nodes"""
@@ -854,9 +1027,36 @@ class GraphMapper:
 
         return True
     
+    # 2. เพิ่มการตรวจสอบในฟังก์ชัน move_to_absolute_direction
     def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
-        """NEW: Move to target ABSOLUTE direction with proper rotation"""
+        """NEW: Move to target ABSOLUTE direction with proper rotation and border check"""
         global ROBOT_FACE
+
+        current_node = self.get_current_node()
+        if not current_node:
+            print("❌ No current node - cannot move")
+            return False
+
+        # === ✅ เพิ่มการตรวจสอบ border แบบ double-check ===
+        target_pos = self.get_next_position(target_direction)
+        target_x, target_y = target_pos
+        
+        is_outside_map = (
+            target_x < self.min_x or target_x > self.max_x or
+            target_y < self.min_y or target_y > self.max_y
+        )
+        
+        if is_outside_map:
+            print(f"🚫 TARGET POSITION {target_pos} IS OUTSIDE MAP BOUNDARIES!")
+            print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+            print(f"🚫 Movement to {target_direction} CANCELLED!")
+            return False
+
+        # Prevent movement outside border (original check)
+        if target_direction in current_node.outOfBoundsExits:
+            print(f"🚫 Target direction {target_direction} is OUT OF BOUNDS! Movement cancelled.")
+            return False
+
         print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
         
         # Check if movement is possible
@@ -927,51 +1127,51 @@ class GraphMapper:
         return True
 
     def find_next_exploration_direction_with_priority(self):
-        """Find next exploration direction with LEFT-first priority"""
+        """Find next exploration direction with LEFT-first priority, skipping out-of-bounds exits"""
         current_node = self.get_current_node()
         if not current_node:
             return None
-        
+
         if self.is_dead_end(current_node):
             print(f"🚫 Current node is a dead end - no exploration directions available")
             return None
-        
+
         print(f"🧭 Current robot facing: {self.currentDirection}")
         print(f"🔍 Available unexplored exits: {current_node.unexploredExits}")
-        
-        # กำหนดลำดับความสำคัญตามทิศทางสัมพันธ์ (LEFT-FIRST STRATEGY)
-        # แปลงทิศทางสัมบูรณ์กลับเป็นทิศทางสัมพันธ์เพื่อจัดลำดับ
+        print(f"🌐 Out-of-bounds exits: {current_node.outOfBoundsExits}")
+
+        # กำหนด mapping ทิศสัมพัทธ์
         direction_map = {
             'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
             'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
             'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
             'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
         }
-        
         current_mapping = direction_map[self.currentDirection]
-        
-        # สร้าง reverse mapping (จากทิศทางสัมบูรณ์เป็นทิศทางสัมพันธ์)
-        reverse_mapping = {v: k for k, v in current_mapping.items()}
-        
-        # ลำดับความสำคัญ: ซ้าย → หน้า → ขวา → หลัง
+
+        # ลำดับความสำคัญ
         priority_order = ['left', 'front', 'right', 'back']
-        
         print(f"🎯 Checking exploration priority order: {priority_order}")
-        
-        # ตรวจสอบตามลำดับความสำคัญ
+
         for relative_direction in priority_order:
-            # แปลงเป็นทิศทางสัมบูรณ์
             absolute_direction = current_mapping.get(relative_direction)
-            
-            if absolute_direction and absolute_direction in current_node.unexploredExits:
+            if not absolute_direction:
+                continue
+
+            # ข้ามทิศที่อยู่นอก border
+            if absolute_direction in current_node.outOfBoundsExits:
+                print(f"🚫 {relative_direction} ({absolute_direction}) is OUT OF BOUNDS! Skipping...")
+                continue
+
+            # เลือกทิศที่อยู่ใน unexplored exits และสามารถเดินได้
+            if absolute_direction in current_node.unexploredExits:
                 if self.can_move_to_direction_absolute(absolute_direction):
                     print(f"✅ Selected direction: {relative_direction} ({absolute_direction})")
                     return absolute_direction
                 else:
                     print(f"❌ {relative_direction} ({absolute_direction}) is blocked by wall!")
-                    # ลบออกจาก unexplored exits เพราะมีกำแพง
                     current_node.unexploredExits.remove(absolute_direction)
-        
+
         print(f"❌ No valid exploration direction found")
         return None
 
@@ -1051,7 +1251,7 @@ class GraphMapper:
         
         # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3
+        is_dead_end = blocked_count >= 3 and len(node.unexploredExits) == 0
         node.isDeadEnd = is_dead_end
         
         if is_dead_end:
@@ -1208,6 +1408,16 @@ class GraphMapper:
                 target_node_id = self.get_node_id(target_pos)
                 
                 # Check if this exit is still valid
+                target_x, target_y = target_pos
+                is_outside_boundary = (
+                    target_x < self.min_x or target_x > self.max_x or
+                    target_y < self.min_y or target_y > self.max_y
+                )
+                
+                if is_outside_boundary:
+                    print(f"      🚫 {exit_direction} -> {target_pos}: OUTSIDE BOUNDARY - removing from unexplored")
+                    continue
+                
                 target_exists = target_node_id in self.nodes
                 if target_exists:
                     target_node = self.nodes[target_node_id]
@@ -1292,6 +1502,17 @@ class GraphMapper:
                     target_pos = self.get_next_position_from(node.position, exit_direction)
                     target_node_id = self.get_node_id(target_pos)
                     
+                    # Check boundary first
+                    target_x, target_y = target_pos
+                    is_outside_boundary = (
+                        target_x < self.min_x or target_x > self.max_x or
+                        target_y < self.min_y or target_y > self.max_y
+                    )
+                    
+                    if is_outside_boundary:
+                        print(f"      🚫 {exit_direction} -> {target_pos}: OUTSIDE BOUNDARY")
+                        continue
+                    
                     # Validate this exit
                     target_exists = target_node_id in self.nodes
                     if target_exists:
@@ -1336,12 +1557,55 @@ class GraphMapper:
             print(f"   ✅ Explored directions: {node.exploredDirections}")
             print(f"   🎯 Is dead end: {node.isDeadEnd}")
             
+            # เช็คว่าสำรวจครบทุกทิศทางแล้วหรือยัง
+            all_directions = ['north', 'south', 'east', 'west']
+            explored_count = 0
+            for direction in all_directions:
+                if node.walls.get(direction, False):  # มีกำแพง
+                    explored_count += 1
+                elif direction in node.exploredDirections:  # สำรวจแล้ว
+                    explored_count += 1
+                elif direction in node.outOfBoundsExits:  # นอกขอบเขต
+                    explored_count += 1
+            
+            completion_percentage = (explored_count / 4) * 100
+            print(f"   📊 Exploration completion: {explored_count}/4 directions ({completion_percentage:.0f}%)")
+            
             if node.sensorReadings:
                 print(f"   📡 Sensor readings:")
                 for direction, reading in node.sensorReadings.items():
                     print(f"      {direction}: {reading:.2f}cm")
+            
+            # NEW: Display marker information
+            if hasattr(node, 'markersFound') and node.markersFound:
+                print(f"   🎯 Markers found:")
+                for direction, marker_ids in node.markersFound.items():
+                    print(f"      {direction}: {marker_ids}")
+            
+            if hasattr(node, 'markerScanResults') and node.markerScanResults:
+                print(f"   📊 Marker scan details:")
+                for direction, scan_result in node.markerScanResults.items():
+                    if scan_result['marker_ids']:
+                        print(f"      {direction}: {scan_result['marker_ids']} at {scan_result['distance']:.1f}cm")
         
         print("-"*60)
+        
+        # แสดงสรุปการสำรวจโดยรวม
+        total_directions_possible = len(self.nodes) * 4
+        total_directions_resolved = 0
+        
+        for node in self.nodes.values():
+            for direction in ['north', 'south', 'east', 'west']:
+                if (node.walls.get(direction, False) or 
+                    direction in node.exploredDirections or 
+                    direction in node.outOfBoundsExits):
+                    total_directions_resolved += 1
+        
+        overall_completion = (total_directions_resolved / total_directions_possible) * 100
+        print(f"🎯 OVERALL EXPLORATION STATUS:")
+        print(f"   📊 Total directions resolved: {total_directions_resolved}/{total_directions_possible}")
+        print(f"   🎯 Overall completion: {overall_completion:.1f}%")
+        
         if self.frontierQueue:
             print(f"🚀 Next exploration targets: {self.frontierQueue}")
         else:
@@ -1442,9 +1706,206 @@ class ToFSensorHandler:
         
         return is_wall
 
+# ===== Marker Scanning Helper Function =====
+def scan_for_markers_at_direction(gimbal, sensor, angle, direction_name, marker_handler, tof_handler, speed=480):
+    """
+    สแกนหา marker ที่ทิศทางและมุมที่กำหนด
+    
+    Args:
+        gimbal: Gimbal object
+        sensor: Sensor object for ToF distance measurement
+        angle: มุม gimbal yaw (0, -90, 90, 180)
+        direction_name: ชื่อทิศทาง (front, left, right, back)
+        marker_handler: MarkerVisionHandler object
+        tof_handler: ToFSensorHandler object
+        speed: ความเร็วการหมุน gimbal
+        
+    Returns:
+        dict: {'marker_ids': [], 'distance': float, 'direction_name': str, 'angle': int, 'timestamp': str}
+    """
+    compass_dir = get_compass_direction(angle)
+    print(f"🎯 Scanning {direction_name} | Gimbal Yaw: {angle}° | Compass: {compass_dir}")
+    
+    # หมุน gimbal ไปยังมุมที่กำหนด
+    gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
+    time.sleep(0.3)  # รอให้กิมบอลเสถียร
+    
+    # วัดระยะทาง
+    tof_handler.start_scanning('temp_scan')
+    sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+    time.sleep(0.15)
+    tof_handler.stop_scanning(sensor.unsub_distance)
+    
+    distance = tof_handler.get_average_distance('temp_scan')
+    print(f"   📐 Distance: {distance:.2f}cm at {angle}°")
+    
+    marker_ids = []
+    
+    # ตรวจ marker เฉพาะถ้าระยะใกล้พอ และมี ToF reading ที่ถูกต้อง
+    if distance > 0 and distance <= 40.0:
+        print("✅ Distance OK - Scanning for markers...")
+        
+        # รีเซ็ตและเริ่มสแกน marker
+        marker_handler.reset_detection()
+        detected = marker_handler.wait_for_markers(timeout=1.0)
+        
+        if detected and marker_handler.markers:
+            marker_ids = [m.id for m in marker_handler.markers]
+            print(f"🎯 FOUND MARKERS: {marker_ids}")
+            print(f"   📍 Direction: {direction_name} ({angle}°)")
+            print(f"   📏 Distance: {distance:.2f}cm")
+            print(f"   🧭 Compass: {compass_dir}")
+        else:
+            print(f"❌ No markers found at {direction_name} ({angle}°)")
+    else:
+        if distance <= 0:
+            print(f"❌ Invalid ToF reading ({distance:.2f}cm) at {angle}° - Skipping marker detection")
+        else:
+            print(f"❌ Distance too far ({distance:.2f}cm > 40cm) at {angle}° - Skipping marker detection")
+    
+    return {
+        'marker_ids': marker_ids,
+        'distance': distance,
+        'direction_name': direction_name,
+        'angle': angle,
+        'compass_direction': compass_dir,
+        'timestamp': datetime.now().isoformat()
+    }
+
+# ===== Red Color Detection Function =====
+def detect_red(ep_camera, threshold_area=100, attempts=3):
+    """
+    ตรวจจับสีแดงจากกล้องหน้า
+    อ่าน frame หลายครั้ง (attempts) ป้องกัน queue empty
+    คืนค่า True/False ถ้าเจอสีแดง
+    """
+    try:
+        for _ in range(attempts):
+            try:
+                frame = ep_camera.read_cv2_image(strategy="newest", timeout=0.5)
+                if frame is None:
+                    continue
+                    
+                hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+
+                # ช่วงสีแดง (ปรับปรุงแล้วให้ครอบคลุมมากขึ้น)
+                lower_red1 = np.array([0, 120, 70])
+                upper_red1 = np.array([10, 255, 255])
+                lower_red2 = np.array([170, 120, 70])
+                upper_red2 = np.array([180, 255, 255])
+
+                mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+                mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+                mask = mask1 | mask2
+
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                for cnt in contours:
+                    if cv2.contourArea(cnt) > threshold_area:
+                        return True
+                        
+                # ถ้าไม่เจอสีแดงใน frame นี้ ให้ลองใหม่
+                time.sleep(0.05)
+                
+            except Exception as e:
+                print(f"❌ Error reading frame: {e}")
+                time.sleep(0.1)
+                
+        return False
+    except Exception as e:
+        print(f"❌ detect_red error: {e}")
+        return False
+
+def scan_red_then_marker_enhanced(ep_robot, gimbal, chassis, sensor, marker_handler, tof_handler):
+    """
+    Enhanced version: สแกนหาสีแดงก่อน แล้วสแกน marker เฉพาะทิศทางที่เจอสีแดง
+    ใช้เป็นทางเลือกแทนการสแกน marker ทุกทิศทาง
+    """
+    yaw_angles = [0, -90, 90]  # หน้า, ซ้าย, ขวา
+    red_angles = []
+    results = {}
+
+    ep_camera = ep_robot.camera
+    
+    # เปิด Video Stream และรอให้เสถียร
+    try:
+        ep_camera.start_video_stream(display=False, resolution="720p")
+        print("📹 Starting camera stream for red detection...")
+        time.sleep(1.0)  # รอให้ frame มาเสถียร
+    except Exception as e:
+        print(f"❌ Error starting camera: {e}")
+        return {}
+
+    # ล็อคล้อหุ่นยนต์
+    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+
+    print("\n🔴 === SCANNING FOR RED COLOR ===")
+    # ตรวจสีแดงในแต่ละทิศทาง
+    for yaw in yaw_angles:
+        direction_name = get_direction_name(yaw)
+        print(f"\n🔄 หมุน Gimbal ไปที่ {direction_name} ({yaw}°) เพื่อตรวจจับสีแดง")
+        
+        gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480)
+        time.sleep(0.3)  # รอให้กล้องเสถียร
+        
+        found_red = detect_red(ep_camera, threshold_area=100, attempts=5)
+        if found_red:
+            print(f"✅ เจอสีแดงที่ {direction_name} ({yaw}°)")
+            red_angles.append(yaw)
+        else:
+            print(f"❌ ไม่เจอสีแดงที่ {direction_name} ({yaw}°)")
+
+    # ปิด Video Stream หลังจากตรวจสีแดงเสร็จ
+    try:
+        ep_camera.stop_video_stream()
+    except:
+        pass
+
+    if not red_angles:
+        print("\n❌ ไม่เจอสีแดงในทิศทางใดเลย")
+        # กลับไปตำแหน่งกลาง
+        gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
+        chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+        return results
+
+    print(f"\n🎯 === SCANNING MARKERS (เฉพาะทิศทางที่เจอสีแดง) ===")
+    print(f"🔴 เจอสีแดงใน {len(red_angles)} ทิศทาง: {red_angles}")
+
+    # scan marker เฉพาะ yaw ที่เจอสีแดง
+    for yaw in red_angles:
+        direction_name = get_direction_name(yaw)
+        direction_key = direction_name.split(' ')[0].lower()  # Extract direction (front, left, right)
+        
+        print(f"\n🎯 สแกน Marker ที่ {direction_name} ({yaw}°)")
+        
+        marker_scan_result = scan_for_markers_at_direction(gimbal, sensor, yaw, direction_key, marker_handler, tof_handler, speed=480)
+        
+        results[direction_key] = {
+            'direction_name': direction_name,
+            'marker_ids': marker_scan_result['marker_ids'],
+            'distance': marker_scan_result['distance'],
+            'found_red': True,
+            'angle': yaw,
+            'compass_direction': marker_scan_result['compass_direction'],
+            'timestamp': marker_scan_result['timestamp']
+        }
+        
+        if marker_scan_result['marker_ids']:
+            print(f"🎯 เจอ Marker: {marker_scan_result['marker_ids']} ที่ {direction_name} ({yaw}°)")
+        else:
+            print(f"❌ ไม่เจอ Marker ที่ {direction_name} ({yaw}°)")
+
+    # กลับไปตำแหน่งกลาง
+    print(f"\n🔄 กลับสู่ตำแหน่งกลาง...")
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480)
+    
+    # ปลดล็อคล้อ
+    chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
+
+    return results
+
 # ===== Main Exploration Functions =====
-def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper):
-    """NEW: Scan current node and update graph with ABSOLUTE directions"""
+def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler=None, ep_robot=None):
+    """NEW: Scan current node and update graph with ABSOLUTE directions + RED-FILTERED MARKER DETECTION"""
     print(f"\n🗺️ === Scanning Node at {graph_mapper.currentPosition} ===")
     
     current_node = graph_mapper.create_node(graph_mapper.currentPosition)
@@ -1458,6 +1919,11 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
             print(f"   📡 Cached sensor readings:")
             for direction, reading in current_node.sensorReadings.items():
                 print(f"      {direction}: {reading:.2f}cm")
+        # แสดงข้อมูล marker ที่เคยสแกนไว้
+        if hasattr(current_node, 'markersFound') and current_node.markersFound:
+            print(f"   🎯 Cached markers found:")
+            for direction, marker_ids in current_node.markersFound.items():
+                print(f"      {direction}: {marker_ids}")
         print("⚡ Skipping physical scan - using cached data")
         return current_node.sensorReadings
     
@@ -1471,13 +1937,26 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     
     speed = 480
     scan_results = {}
-    ep_chassis_fix = ep_robot.chassis
+    red_directions = []  # เก็บทิศทางที่เจอสีแดง
     
-    # Scan front (0°)
-    print("🔍 Scanning FRONT (0°)...")
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    # ===== เปิด Video Stream สำหรับการตรวจสีแดง =====
+    ep_camera = None
+    if marker_handler and ep_robot:
+        try:
+            ep_camera = ep_robot.camera
+            ep_camera.start_video_stream(display=False, resolution="720p")
+            print("📹 Video stream started for red color detection")
+            time.sleep(0.5)  # รอให้ camera เสถียร
+        except Exception as e:
+            print(f"⚠️ Cannot start video stream for red detection: {e}")
+            ep_camera = None
+    
+    # ===== SCAN FRONT (0°) - ToF + Red Detection =====
+    print("🔍 Scanning FRONT (0°) - ToF + Red Detection...")
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
+    # ToF scan
     tof_handler.start_scanning('front')
     sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
@@ -1487,21 +1966,31 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     front_wall = tof_handler.is_wall_detected('front')
     scan_results['front'] = front_distance
     
-    print(f"📏 FRONT scan result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
+    print(f"📏 FRONT ToF result: {front_distance:.2f}cm - {'WALL' if front_wall else 'OPEN'}")
+    
+    # Red detection at FRONT
+    if ep_camera and front_distance > 0 and front_distance <= 40.0:
+        print("🔴 Checking for red color at FRONT...")
+        found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+        if found_red:
+            print("✅ RED DETECTED at FRONT!")
+            red_directions.append(('front', 0))
+        else:
+            print("❌ No red at FRONT")
 
-    if front_distance <= 19.0 : # ถ้าใกล้เกิน19เซน
-        move_distance = -(23 - front_distance) #*-1 เพื่อให้ถอยหลัง อ่านได้18เซน move distance=-1*(25-18)=-7cm ถอยหลัง 7cm
+    # Position adjustment if too close
+    if front_distance <= 19.0:
+        move_distance = -(23 - front_distance)
         print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {move_distance:.2f}m")
-        ep_chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+        chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
         time.sleep(0.2)
 
-    # if front_distance >= 25:
-    #     move_distance=  (front_distance)
-    # Scan left (physical: -90°)
-    print("🔍 Scanning LEFT (physical: -90°)...")
-    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    # ===== SCAN LEFT (-90°) - ToF + Red Detection =====
+    print("🔍 Scanning LEFT (-90°) - ToF + Red Detection...")
+    gimbal.moveto(pitch=0, yaw=-90, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
+    # ToF scan
     tof_handler.start_scanning('left')
     sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
     time.sleep(0.2)
@@ -1510,18 +1999,67 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     left_distance = tof_handler.get_average_distance('left')
     left_wall = tof_handler.is_wall_detected('left')
     scan_results['left'] = left_distance
-
     
-    print(f"📏 LEFT scan result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
+    print(f"📏 LEFT ToF result: {left_distance:.2f}cm - {'WALL' if left_wall else 'OPEN'}")
+    
+    # Red detection at LEFT
+    if ep_camera and left_distance > 0 and left_distance <= 40.0:
+        print("🔴 Checking for red color at LEFT...")
+        found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+        if found_red:
+            print("✅ RED DETECTED at LEFT!")
+            red_directions.append(('left', -90))
+        else:
+            print("❌ No red at LEFT")
 
-    # หลังจาก scan front/left/right เสร็จ แต่ก่อน return
-    # เช็คกรณีเป็นโหนดเริ่มต้น (0,0) และหันหน้าเริ่มต้น
+    # Position adjustment if too close
+    if left_distance < 15:
+        move_distance = 20 - left_distance
+        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        time.sleep(0.3)
+
+    # ===== SCAN RIGHT (90°) - ToF + Red Detection =====
+    print("🔍 Scanning RIGHT (90°) - ToF + Red Detection...")
+    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed)
+    time.sleep(0.2)
+    
+    # ToF scan
+    tof_handler.start_scanning('right')
+    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
+    time.sleep(0.2)
+    tof_handler.stop_scanning(sensor.unsub_distance)
+    
+    right_distance = tof_handler.get_average_distance('right')
+    right_wall = tof_handler.is_wall_detected('right')
+    scan_results['right'] = right_distance
+
+    print(f"📏 RIGHT ToF result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+    
+    # Red detection at RIGHT
+    if ep_camera and right_distance > 0 and right_distance <= 40.0:
+        print("🔴 Checking for red color at RIGHT...")
+        found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+        if found_red:
+            print("✅ RED DETECTED at RIGHT!")
+            red_directions.append(('right', 90))
+        else:
+            print("❌ No red at RIGHT")
+
+    # Position adjustment if too close
+    if right_distance < 15:
+        move_distance = -(21 - right_distance)
+        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
+        chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+        time.sleep(0.3)
+
+    # ===== SPECIAL BACK SCAN FOR INITIAL NODE =====
     if graph_mapper.currentPosition == (0, 0) and current_node.initialScanDirection == graph_mapper.currentDirection:
         print("🔍 Special check: scanning BACK at start node...")
-        # หมุน gimbal 180° เพื่อสแกนด้านหลัง
-        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+        gimbal.moveto(pitch=0, yaw=180, pitch_speed=speed, yaw_speed=speed)
         time.sleep(0.2)
 
+        # ToF scan for back
         tof_handler.start_scanning('back')
         sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
         time.sleep(0.2)
@@ -1531,9 +2069,19 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         back_wall = tof_handler.is_wall_detected('back')
         scan_results['back'] = back_distance
         
-        print(f"📏 BACK scan result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
+        print(f"📏 BACK ToF result: {back_distance:.2f}cm - {'WALL' if back_wall else 'OPEN'}")
 
-        # อัปเดตกำแพงแบบ absolute
+        # Red detection at BACK
+        if ep_camera and back_distance > 0 and back_distance <= 40.0:
+            print("🔴 Checking for red color at BACK...")
+            found_red = detect_red(ep_camera, threshold_area=100, attempts=3)
+            if found_red:
+                print("✅ RED DETECTED at BACK!")
+                red_directions.append(('back', 180))
+            else:
+                print("❌ No red at BACK")
+
+        # Update walls for back direction
         direction_map = {
             'north': 'south',
             'south': 'north',
@@ -1544,48 +2092,82 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         current_node.walls[back_abs_dir] = back_wall
         current_node.wallBack = back_wall
 
-        # ถ้ามีกำแพงด้านหลัง ให้ลบออกจาก unexploredExits
         if back_wall and back_abs_dir in current_node.unexploredExits:
             current_node.unexploredExits.remove(back_abs_dir)
             print(f"🧹 Removed BACK ({back_abs_dir}) from unexplored exits at start node")
 
-    if left_distance < 15:
-        move_distance = 20 - left_distance
-        print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.3)
+    # ===== ปิด Video Stream =====
+    if ep_camera:
+        try:
+            ep_camera.stop_video_stream()
+            print("📹 Video stream stopped")
+        except:
+            pass
 
-    # Scan right (physical: 90°)
-    print("🔍 Scanning RIGHT (physical: 90°)...")
-    gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
-    time.sleep(0.2)
+    # ===== MARKER SCANNING - เฉพาะทิศทางที่เจอสีแดง =====
+    if marker_handler and red_directions:
+        print(f"\n🎯 === MARKER SCANNING (Red-filtered) ===")
+        print(f"🔴 Found red in {len(red_directions)} directions: {[d[0] for d in red_directions]}")
+        
+        for direction_name, angle in red_directions:
+            print(f"\n🎯 Scanning markers at {direction_name.upper()} ({angle}°) where red was detected...")
+            
+            # หมุนไปที่มุมที่เจอสีแดงและก้มลง (-20°)
+            gimbal.moveto(pitch=-20, yaw=angle, pitch_speed=speed, yaw_speed=speed)
+            time.sleep(0.3)
+            
+            # วัดระยะทางใหม่ (เพราะก้มลงแล้ว)
+            tof_handler.start_scanning('marker_scan')
+            sensor.sub_distance(freq=50, callback=tof_handler.tof_data_handler)
+            time.sleep(0.15)
+            tof_handler.stop_scanning(sensor.unsub_distance)
+            
+            marker_distance = tof_handler.get_average_distance('marker_scan')
+            print(f"   📐 Marker scan distance (tilted): {marker_distance:.2f}cm")
+            
+            # ตรวจ marker
+            marker_ids = []
+            if marker_distance > 0 and marker_distance <= 40.0:
+                print("   ✅ Distance OK - Scanning for markers...")
+                marker_handler.reset_detection()
+                detected = marker_handler.wait_for_markers(timeout=1.0)
+                
+                if detected and marker_handler.markers:
+                    marker_ids = [m.id for m in marker_handler.markers]
+                    print(f"   🎯 FOUND MARKERS: {marker_ids}")
+                else:
+                    print(f"   ❌ No markers found")
+            else:
+                print(f"   ❌ Distance not suitable for marker detection: {marker_distance:.2f}cm")
+            
+            # เก็บผลลัพธ์
+            current_node.markerScanResults[direction_name] = {
+                'marker_ids': marker_ids,
+                'distance': marker_distance,
+                'direction_name': direction_name,
+                'angle': angle,
+                'compass_direction': get_compass_direction(angle),
+                'timestamp': datetime.now().isoformat(),
+                'found_red': True
+            }
+            
+            if marker_ids:
+                current_node.markersFound[direction_name] = marker_ids
+                current_node.hasMarkers = True
+                print(f"   ✅ Stored markers for {direction_name}: {marker_ids}")
     
-    tof_handler.start_scanning('right')
-    sensor.sub_distance(freq=25, callback=tof_handler.tof_data_handler)
-    time.sleep(0.2)
-    tof_handler.stop_scanning(sensor.unsub_distance)
-    
-    right_distance = tof_handler.get_average_distance('right')
-    right_wall = tof_handler.is_wall_detected('right')
-    scan_results['right'] = right_distance
-
-    if right_distance < 15:
-        move_distance = -(21 - right_distance)
-        print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
-        ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-        time.sleep(0.3)
-
-    print(f"📏 RIGHT scan result: {right_distance:.2f}cm - {'WALL' if right_wall else 'OPEN'}")
+    elif marker_handler:
+        print(f"\n🔴 No red color detected in any direction - skipping marker scanning")
     
     # Return to center
-    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
+    gimbal.moveto(pitch=0, yaw=0, pitch_speed=speed, yaw_speed=speed)
     time.sleep(0.2)
     
     # Unlock wheels
     chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
     time.sleep(0.2)
     
-    # NEW: Update graph with wall information using ABSOLUTE directions
+    # Update graph with wall information using ABSOLUTE directions
     graph_mapper.update_current_node_walls_absolute(left_wall, right_wall, front_wall)
     current_node.sensorReadings = scan_results
     
@@ -1594,19 +2176,31 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     print(f"   🧱 Walls stored (absolute): {current_node.walls}")
     print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
     
+    # แสดงสรุป marker ที่พบ
+    if hasattr(current_node, 'markersFound') and current_node.markersFound:
+        print(f"   🎯 Markers summary:")
+        for direction, marker_ids in current_node.markersFound.items():
+            print(f"      {direction.upper()}: {marker_ids}")
+    
     return scan_results
 
-def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=20):
-    """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING"""
-    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH COMPREHENSIVE DRIFT CORRECTION ===")
+def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, marker_handler=None, ep_robot=None, max_nodes=20):
+    """Main autonomous exploration with attitude drift correction INCLUDING BACKTRACKING + RED-FILTERED MARKER DETECTION"""
+    print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH RED-FILTERED MARKER DETECTION ===")
     print(f"🎯 Wall Detection Threshold: {tof_handler.WALL_THRESHOLD}cm")
     print(f"🔧 Attitude Drift Correction: Every {movement_controller.DRIFT_CORRECTION_INTERVAL} nodes (+{movement_controller.DRIFT_CORRECTION_ANGLE}° right)")
+    if marker_handler:
+        print(f"🔴 Red Color Filtering: Enabled - markers scanned only where red detected")
+        print(f"📐 Marker Scan Mode: Gimbal tilt to -20° for optimal detection")
+    else:
+        print(f"⚠️ Marker Detection: Disabled")
     
     nodes_explored = 0
     scanning_iterations = 0
     dead_end_reversals = 0
     backtrack_attempts = 0
     reverse_backtracks = 0
+    frontier_rebuild_attempts = 0  # นับจำนวนครั้งที่พยายาม rebuild frontier
     
     while nodes_explored < max_nodes:
         print(f"\n{'='*50}")
@@ -1635,7 +2229,7 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         if not current_node.fullyScanned:
             print("🔍 NEW NODE - Performing full scan...")
-            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper)
+            scan_results = scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mapper, marker_handler, ep_robot)
             scanning_iterations += 1
             
             # Check if this scan revealed a dead end
@@ -1659,8 +2253,9 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         nodes_explored += 1
         
-        # Print current graph state
-        graph_mapper.print_graph_summary()
+        # Print current graph state only every 5 nodes to reduce spam
+        if nodes_explored % 5 == 0 or nodes_explored == 1:
+            graph_mapper.print_graph_summary()
         
         # Find next direction to explore
         graph_mapper.previous_node = current_node
@@ -1732,9 +2327,31 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
                 break
         else:
             # STEP 3: Final check
-            print("🎉 No more frontiers found!")
+            frontier_rebuild_attempts += 1
+            print(f"🎉 No more frontiers found! (Rebuild attempt {frontier_rebuild_attempts})")
+            
+            if frontier_rebuild_attempts > 2:
+                print("🛑 Maximum frontier rebuild attempts reached - exploration complete!")
+                break
+                
             print("🔄 Performing final frontier scan...")
             graph_mapper.rebuild_frontier_queue()
+            
+            # เช็คว่าสำรวจครบทุกโหนดในขอบเขตแล้วหรือยัง
+            boundary_info = graph_mapper.get_boundary_status()
+            expected_total_nodes = boundary_info['total_cells']
+            actual_nodes = len(graph_mapper.nodes)
+            
+            print(f"📊 Node coverage check:")
+            print(f"   🎯 Expected nodes in boundary: {expected_total_nodes}")
+            print(f"   ✅ Actual nodes explored: {actual_nodes}")
+            print(f"   📈 Coverage: {actual_nodes/expected_total_nodes*100:.1f}%")
+            
+            if actual_nodes >= expected_total_nodes:
+                print("🎉 All nodes in boundary explored!")
+                # ทำความสะอาด frontier queue ขั้นสุดท้าย
+                graph_mapper.frontierQueue.clear()
+                break
             
             if graph_mapper.frontierQueue:
                 print(f"🚀 Found {len(graph_mapper.frontierQueue)} missed frontiers - continuing...")
@@ -1775,6 +2392,8 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         print(f"   📊 Drift correction frequency: {drift_frequency:.2f} corrections per total node")
         print(f"   🔙 Backtrack nodes: {backtrack_node_count} ({backtrack_percentage:.1f}% of total)")
     
+    # แสดง final summary เฉพาะครั้งเดียวตอนจบ
+    print(f"\n{'🎉'*20} FINAL EXPLORATION SUMMARY {'🎉'*20}")
     graph_mapper.print_graph_summary()
     generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_reversals, reverse_backtracks, final_drift_status)
 
@@ -1791,6 +2410,18 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     frontier_nodes = len(graph_mapper.frontierQueue)
     fully_scanned_nodes = sum(1 for node in graph_mapper.nodes.values() if node.fullyScanned)
     
+    # NEW: Marker statistics
+    nodes_with_markers = sum(1 for node in graph_mapper.nodes.values() if hasattr(node, 'hasMarkers') and node.hasMarkers)
+    total_markers_found = 0
+    markers_by_direction = {'front': 0, 'left': 0, 'right': 0, 'back': 0}
+    
+    for node in graph_mapper.nodes.values():
+        if hasattr(node, 'markersFound') and node.markersFound:
+            for direction, marker_ids in node.markersFound.items():
+                total_markers_found += len(marker_ids)
+                if direction in markers_by_direction:
+                    markers_by_direction[direction] += len(marker_ids)
+    
     print(f"📊 STATISTICS:")
     print(f"   🏁 Total nodes explored: {total_nodes}")
     print(f"   🎯 Node visits: {nodes_explored}")
@@ -1799,6 +2430,29 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print(f"   🔙 Dead end reversals performed: {dead_end_reversals}")
     print(f"   🔙 Reverse backtracks performed: {reverse_backtracks}")
     print(f"   🚀 Remaining frontiers: {frontier_nodes}")
+    
+    # NEW: Red-filtered marker detection summary
+    print(f"\n🎯 RED-FILTERED MARKER DETECTION SUMMARY:")
+    print(f"   📍 Nodes with markers: {nodes_with_markers}")
+    print(f"   🎯 Total markers found: {total_markers_found}")
+    
+    # Count red detections from marker scan results
+    red_detections = 0
+    for node in graph_mapper.nodes.values():
+        if hasattr(node, 'markerScanResults') and node.markerScanResults:
+            for direction, scan_result in node.markerScanResults.items():
+                if scan_result.get('found_red', False):
+                    red_detections += 1
+    
+    print(f"   🔴 Red color detections: {red_detections}")
+    if total_markers_found > 0:
+        print(f"   📊 Markers by direction:")
+        for direction, count in markers_by_direction.items():
+            if count > 0:
+                print(f"      {direction.upper()}: {count} markers")
+        print(f"   📈 Marker detection rate: {nodes_with_markers/total_nodes*100:.1f}% of nodes")
+        if red_detections > 0:
+            print(f"   🎯 Marker success rate from red: {total_markers_found/red_detections*100:.1f}% when red detected")
     
     # Efficiency metrics
     revisited_nodes = nodes_explored - total_nodes
@@ -1862,11 +2516,19 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
             print(f"   📍 {node.position}: {len(node.unexploredExits)} unexplored exits {node.unexploredExits}")
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
+    print(f"   🔴 Red color filtering integrated with ToF scanning")
+    print(f"   🎯 Smart marker detection only where red color detected")
+    print(f"   🔄 Efficient scanning: Red detection at 0°, -90°, 90° (and 180° for initial node)")
+    print(f"   📐 Gimbal tilt (-20°) for marker scanning only in red-filtered directions")
+    print(f"   📊 Comprehensive marker tracking per node and direction")
+    print(f"   ⚡ Performance optimized: Skip marker scanning where no red detected")
     
     print(f"\n{'='*60}")
-    print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
+    print("✅ ABSOLUTE DIRECTION EXPLORATION WITH RED-FILTERED MARKER DETECTION COMPLETE")
     print(f"{'='*60}")
 
+
+# 4. แก้ไขการตั้งค่า boundary ใน main
 if __name__ == '__main__':
     print("🤖 Connecting to robot...")
     ep_robot = robot.Robot()
@@ -1875,13 +2537,32 @@ if __name__ == '__main__':
     ep_gimbal = ep_robot.gimbal
     ep_chassis = ep_robot.chassis
     ep_sensor = ep_robot.sensor
+    ep_vision = ep_robot.vision
     
-    # Initialize components
+    # Initialize components with STRICTER boundaries
     tof_handler = ToFSensorHandler()
-    graph_mapper = GraphMapper()
+    graph_mapper = GraphMapper(min_x=-3, min_y=-3, max_x=3, max_y=3)  # 3x3 grid
     movement_controller = MovementController(ep_chassis)
     attitude_handler = AttitudeHandler()
     attitude_handler.start_monitoring(ep_chassis)
+    
+    # NEW: Initialize marker detection system
+    marker_handler = MarkerVisionHandler()
+    print("🎯 Initializing marker detection system...")
+    marker_detection_active = marker_handler.start_continuous_detection(ep_vision)
+    if marker_detection_active:
+        print("✅ Marker detection system activated")
+    else:
+        print("⚠️ Marker detection system failed to activate - continuing without markers")
+        marker_handler = None
+    
+    # ✅ เพิ่มการแสดงข้อมูล boundary
+    boundary_info = graph_mapper.get_boundary_status()
+    print(f"🗺️ MAP BOUNDARIES CONFIGURED:")
+    print(f"   📏 X range: [{boundary_info['min_x']}, {boundary_info['max_x']}]")
+    print(f"   📏 Y range: [{boundary_info['min_y']}, {boundary_info['max_y']}]")
+    print(f"   📐 Map size: {boundary_info['width']}x{boundary_info['height']} = {boundary_info['total_cells']} cells")
+    print(f"   🎯 Valid positions: Only within these boundaries!")
     
     try:
         print("✅ Recalibrating gimbal...")
@@ -1893,7 +2574,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                        graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
@@ -1904,6 +2585,8 @@ if __name__ == '__main__':
     finally:
         try:
             ep_sensor.unsub_distance()
+            if marker_handler:
+                marker_handler.stop_continuous_detection(ep_vision)
             movement_controller.cleanup()
             attitude_handler.stop_monitoring(ep_chassis)
         except:

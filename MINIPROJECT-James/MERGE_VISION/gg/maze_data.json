@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "export_timestamp": "2025-08-14T11:06:16.497431",
+    "total_nodes_explored": 1,
+    "boundaries": {
+      "min_x": 0,
+      "max_x": 0,
+      "min_y": 0,
+      "max_y": 0,
+      "width": 1,
+      "height": 1
+    },
+    "robot_start_position": [
+      0,
+      0
+    ],
+    "wall_threshold_cm": 25
+  },
+  "nodes": {
+    "0_0": {
+      "position": [
+        0,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "visited": true,
+      "visit_count": 1,
+      "is_dead_end": false,
+      "fully_scanned": true,
+      "last_visited": "2025-08-14T11:06:14.580974",
+      "neighbors": {
+        "north": null,
+        "south": null,
+        "east": null,
+        "west": null
+      },
+      "unexplored_exits": [
+        "south"
+      ],
+      "explored_directions": [],
+      "out_of_bounds_exits": [],
+      "out_of_bounds_count": 0,
+      "markers_found": {},
+      "marker_scan_results": {},
+      "has_markers": false
+    }
+  },
+  "robot_path": [
+    [
+      0,
+      0
+    ]
+  ],
+  "walls": {
+    "0,0,east": {
+      "position": [
+        0,
+        0
+      ],
+      "direction": "east",
+      "wall_type": "detected"
+    },
+    "0,0,west": {
+      "position": [
+        0,
+        0
+      ],
+      "direction": "west",
+      "wall_type": "detected"
+    }
+  },
+  "grid_representation": {
+    "0,0": {
+      "explored": false,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": true,
+        "west": true
+      },
+      "visit_count": 0,
+      "is_dead_end": false,
+      "has_markers": false
+    }
+  },
+  "node_analysis": {
+    "0_0": {
+      "total_possible_exits": 4,
+      "walls_count": 2,
+      "available_exits": 2,
+      "out_of_bounds_blocked": 0,
+      "can_explore_count": 1,
+      "movement_efficiency": "1 visits",
+      "markers_found_count": 0
+    }
+  },
+  "markers": {
+    "total_found": 0,
+    "nodes_with_markers": 0,
+    "marker_details": {}
+  }
+}

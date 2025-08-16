@@ -79,7 +79,7 @@ class AttitudeHandler:
         self.current_pitch = 0.0
         self.current_roll = 0.0
         self.target_yaw = 0.0
-        self.yaw_tolerance = 2
+        self.yaw_tolerance = 3
         self.is_monitoring = False
         
     def attitude_handler(self, attitude_info):
@@ -993,7 +993,7 @@ class GraphMapper:
         current_mapping = direction_map[self.currentDirection]
         
         # ลำดับความสำคัญ
-        priority_order = ['left', 'front', 'right', 'back']
+        priority_order = ['left', 'right', 'front', 'back']
         
         possible_directions = {
             'north': (x, y + 1),
@@ -1893,7 +1893,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                        graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
