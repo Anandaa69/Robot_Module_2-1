@@ -1,11 +1,13 @@
 import time
 import robomaster
-from robomaster import robot
+from robomaster import robot, vision
 import numpy as np
 from scipy.ndimage import median_filter
 from datetime import datetime
 import json
 from collections import deque
+import cv2
+import traceback
 
 ROBOT_FACE = 1 # 0 1
 CURRENT_TARGET_YAW = 0.0
@@ -171,6 +173,88 @@ class AttitudeHandler:
         except Exception as e:
             print(f"❌ Failed to correct chassis yaw: {e}")
             return False
+
+# ===== Marker Detection Classes =====
+class MarkerInfo:
+    def __init__(self, x, y, w, h, marker_id):
+        self._x = x
+        self._y = y
+        self._w = w
+        self._h = h
+        self._id = marker_id
+
+    @property
+    def id(self):
+        return self._id
+
+class MarkerVisionHandler:
+    def __init__(self):
+        self.markers = []
+        self.marker_detected = False
+        self.is_active = False
+        self.detection_timeout = 1.0
+    
+    def on_detect_marker(self, marker_info):
+        if not self.is_active:
+            return
+            
+        if len(marker_info) > 0:
+            valid_markers = []
+            for i in range(len(marker_info)):
+                x, y, w, h, marker_id = marker_info[i]
+                marker = MarkerInfo(x, y, w, h, marker_id)
+                valid_markers.append(marker)
+            
+            if valid_markers:
+                self.marker_detected = True
+                self.markers = valid_markers
+    
+    def wait_for_markers(self, timeout=None):
+        if timeout is None:
+            timeout = self.detection_timeout
+        
+        print(f"⏱️ Waiting {timeout} seconds for marker detection...")
+        
+        self.marker_detected = False
+        self.markers.clear()
+        
+        start_time = time.time()
+        
+        while (time.time() - start_time) < timeout:
+            if self.marker_detected:
+                print(f"✅ Marker detected after {time.time() - start_time:.1f}s")
+                break
+            time.sleep(0.02)
+        
+        return self.marker_detected
+    
+    def start_continuous_detection(self, vision):
+        try:
+            self.stop_continuous_detection(vision)
+            time.sleep(0.3)
+            
+            result = vision.sub_detect_info(name="marker", callback=self.on_detect_marker)
+            if result:
+                self.is_active = True
+                print("✅ Marker detection activated")
+                return True
+            else:
+                print("❌ Failed to start marker detection")
+                return False
+        except Exception as e:
+            print(f"❌ Error starting marker detection: {e}")
+            return False
+    
+    def stop_continuous_detection(self, vision):
+        try:
+            self.is_active = False
+            vision.unsub_detect_info(name="marker")
+        except:
+            pass
+    
+    def reset_detection(self):
+        self.marker_detected = False
+        self.markers.clear()
 
 # ===== PID Controller =====
 class PID:
@@ -534,6 +618,8 @@ class GraphNode:
     def __init__(self, node_id, position):
         self.id = node_id
         self.position = position  # (x, y)
+        self.outOfBoundsExits = []  # list ทิศทางที่เกินแมพ
+        self.outOfBoundsCount = 0   # จำนวนทางออกนอกแมพ
 
         # Wall detection - NOW STORES ABSOLUTE DIRECTIONS
         self.walls = {
@@ -578,17 +664,43 @@ class GraphNode:
 
 # ===== Graph Mapper =====
 class GraphMapper:
-    def __init__(self):
+    def __init__(self, min_x=-3, min_y=-3, max_x=3, max_y=3):
         self.nodes = {}
         self.currentPosition = (0, 0)
-        self.currentDirection = 'north'  # ABSOLUTE direction robot is facing
+        self.currentDirection = 'north'
         self.frontierQueue = []
         self.pathStack = []
         self.visitedNodes = set()
         self.previous_node = None
+
+        # === Border limits ===
+        self.min_x = min_x
+        self.min_y = min_y
+        self.max_x = max_x
+        self.max_y = max_y
+
         # Override methods เพื่อใช้ priority-based exploration
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
         self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
+
+    # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
+    def is_position_within_boundaries(self, position):
+        """Check if position is within map boundaries"""
+        x, y = position
+        return (self.min_x <= x <= self.max_x and 
+                self.min_y <= y <= self.max_y)
+
+    def get_boundary_status(self):
+        """Get current boundary configuration"""
+        return {
+            'min_x': self.min_x,
+            'max_x': self.max_x,
+            'min_y': self.min_y,
+            'max_y': self.max_y,
+            'width': self.max_x - self.min_x + 1,
+            'height': self.max_y - self.min_y + 1,
+            'total_cells': (self.max_x - self.min_x + 1) * (self.max_y - self.min_y + 1)
+        }
 
     def get_node_id(self, position):
         return f"{position[0]}_{position[1]}"
@@ -640,82 +752,91 @@ class GraphMapper:
             self.update_unexplored_exits_absolute(current_node)
             self.build_connections()
 
+    # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
     def update_unexplored_exits_absolute(self, node):
-        """FIXED: Update unexplored exits using ABSOLUTE directions"""
+        """Update unexplored exits using ABSOLUTE directions + outer border check"""
         node.unexploredExits = []
-        
+        node.outOfBoundsExits = []
+        node.outOfBoundsCount = 0
+
         x, y = node.position
-        
-        # Define all possible directions from this node (ABSOLUTE)
+
         possible_directions = {
             'north': (x, y + 1),
             'south': (x, y - 1),
-            'east': (x + 1, y),
-            'west': (x - 1, y)
+            'east':  (x + 1, y),
+            'west':  (x - 1, y)
         }
-        
+
         print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
         print(f"🔍 Wall status: {node.walls}")
-        
-        # Check each ABSOLUTE direction for unexplored exits
+        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+
         for direction, target_pos in possible_directions.items():
+            target_x, target_y = target_pos
             target_node_id = self.get_node_id(target_pos)
-            
-            # Check if this direction is blocked by wall
+
+            # === ✅ แก้ไขการเช็ค outer border ===
+            is_outer_boundary = (
+                target_x < self.min_x or target_x > self.max_x or
+                target_y < self.min_y or target_y > self.max_y
+            )
+
+            # เช็ค wall / explored / target exist
             is_blocked = node.walls.get(direction, True)
-            
-            # Check if already explored
             already_explored = direction in node.exploredDirections
-            
-            # Check if target node exists and is fully explored
             target_exists = target_node_id in self.nodes
             target_fully_explored = False
             if target_exists:
                 target_node = self.nodes[target_node_id]
                 target_fully_explored = target_node.fullyScanned
-            
-            print(f"   📍 Direction {direction}:")
+
+            print(f"   🔍 Direction {direction}:")
             print(f"      🚧 Blocked: {is_blocked}")
             print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🏗️  Target exists: {target_exists}")
+            print(f"      🗃️  Target exists: {target_exists}")
             print(f"      🔍 Target fully explored: {target_fully_explored}")
-            
-            # Add to unexplored exits if:
-            # 1. Not blocked by wall AND
-            # 2. Not already explored from this node AND
-            # 3. Target doesn't exist OR target exists but hasn't been fully scanned
-            should_explore = (not is_blocked and 
-                            not already_explored and 
-                            (not target_exists or not target_fully_explored))
-            
+            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
+
+            should_explore = (
+                not is_blocked and
+                not already_explored and
+                (not target_exists or not target_fully_explored)
+            )
+
             if should_explore:
-                node.unexploredExits.append(direction)
-                print(f"      ✅ ADDED to unexplored exits!")
+                if is_outer_boundary:
+                    node.outOfBoundsExits.append(direction)
+                    node.outOfBoundsCount = len(node.outOfBoundsExits)
+                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
+                else:
+                    node.unexploredExits.append(direction)
+                    print(f"      ✅ ADDED to unexplored exits!")
             else:
                 print(f"      ❌ NOT added to unexplored exits")
-        
+
         print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        
-        # Update frontier queue
+        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
+
+        # Frontier queue update
         has_unexplored = len(node.unexploredExits) > 0
-        
         if has_unexplored and node.id not in self.frontierQueue:
             self.frontierQueue.append(node.id)
             print(f"🚀 Added {node.id} to frontier queue")
         elif not has_unexplored and node.id in self.frontierQueue:
             self.frontierQueue.remove(node.id)
             print(f"🧹 Removed {node.id} from frontier queue")
-        
-        # Dead end detection using absolute directions
+
+        # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3  # 3 or more walls = dead end
-        node.isDeadEnd = is_dead_end
-        
-        if is_dead_end:
+        node.isDeadEnd = blocked_count >= 3
+        if node.isDeadEnd:
             print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
             if node.id in self.frontierQueue:
                 self.frontierQueue.remove(node.id)
                 print(f"🧹 Removed dead end {node.id} from frontier queue")
+
+
     
     def build_connections(self):
         """Build connections between adjacent nodes"""
@@ -854,9 +975,36 @@ class GraphMapper:
 
         return True
     
+    # 2. เพิ่มการตรวจสอบในฟังก์ชัน move_to_absolute_direction
     def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
-        """NEW: Move to target ABSOLUTE direction with proper rotation"""
+        """NEW: Move to target ABSOLUTE direction with proper rotation and border check"""
         global ROBOT_FACE
+
+        current_node = self.get_current_node()
+        if not current_node:
+            print("❌ No current node - cannot move")
+            return False
+
+        # === ✅ เพิ่มการตรวจสอบ border แบบ double-check ===
+        target_pos = self.get_next_position(target_direction)
+        target_x, target_y = target_pos
+        
+        is_outside_map = (
+            target_x < self.min_x or target_x > self.max_x or
+            target_y < self.min_y or target_y > self.max_y
+        )
+        
+        if is_outside_map:
+            print(f"🚫 TARGET POSITION {target_pos} IS OUTSIDE MAP BOUNDARIES!")
+            print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
+            print(f"🚫 Movement to {target_direction} CANCELLED!")
+            return False
+
+        # Prevent movement outside border (original check)
+        if target_direction in current_node.outOfBoundsExits:
+            print(f"🚫 Target direction {target_direction} is OUT OF BOUNDS! Movement cancelled.")
+            return False
+
         print(f"🎯 Moving to ABSOLUTE direction: {target_direction}")
         
         # Check if movement is possible
@@ -927,51 +1075,51 @@ class GraphMapper:
         return True
 
     def find_next_exploration_direction_with_priority(self):
-        """Find next exploration direction with LEFT-first priority"""
+        """Find next exploration direction with LEFT-first priority, skipping out-of-bounds exits"""
         current_node = self.get_current_node()
         if not current_node:
             return None
-        
+
         if self.is_dead_end(current_node):
             print(f"🚫 Current node is a dead end - no exploration directions available")
             return None
-        
+
         print(f"🧭 Current robot facing: {self.currentDirection}")
         print(f"🔍 Available unexplored exits: {current_node.unexploredExits}")
-        
-        # กำหนดลำดับความสำคัญตามทิศทางสัมพันธ์ (LEFT-FIRST STRATEGY)
-        # แปลงทิศทางสัมบูรณ์กลับเป็นทิศทางสัมพันธ์เพื่อจัดลำดับ
+        print(f"🌐 Out-of-bounds exits: {current_node.outOfBoundsExits}")
+
+        # กำหนด mapping ทิศสัมพัทธ์
         direction_map = {
             'north': {'front': 'north', 'left': 'west', 'right': 'east', 'back': 'south'},
             'south': {'front': 'south', 'left': 'east', 'right': 'west', 'back': 'north'},
             'east': {'front': 'east', 'left': 'north', 'right': 'south', 'back': 'west'},
             'west': {'front': 'west', 'left': 'south', 'right': 'north', 'back': 'east'}
         }
-        
         current_mapping = direction_map[self.currentDirection]
-        
-        # สร้าง reverse mapping (จากทิศทางสัมบูรณ์เป็นทิศทางสัมพันธ์)
-        reverse_mapping = {v: k for k, v in current_mapping.items()}
-        
-        # ลำดับความสำคัญ: ซ้าย → หน้า → ขวา → หลัง
+
+        # ลำดับความสำคัญ
         priority_order = ['left', 'front', 'right', 'back']
-        
         print(f"🎯 Checking exploration priority order: {priority_order}")
-        
-        # ตรวจสอบตามลำดับความสำคัญ
+
         for relative_direction in priority_order:
-            # แปลงเป็นทิศทางสัมบูรณ์
             absolute_direction = current_mapping.get(relative_direction)
-            
-            if absolute_direction and absolute_direction in current_node.unexploredExits:
+            if not absolute_direction:
+                continue
+
+            # ข้ามทิศที่อยู่นอก border
+            if absolute_direction in current_node.outOfBoundsExits:
+                print(f"🚫 {relative_direction} ({absolute_direction}) is OUT OF BOUNDS! Skipping...")
+                continue
+
+            # เลือกทิศที่อยู่ใน unexplored exits และสามารถเดินได้
+            if absolute_direction in current_node.unexploredExits:
                 if self.can_move_to_direction_absolute(absolute_direction):
                     print(f"✅ Selected direction: {relative_direction} ({absolute_direction})")
                     return absolute_direction
                 else:
                     print(f"❌ {relative_direction} ({absolute_direction}) is blocked by wall!")
-                    # ลบออกจาก unexplored exits เพราะมีกำแพง
                     current_node.unexploredExits.remove(absolute_direction)
-        
+
         print(f"❌ No valid exploration direction found")
         return None
 
@@ -1051,7 +1199,7 @@ class GraphMapper:
         
         # Dead end detection
         blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        is_dead_end = blocked_count >= 3
+        is_dead_end = blocked_count >= 3 and len(node.unexploredExits) == 0
         node.isDeadEnd = is_dead_end
         
         if is_dead_end:
@@ -1867,6 +2015,8 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
 
+
+# 4. แก้ไขการตั้งค่า boundary ใน main
 if __name__ == '__main__':
     print("🤖 Connecting to robot...")
     ep_robot = robot.Robot()
@@ -1876,12 +2026,20 @@ if __name__ == '__main__':
     ep_chassis = ep_robot.chassis
     ep_sensor = ep_robot.sensor
     
-    # Initialize components
+    # Initialize components with STRICTER boundaries
     tof_handler = ToFSensorHandler()
-    graph_mapper = GraphMapper()
+    graph_mapper = GraphMapper(min_x=-1, min_y=-1, max_x=1, max_y=1)  # 3x3 grid
     movement_controller = MovementController(ep_chassis)
     attitude_handler = AttitudeHandler()
     attitude_handler.start_monitoring(ep_chassis)
+    
+    # ✅ เพิ่มการแสดงข้อมูล boundary
+    boundary_info = graph_mapper.get_boundary_status()
+    print(f"🗺️ MAP BOUNDARIES CONFIGURED:")
+    print(f"   📏 X range: [{boundary_info['min_x']}, {boundary_info['max_x']}]")
+    print(f"   📏 Y range: [{boundary_info['min_y']}, {boundary_info['max_y']}]")
+    print(f"   📐 Map size: {boundary_info['width']}x{boundary_info['height']} = {boundary_info['total_cells']} cells")
+    print(f"   🎯 Valid positions: Only within these boundaries!")
     
     try:
         print("✅ Recalibrating gimbal...")
@@ -1893,13 +2051,12 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                        graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
     except Exception as e:
         print(f"\n❌ Error: {e}")
-        import traceback
         traceback.print_exc()
     finally:
         try:
@@ -1910,3 +2067,853 @@ if __name__ == '__main__':
             pass
         ep_robot.close()
         print("🔌 Connection closed")
+
+# ===== Red Color Detection and Marker Scanning =====
+class RedColorDetector:
+    def __init__(self):
+        self.red_detected_angles = []
+        self.is_active = False
+        
+    def detect_red_color(self, camera, threshold_area=100, attempts=5):
+        """ตรวจจับสีแดงในภาพจากกล้อง"""
+        try:
+            for attempt in range(attempts):
+                try:
+                    frame = camera.read_cv2_image(strategy="newest", timeout=0.5)
+                    if frame is None:
+                        time.sleep(0.05)
+                        continue
+                        
+                    # แปลงเป็น HSV
+                    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+                    
+                    # ช่วงสีแดง (ปรับปรุงแล้วให้ครอบคลุมมากขึ้น)
+                    lower_red1 = np.array([0, 120, 70])
+                    upper_red1 = np.array([10, 255, 255])
+                    lower_red2 = np.array([170, 120, 70])
+                    upper_red2 = np.array([180, 255, 255])
+
+                    mask1 = cv2.inRange(hsv, lower_red1, upper_red1)
+                    mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
+                    mask = mask1 | mask2
+
+                    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    for cnt in contours:
+                        if cv2.contourArea(cnt) > threshold_area:
+                            return True
+                            
+                    # ถ้าไม่เจอสีแดงใน frame นี้ ให้ลองใหม่
+                    time.sleep(0.05)
+                    
+                except Exception as e:
+                    print(f"❌ Error reading frame: {e}")
+                    time.sleep(0.1)
+                    
+            return False
+        except Exception as e:
+            print(f"❌ detect_red error: {e}")
+            return False
+
+class EnhancedMarkerScanner:
+    def __init__(self, robot, gimbal, chassis, sensor, marker_handler, tof_handler):
+        self.robot = robot
+        self.gimbal = gimbal
+        self.chassis = chassis
+        self.sensor = sensor
+        self.marker_handler = marker_handler
+        self.tof_handler = tof_handler
+        self.red_detector = RedColorDetector()
+        self.red_detected_angles = []
+        
+    def scan_for_red_color_first(self):
+        """สแกนหาสีแดงในทุกทิศทางก่อน"""
+        print("\n🔴 === SCANNING FOR RED COLOR FIRST ===")
+        
+        # เปิด Video Stream และรอให้เสถียร
+        try:
+            camera = self.robot.camera
+            camera.start_video_stream(display=False, resolution="720p")
+            print("📹 Starting camera stream...")
+            time.sleep(1.0)  # รอให้ frame มาเสถียร
+        except Exception as e:
+            print(f"❌ Error starting camera: {e}")
+            return []
+            
+        # ล็อคล้อหุ่นยนต์ ไม่ให้ chassis เคลื่อน
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+        
+        # ทิศทางที่จะสแกน (หน้า, ซ้าย, ขวา, หลัง)
+        yaw_angles = [0, -90, 90, 180]
+        direction_names = ["หน้า", "ซ้าย", "ขวา", "หลัง"]
+        
+        self.red_detected_angles = []
+        
+        # ตรวจสีแดงในแต่ละทิศทาง
+        for i, yaw in enumerate(yaw_angles):
+            direction_name = direction_names[i]
+            print(f"\n🔄 หมุน Gimbal ไปที่ {direction_name} ({yaw}°) เพื่อตรวจจับสีแดง")
+            
+            # หมุน gimbal ไปยังทิศทางที่ต้องการ
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)  # รอให้กล้องเสถียร
+            
+            found_red = self.red_detector.detect_red_color(camera, threshold_area=100, attempts=5)
+            if found_red:
+                print(f"✅ เจอสีแดงที่ {direction_name} ({yaw}°)")
+                self.red_detected_angles.append(yaw)
+            else:
+                print(f"❌ ไม่เจอสีแดงที่ {direction_name} ({yaw}°)")
+        
+        # ปิด Video Stream หลังจากตรวจสีแดงเสร็จ
+        try:
+            camera.stop_video_stream()
+        except:
+            pass
+            
+        # ปลดล็อคล้อ
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0, timeout=0.1)
+        
+        print(f"\n🎯 สรุป: เจอสีแดงใน {len(self.red_detected_angles)} ทิศทาง: {self.red_detected_angles}")
+        return self.red_detected_angles
+        
+    def scan_markers_in_red_directions(self):
+        """สแกนหา marker เฉพาะในทิศทางที่เจอสีแดง"""
+        if not self.red_detected_angles:
+            print("❌ ไม่มีทิศทางที่เจอสีแดง - ไม่สามารถสแกน marker ได้")
+            return {}
+            
+        print(f"\n🎯 === SCANNING MARKERS (เฉพาะทิศทางที่เจอสีแดง) ===")
+        print(f"🔴 เจอสีแดงใน {len(self.red_detected_angles)} ทิศทาง: {self.red_detected_angles}")
+        
+        results = {}
+        direction_names = ["หน้า", "ซ้าย", "ขวา", "หลัง"]
+        
+        # สแกน marker ในแต่ละทิศทางที่เจอสีแดง
+        for yaw in self.red_detected_angles:
+            # หาชื่อทิศทาง
+            direction_name = "ไม่ทราบ"
+            if yaw == 0:
+                direction_name = "หน้า"
+            elif yaw == -90:
+                direction_name = "ซ้าย"
+            elif yaw == 90:
+                direction_name = "ขวา"
+            elif yaw == 180:
+                direction_name = "หลัง"
+                
+            print(f"\n🎯 สแกน Marker ที่ {direction_name} ({yaw}°)")
+            
+            # ไปทางทิศที่เจอสีแดงแล้วก้มลงหา
+            print(f"   🔄 Step 1: หมุนไปทิศทาง {direction_name} ({yaw}°)")
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)
+            
+            print(f"   🔄 Step 2: ก้มลงหา marker (pitch = -20°)")
+            self.gimbal.moveto(pitch=-20, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)
+            
+            # วัดระยะด้วย ToF
+            print("   📏 วัดระยะทาง...")
+            self.tof_handler.start_scanning()
+            self.sensor.sub_distance(freq=50, callback=self.tof_handler.tof_data_handler)
+            time.sleep(0.25)  # รอให้ข้อมูล ToF เสถียร
+            self.tof_handler.stop_scanning(self.sensor)
+            
+            distance = self.tof_handler.get_average_distance()
+            print(f"   📐 ระยะ: {distance:.2f} cm")
+            
+            # ตรวจ marker เฉพาะถ้าระยะใกล้พอ และมี ToF reading ที่ถูกต้อง
+            if distance > 0 and distance <= 50.0:
+                print("   ✅ ระยะใกล้พอ - ตรวจหา Marker...")
+                self.marker_handler.reset_detection()
+                detected = self.marker_handler.wait_for_markers(timeout=1.5)
+                
+                if detected and self.marker_handler.markers:
+                    marker_ids = [m.id for m in self.marker_handler.markers]
+                    results[yaw] = {
+                        'direction_name': direction_name,
+                        'marker_ids': marker_ids,
+                        'distance': distance,
+                        'found_red': True
+                    }
+                    print(f"   🎯 เจอ Marker: {marker_ids} ที่ {direction_name} ({yaw}°)")
+                else:
+                    results[yaw] = {
+                        'direction_name': direction_name,
+                        'marker_ids': [],
+                        'distance': distance,
+                        'found_red': True
+                    }
+                    print(f"   ❌ ไม่เจอ Marker ที่ {direction_name} ({yaw}°)")
+            else:
+                results[yaw] = {
+                    'direction_name': direction_name,
+                    'marker_ids': [],
+                    'distance': distance,
+                    'found_red': True,
+                    'reason': 'distance_issue'
+                }
+                if distance <= 0:
+                    print(f"   ❌ ToF sensor ไม่ได้อ่านค่า ({distance:.2f}cm)")
+                else:
+                    print(f"   ❌ ระยะไกลเกินไป ({distance:.2f}cm > 50cm)")
+            
+            # กลับขึ้นมาที่ pitch = 0
+            print(f"   🔄 Step 3: กลับขึ้นมาที่ pitch = 0°")
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)
+            
+            # เงยขึ้นเล็กน้อย
+            print(f"   🔄 Step 4: เงยขึ้นเล็กน้อย (pitch = 15°)")
+            self.gimbal.moveto(pitch=15, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)
+            
+            # กลับไปที่ pitch = 0
+            print(f"   🔄 Step 5: กลับไปที่ pitch = 0°")
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.3)
+        
+        # กลับไปตำแหน่งกลาง
+        print(f"\n🔄 กลับสู่ตำแหน่งกลาง...")
+        self.gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        
+        return results
+        
+    def enhanced_red_marker_scan(self):
+        """ฟังก์ชันหลักสำหรับการสแกนสีแดงและ marker แบบปรับปรุง"""
+        print("\n🚀 === ENHANCED RED COLOR + MARKER SCANNING ===")
+        
+        # ขั้นตอนที่ 1: สแกนหาสีแดงก่อน
+        red_angles = self.scan_for_red_color_first()
+        
+        if not red_angles:
+            print("\n❌ ไม่เจอสีแดงในทิศทางใดเลย - กลับสู่ตำแหน่งกลาง")
+            self.gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            return {}
+        
+        # ขั้นตอนที่ 2: สแกนหา marker ในทิศทางที่เจอสีแดง
+        marker_results = self.scan_markers_in_red_directions()
+        
+        # แสดงผลลัพธ์
+        self.print_enhanced_scan_results(marker_results)
+        
+        return marker_results
+        
+    def print_enhanced_scan_results(self, results):
+        """แสดงผลลัพธ์การสแกนแบบปรับปรุง"""
+        print("\n" + "="*70)
+        print("🔴 ENHANCED RED COLOR + MARKER DETECTION RESULTS")
+        print("="*70)
+        
+        if not results:
+            print("❌ ไม่พบสีแดงในทิศทางใดเลย")
+            return
+        
+        total_markers = 0
+        directions_with_markers = 0
+        
+        for yaw, info in results.items():
+            if info:
+                direction_name = info['direction_name']
+                marker_ids = info['marker_ids']
+                distance = info['distance']
+                
+                print(f"\n✅ {direction_name.upper()} ({yaw:+4d}°)")
+                print(f"   🔴 พบสีแดง: ใช่")
+                print(f"   📏 ระยะ: {distance:.2f} cm")
+                
+                if marker_ids:
+                    print(f"   🎯 Marker IDs: {marker_ids}")
+                    total_markers += len(marker_ids)
+                    directions_with_markers += 1
+                else:
+                    reason = info.get('reason', 'not_found')
+                    if reason == 'distance_issue':
+                        if distance <= 0:
+                            print(f"   🎯 Marker: ไม่ตรวจ (ToF sensor มีปัญหา)")
+                        else:
+                            print(f"   🎯 Marker: ไม่ตรวจ (ระยะไกลเกินไป)")
+                    else:
+                        print(f"   🎯 Marker: ไม่พบ")
+        
+        print(f"\n" + "="*70)
+        print(f"📊 สรุปผลการสแกนแบบปรับปรุง")
+        print(f"="*70)
+        print(f"🔴 ทิศทางที่พบสีแดง: {len(results)}")
+        print(f"🎯 ทิศทางที่พบ Marker: {directions_with_markers}")
+        print(f"🎯 จำนวน Marker ทั้งหมด: {total_markers}")
+        
+        # แสดงทิศทางที่เจอสีแดง
+        if self.red_detected_angles:
+            print(f"🔴 ทิศทางที่เจอสีแดง: {self.red_detected_angles}")
+            print(f"   📍 องศา: {[f'{angle:+d}°' for angle in self.red_detected_angles]}")
+
+    def slow_yaw_scan_in_red_directions(self, yaw_speed=30):
+        """หมุน yaw ช้าๆ ในทิศทางที่เจอสีแดงจากขวาไปซ้าย"""
+        if not self.red_detected_angles:
+            print("❌ ไม่มีทิศทางที่เจอสีแดง - ไม่สามารถทำ slow yaw scan ได้")
+            return {}
+            
+        print(f"\n🔄 === SLOW YAW SCAN IN RED DIRECTIONS ===")
+        print(f"🔴 ทิศทางที่เจอสีแดง: {self.red_detected_angles}")
+        print(f"⚙️ ความเร็ว yaw: {yaw_speed}°/s")
+        
+        # เรียงลำดับทิศทางจากขวาไปซ้าย (จากมุมมากไปน้อย)
+        sorted_angles = sorted(self.red_detected_angles, reverse=True)
+        print(f"🔄 ลำดับการสแกน (ขวาไปซ้าย): {sorted_angles}")
+        
+        results = {}
+        
+        for yaw in sorted_angles:
+            direction_name = self._get_direction_name(yaw)
+            print(f"\n🔄 === SLOW SCANNING {direction_name.upper()} ({yaw:+d}°) ===")
+            
+            # หมุนไปยังทิศทางที่ต้องการ
+            print(f"   🔄 หมุนไปทิศทาง {direction_name} ({yaw:+d}°)")
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.5)
+            
+            # เริ่มการสแกนช้าๆ
+            print(f"   🔍 เริ่มการสแกนช้าๆ...")
+            
+            # สแกนในทิศทางนั้นด้วยการหมุนช้าๆ
+            scan_result = self._slow_scan_in_direction(yaw, yaw_speed)
+            results[yaw] = scan_result
+            
+            print(f"   📊 ผลการสแกน: {scan_result}")
+            
+        # กลับไปตำแหน่งกลาง
+        print(f"\n🔄 กลับสู่ตำแหน่งกลาง...")
+        self.gimbal.moveto(pitch=0, yaw=0, pitch_speed=480, yaw_speed=480).wait_for_completed()
+        
+        return results
+        
+    def _slow_scan_in_direction(self, target_yaw, yaw_speed):
+        """สแกนช้าๆ ในทิศทางที่กำหนด"""
+        # กำหนดช่วงการสแกน (กว้าง 30 องศา)
+        scan_range = 30
+        start_yaw = target_yaw - scan_range // 2
+        end_yaw = target_yaw + scan_range // 2
+        
+        print(f"      📐 ช่วงการสแกน: {start_yaw:+d}° ถึง {end_yaw:+d}°")
+        
+        # เปิดกล้องสำหรับการสแกน
+        try:
+            camera = self.robot.camera
+            camera.start_video_stream(display=False, resolution="720p")
+            time.sleep(0.5)
+        except Exception as e:
+            print(f"      ❌ ไม่สามารถเปิดกล้องได้: {e}")
+            return {'error': 'camera_failed'}
+        
+        scan_results = {
+            'direction_name': self._get_direction_name(target_yaw),
+            'target_yaw': target_yaw,
+            'scan_range': scan_range,
+            'markers_found': [],
+            'red_detected': False,
+            'best_angle': None
+        }
+        
+        # สแกนจาก start_yaw ไป end_yaw ด้วยความเร็วช้า
+        current_yaw = start_yaw
+        step_size = 5  # หมุนทีละ 5 องศา
+        
+        while current_yaw <= end_yaw:
+            # หมุนไปยังมุมปัจจุบัน
+            self.gimbal.moveto(pitch=0, yaw=current_yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.2)  # รอให้เสถียร
+            
+            print(f"      🔍 สแกนที่ {current_yaw:+d}°...")
+            
+            # ตรวจหาสีแดง
+            red_found = self.red_detector.detect_red_color(camera, threshold_area=80, attempts=3)
+            if red_found:
+                print(f"         🔴 พบสีแดงที่ {current_yaw:+d}°")
+                scan_results['red_detected'] = True
+                
+                # ตรวจหา marker ที่มุมนี้
+                marker_found = self._check_marker_at_angle(current_yaw)
+                if marker_found:
+                    scan_results['markers_found'].append({
+                        'yaw': current_yaw,
+                        'marker_ids': marker_found
+                    })
+                    print(f"         🎯 พบ Marker: {marker_found} ที่ {current_yaw:+d}°")
+                    
+                    # บันทึกมุมที่ดีที่สุด
+                    if scan_results['best_angle'] is None:
+                        scan_results['best_angle'] = current_yaw
+            
+            # หมุนไปมุมถัดไป
+            current_yaw += step_size
+            
+            # รอให้การหมุนเสร็จ
+            time.sleep(0.1)
+        
+        # ปิดกล้อง
+        try:
+            camera.stop_video_stream()
+        except:
+            pass
+            
+        return scan_results
+        
+    def _check_marker_at_angle(self, yaw):
+        """ตรวจหา marker ที่มุมที่กำหนด"""
+        try:
+            # ก้มลงเล็กน้อยเพื่อหา marker
+            self.gimbal.moveto(pitch=-15, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            time.sleep(0.2)
+            
+            # วัดระยะ
+            self.tof_handler.start_scanning()
+            self.sensor.sub_distance(freq=50, callback=self.tof_handler.tof_data_handler)
+            time.sleep(0.2)
+            self.tof_handler.stop_scanning(self.sensor)
+            
+            distance = self.tof_handler.get_average_distance()
+            
+            if distance > 0 and distance <= 50.0:
+                # ตรวจหา marker
+                self.marker_handler.reset_detection()
+                detected = self.marker_handler.wait_for_markers(timeout=1.0)
+                
+                if detected and self.marker_handler.markers:
+                    marker_ids = [m.id for m in self.marker_handler.markers]
+                    return marker_ids
+            
+            # กลับไป pitch = 0
+            self.gimbal.moveto(pitch=0, yaw=yaw, pitch_speed=480, yaw_speed=480).wait_for_completed()
+            
+        except Exception as e:
+            print(f"         ❌ ข้อผิดพลาดในการตรวจ marker: {e}")
+            
+        return None
+        
+    def _get_direction_name(self, yaw):
+        """แปลงมุม yaw เป็นชื่อทิศทาง"""
+        if yaw == 0:
+            return "หน้า"
+        elif yaw == -90:
+            return "ซ้าย"
+        elif yaw == 90:
+            return "ขวา"
+        elif yaw == 180:
+            return "หลัง"
+        else:
+            return f"มุม{yaw:+d}°"
+            
+    def comprehensive_red_marker_scan(self):
+        """ฟังก์ชันหลักที่รวมการสแกนสีแดง, marker และ slow yaw scan"""
+        print("\n🚀 === COMPREHENSIVE RED COLOR + MARKER SCANNING ===")
+        
+        # ขั้นตอนที่ 1: สแกนหาสีแดงก่อน
+        print("\n📋 ขั้นตอนที่ 1: สแกนหาสีแดง")
+        red_angles = self.scan_for_red_color_first()
+        
+        if not red_angles:
+            print("\n❌ ไม่เจอสีแดงในทิศทางใดเลย")
+            return {}
+        
+        # ขั้นตอนที่ 2: สแกนหา marker ในทิศทางที่เจอสีแดง
+        print("\n📋 ขั้นตอนที่ 2: สแกนหา marker ในทิศทางที่เจอสีแดง")
+        marker_results = self.scan_markers_in_red_directions()
+        
+        # ขั้นตอนที่ 3: Slow yaw scan ในทิศทางที่เจอสีแดง
+        print("\n📋 ขั้นตอนที่ 3: Slow yaw scan ในทิศทางที่เจอสีแดง")
+        slow_scan_results = self.slow_yaw_scan_in_red_directions()
+        
+        # รวมผลลัพธ์ทั้งหมด
+        comprehensive_results = {
+            'red_detection': {
+                'angles': red_angles,
+                'count': len(red_angles)
+            },
+            'marker_scan': marker_results,
+            'slow_yaw_scan': slow_scan_results
+        }
+        
+        # แสดงผลลัพธ์รวม
+        self.print_comprehensive_results(comprehensive_results)
+        
+        return comprehensive_results
+        
+    def print_comprehensive_results(self, results):
+        """แสดงผลลัพธ์การสแกนแบบครบถ้วน"""
+        print("\n" + "="*80)
+        print("🚀 COMPREHENSIVE RED COLOR + MARKER SCANNING RESULTS")
+        print("="*80)
+        
+        # แสดงผลการตรวจจับสีแดง
+        red_info = results['red_detection']
+        print(f"\n🔴 RED COLOR DETECTION:")
+        print(f"   📍 พบสีแดงใน {red_info['count']} ทิศทาง")
+        print(f"   📐 มุมที่เจอ: {red_info['angles']}")
+        
+        # แสดงผลการสแกน marker
+        marker_info = results['marker_scan']
+        if marker_info:
+            print(f"\n🎯 MARKER SCANNING RESULTS:")
+            for yaw, info in marker_info.items():
+                direction = info['direction_name']
+                markers = info['marker_ids']
+                distance = info['distance']
+                print(f"   {direction} ({yaw:+d}°): Marker {markers}, ระยะ {distance:.1f}cm")
+        else:
+            print(f"\n🎯 MARKER SCANNING: ไม่พบ marker")
+        
+        # แสดงผลการ slow yaw scan
+        slow_scan_info = results['slow_yaw_scan']
+        if slow_scan_info:
+            print(f"\n🔄 SLOW YAW SCAN RESULTS:")
+            for yaw, info in slow_scan_info.items():
+                direction = info['direction_name']
+                red_found = "✅" if info['red_detected'] else "❌"
+                markers = info['markers_found']
+                best_angle = info['best_angle']
+                print(f"   {direction} ({yaw:+d}°): {red_found} สีแดง, Marker {markers}")
+                if best_angle:
+                    print(f"      🎯 มุมที่ดีที่สุด: {best_angle:+d}°")
+        
+        print(f"\n" + "="*80)
+        print("✅ การสแกนเสร็จสิ้น!")
+
+# ===== Example Usage Functions =====
+def example_enhanced_red_marker_scan():
+    """ตัวอย่างการใช้งาน Enhanced Red Color + Marker Scanner"""
+    print("🤖 === EXAMPLE: ENHANCED RED COLOR + MARKER SCANNING ===")
+    
+    # เชื่อมต่อหุ่นยนต์
+    ep_robot = robot.Robot()
+    
+    try:
+        ep_robot.initialize(conn_type="ap")
+        print("✅ Robot connected successfully!")
+        
+        # สร้าง instances ของ handlers
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        ep_vision = ep_robot.vision
+        
+        # สร้าง marker handler และ tof handler
+        marker_handler = MarkerVisionHandler()
+        tof_handler = ToFSensorHandler()
+        
+        # เริ่มการตรวจจับ marker
+        marker_handler.start_continuous_detection(ep_vision)
+        
+        # สร้าง enhanced marker scanner
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            marker_handler, tof_handler
+        )
+        
+        # ทำการสแกนแบบครบถ้วน
+        results = enhanced_scanner.comprehensive_red_marker_scan()
+        
+        print("\n🎉 การสแกนเสร็จสิ้น!")
+        return results
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        return None
+    finally:
+        try:
+            marker_handler.stop_continuous_detection(ep_vision)
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 Connection closed")
+
+def example_simple_red_scan():
+    """ตัวอย่างการใช้งานแบบง่าย - สแกนหาสีแดงเท่านั้น"""
+    print("🤖 === EXAMPLE: SIMPLE RED COLOR SCANNING ===")
+    
+    # เชื่อมต่อหุ่นยนต์
+    ep_robot = robot.Robot()
+    
+    try:
+        ep_robot.initialize(conn_type="ap")
+        print("✅ Robot connected successfully!")
+        
+        # สร้าง instances ของ handlers
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        
+        # สร้าง tof handler
+        tof_handler = ToFSensorHandler()
+        
+        # สร้าง enhanced marker scanner
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            None, tof_handler  # ไม่ใช้ marker handler
+        )
+        
+        # ทำการสแกนหาสีแดงเท่านั้น
+        red_angles = enhanced_scanner.scan_for_red_color_first()
+        
+        print(f"\n🎯 ผลการสแกนสีแดง: {red_angles}")
+        return red_angles
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        return None
+    finally:
+        ep_robot.close()
+        print("🔌 Connection closed")
+
+def example_marker_scan_only():
+    """ตัวอย่างการใช้งาน - สแกนหา marker เท่านั้น (ต้องมีข้อมูลสีแดงก่อน)"""
+    print("🤖 === EXAMPLE: MARKER SCANNING ONLY ===")
+    
+    # เชื่อมต่อหุ่นยนต์
+    ep_robot = robot.Robot()
+    
+    try:
+        ep_robot.initialize(conn_type="ap")
+        print("✅ Robot connected successfully!")
+        
+        # สร้าง instances ของ handlers
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        ep_vision = ep_robot.vision
+        
+        # สร้าง marker handler และ tof handler
+        marker_handler = MarkerVisionHandler()
+        tof_handler = ToFSensorHandler()
+        
+        # เริ่มการตรวจจับ marker
+        marker_handler.start_continuous_detection(ep_vision)
+        
+        # สร้าง enhanced marker scanner
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            marker_handler, tof_handler
+        )
+        
+        # กำหนดทิศทางที่เจอสีแดง (ตัวอย่าง)
+        enhanced_scanner.red_detected_angles = [0, 90]  # หน้าและขวา
+        
+        # ทำการสแกนหา marker
+        marker_results = enhanced_scanner.scan_markers_in_red_directions()
+        
+        print(f"\n🎯 ผลการสแกน marker: {marker_results}")
+        return marker_results
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        traceback.print_exc()
+        return None
+    finally:
+        try:
+            marker_handler.stop_continuous_detection(ep_vision)
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 Connection closed")
+
+# ===== MAIN FUNCTION FOR ENHANCED SCANNING =====
+def main_red_marker_scanning():
+    """ฟังก์ชันหลักสำหรับการสแกนสีแดงและ marker"""
+    print("🚀 === MAIN RED COLOR + MARKER SCANNING SYSTEM ===")
+    print("ระบบการสแกนสีแดงและ marker แบบปรับปรุง")
+    print("=" * 60)
+    
+    # เชื่อมต่อหุ่นยนต์
+    ep_robot = robot.Robot()
+    
+    try:
+        print("🤖 กำลังเชื่อมต่อหุ่นยนต์...")
+        ep_robot.initialize(conn_type="ap")
+        print("✅ เชื่อมต่อหุ่นยนต์สำเร็จ!")
+        
+        # สร้าง instances ของ handlers
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        ep_vision = ep_robot.vision
+        
+        # สร้าง marker handler และ tof handler
+        marker_handler = MarkerVisionHandler()
+        tof_handler = ToFSensorHandler()
+        
+        # เริ่มการตรวจจับ marker
+        print("🎯 เริ่มการตรวจจับ marker...")
+        marker_handler.start_continuous_detection(ep_vision)
+        
+        # สร้าง enhanced marker scanner
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            marker_handler, tof_handler
+        )
+        
+        print("\n🔴 === เริ่มการสแกนสีแดงและ marker ===")
+        
+        # ทำการสแกนแบบครบถ้วน
+        results = enhanced_scanner.comprehensive_red_marker_scan()
+        
+        if results:
+            print("\n🎉 การสแกนสำเร็จ!")
+            print(f"🔴 พบสีแดงใน {results['red_detection']['count']} ทิศทาง")
+            print(f"📍 ทิศทางที่เจอ: {results['red_detection']['angles']}")
+            
+            # แสดงผลลัพธ์เพิ่มเติม
+            if 'marker_scan' in results and results['marker_scan']:
+                print(f"🎯 พบ marker ใน {len(results['marker_scan'])} ทิศทาง")
+                
+            if 'slow_yaw_scan' in results and results['slow_yaw_scan']:
+                print(f"🔄 ทำการ slow yaw scan ใน {len(results['slow_yaw_scan'])} ทิศทาง")
+                
+        else:
+            print("\n❌ การสแกนไม่สำเร็จ")
+            
+        return results
+        
+    except KeyboardInterrupt:
+        print("\n⚠️ หยุดการทำงานโดยผู้ใช้")
+        return None
+    except Exception as e:
+        print(f"\n❌ เกิดข้อผิดพลาด: {e}")
+        traceback.print_exc()
+        return None
+    finally:
+        try:
+            if 'marker_handler' in locals() and 'ep_vision' in locals():
+                marker_handler.stop_continuous_detection(ep_vision)
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 ปิดการเชื่อมต่อหุ่นยนต์")
+
+def quick_red_scan():
+    """การสแกนสีแดงแบบเร็ว"""
+    print("🔴 === QUICK RED COLOR SCAN ===")
+    
+    ep_robot = robot.Robot()
+    
+    try:
+        ep_robot.initialize(conn_type="ap")
+        print("✅ เชื่อมต่อหุ่นยนต์สำเร็จ!")
+        
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        
+        tof_handler = ToFSensorHandler()
+        
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            None, tof_handler
+        )
+        
+        red_angles = enhanced_scanner.scan_for_red_color_first()
+        
+        if red_angles:
+            print(f"🎯 พบสีแดงใน {len(red_angles)} ทิศทาง: {red_angles}")
+        else:
+            print("❌ ไม่พบสีแดงในทิศทางใดเลย")
+            
+        return red_angles
+        
+    except Exception as e:
+        print(f"❌ ข้อผิดพลาด: {e}")
+        return None
+    finally:
+        ep_robot.close()
+        print("🔌 ปิดการเชื่อมต่อ")
+
+def quick_marker_scan(red_angles=None):
+    """การสแกน marker แบบเร็ว (ต้องมีข้อมูลสีแดงก่อน)"""
+    print("🎯 === QUICK MARKER SCAN ===")
+    
+    if red_angles is None:
+        red_angles = [0, 90]  # ตัวอย่าง: หน้าและขวา
+        print(f"⚠️ ใช้ทิศทางตัวอย่าง: {red_angles}")
+    
+    ep_robot = robot.Robot()
+    
+    try:
+        ep_robot.initialize(conn_type="ap")
+        print("✅ เชื่อมต่อหุ่นยนต์สำเร็จ!")
+        
+        ep_gimbal = ep_robot.gimbal
+        ep_chassis = ep_robot.chassis
+        ep_sensor = ep_robot.sensor
+        ep_vision = ep_robot.vision
+        
+        marker_handler = MarkerVisionHandler()
+        tof_handler = ToFSensorHandler()
+        
+        marker_handler.start_continuous_detection(ep_vision)
+        
+        enhanced_scanner = EnhancedMarkerScanner(
+            ep_robot, ep_gimbal, ep_chassis, ep_sensor, 
+            marker_handler, tof_handler
+        )
+        
+        enhanced_scanner.red_detected_angles = red_angles
+        
+        marker_results = enhanced_scanner.scan_markers_in_red_directions()
+        
+        if marker_results:
+            print(f"🎯 พบ marker ใน {len(marker_results)} ทิศทาง")
+        else:
+            print("❌ ไม่พบ marker ในทิศทางใดเลย")
+            
+        return marker_results
+        
+    except Exception as e:
+        print(f"❌ ข้อผิดพลาด: {e}")
+        return None
+    finally:
+        try:
+            if 'marker_handler' in locals() and 'ep_vision' in locals():
+                marker_handler.stop_continuous_detection(ep_vision)
+        except:
+            pass
+        ep_robot.close()
+        print("🔌 ปิดการเชื่อมต่อ")
+
+# ===== ENHANCED MAIN FUNCTION =====
+if __name__ == "__main__":
+    print("🔴 === ENHANCED RED COLOR + MARKER SCANNING SYSTEM ===")
+    print("ระบบการสแกนสีแดงและ marker แบบปรับปรุง")
+    print("=" * 70)
+    
+    print("\n📋 เลือกฟังก์ชันที่ต้องการ:")
+    print("1. main_red_marker_scanning() - สแกนครบถ้วน (แนะนำ)")
+    print("2. quick_red_scan() - สแกนสีแดงเท่านั้น")
+    print("3. quick_marker_scan() - สแกน marker เท่านั้น")
+    print("4. example_enhanced_red_marker_scan() - ตัวอย่างการใช้งาน")
+    
+    try:
+        # ใช้ฟังก์ชันหลัก
+        print("\n🚀 เริ่มการสแกนแบบครบถ้วน...")
+        results = main_red_marker_scanning()
+        
+        if results:
+            print("\n🎉 การสแกนเสร็จสิ้น!")
+            print("📊 ผลลัพธ์:")
+            print(f"   🔴 สีแดง: {results['red_detection']['count']} ทิศทาง")
+            print(f"   📍 มุม: {results['red_detection']['angles']}")
+            
+            if 'marker_scan' in results:
+                marker_count = len([k for k, v in results['marker_scan'].items() if v.get('marker_ids')])
+                print(f"   🎯 Marker: {marker_count} ทิศทาง")
+                
+        else:
+            print("\n❌ การสแกนไม่สำเร็จ")
+            
+    except KeyboardInterrupt:
+        print("\n⚠️ หยุดการทำงานโดยผู้ใช้")
+    except Exception as e:
+        print(f"\n❌ เกิดข้อผิดพลาด: {e}")
+        traceback.print_exc()
+    
+    print("\n🔚 ระบบเสร็จสิ้น")
