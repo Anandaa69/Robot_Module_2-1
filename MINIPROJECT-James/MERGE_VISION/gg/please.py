@@ -2754,7 +2754,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
+                        graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
         
         # Export maze data to JSON file
         export_maze_data_to_json(graph_mapper, "maze_data.json")
