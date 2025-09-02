@@ -2,7 +2,7 @@ import cv2
 import os
 
 # โหลดภาพต้นฉบับ
-image_path = "./image/resized image/pic3_resize25.jpg"
+image_path = "./image/capture_1756180115.jpg"
 
 image = cv2.imread(image_path)
 
