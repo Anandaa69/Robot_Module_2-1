@@ -5,11 +5,11 @@ from robomaster import robot
 from robomaster import camera
 
 # --------------------------------------------------------------------
-# ส่วนที่ 1: ฟังก์ชัน (แก้ไขฟังก์ชัน refine_box)
+# ส่วนที่ 1: ฟังก์ชัน (แก้ไขฟังก์ชัน refine_box อีกครั้ง)
 # --------------------------------------------------------------------
 
 def create_pink_mask(img_rgb):
-    """สร้าง mask สำหรับสีชมพู"""
+    # ... (ไม่มีการเปลี่ยนแปลง)
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     lower_pink = np.array([120, 10, 100])
@@ -21,14 +21,11 @@ def create_pink_mask(img_rgb):
     return mask
 
 # ==========================[ ฟังก์ชันที่แก้ไข ]===========================
-def refine_box_by_pink_mask(full_frame, original_tl, original_br, padding=5):
+# เอา parameter 'padding' ออกไปทั้งหมด
+def refine_box_by_pink_mask(full_frame, original_tl, original_br):
     """
     ปรับแก้ Bounding Box ให้แม่นยำขึ้นโดยหาขอบของ Mask สีชมพูภายใน Box เดิม
-    :param full_frame: เฟรมภาพต้นฉบับขนาดเต็ม
-    :param original_tl: พิกัด Top-Left ของ Box เดิม (x, y)
-    :param original_br: พิกัด Bottom-Right ของ Box เดิม (x, y)
-    :param padding: จำนวน pixel ที่จะขยายกรอบสุดท้ายออกไป
-    :return: พิกัด (new_tl, new_br) ของ Box ที่ปรับแก้แล้ว
+    **รับประกันว่ากรอบใหม่จะไม่ใหญ่กว่ากรอบเดิม**
     """
     h_frame, w_frame, _ = full_frame.shape
     x1, y1 = max(0, original_tl[0]), max(0, original_tl[1])
@@ -37,43 +34,43 @@ def refine_box_by_pink_mask(full_frame, original_tl, original_br, padding=5):
     if x1 >= x2 or y1 >= y2:
         return original_tl, original_br
 
-    # ตัดภาพเฉพาะส่วนที่สนใจ (ROI)
     roi = full_frame[y1:y2, x1:x2]
+    
+    # ถ้า ROI ไม่มีขนาด ก็ไม่ต้องทำอะไรต่อ
+    if roi.shape[0] == 0 or roi.shape[1] == 0:
+        return original_tl, original_br
 
-    # แปลง ROI เป็น HSV และใช้ inRange สีชมพู (ค่าเดียวกับฟังก์ชันหลัก)
     hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
     lower_pink = np.array([120, 10, 100])
     upper_pink = np.array([170, 100, 200])
     pink_mask = cv2.inRange(hsv_roi, lower_pink, upper_pink)
-
-    # ทำความสะอาด Mask ภายใน ROI เพื่อความแม่นยำ
+    
     kernel = np.ones((3, 3), np.uint8)
     pink_mask = cv2.morphologyEx(pink_mask, cv2.MORPH_CLOSE, kernel)
 
-    # หาตำแหน่งของ pixel ที่เป็นสีชมพูทั้งหมด
     pink_pixels = np.where(pink_mask > 0)
     
-    # ถ้าไม่เจอ pixel สีชมพูเลย ให้คืนค่ากรอบเดิม
     if not pink_pixels[0].size > 0:
         return original_tl, original_br
 
-    # หาขอบเขต (ซ้ายสุด, ขวาสุด, บนสุด, ล่างสุด) ของ pixel สีชมพู
     min_y = np.min(pink_pixels[0])
     max_y = np.max(pink_pixels[0])
     min_x = np.min(pink_pixels[1])
     max_x = np.max(pink_pixels[1])
 
-    # แปลงพิกัดที่ได้กลับเป็นพิกัดของเฟรมเต็ม และเพิ่ม padding
-    new_tl_x = max(0, x1 + min_x - padding)
-    new_tl_y = max(0, y1 + min_y - padding)
-    new_br_x = min(w_frame, x1 + max_x + padding)
-    new_br_y = min(h_frame, y1 + max_y + padding)
+    # --- จุดที่เปลี่ยนแปลง ---
+    # คำนวณพิกัดใหม่โดยไม่มีการบวกหรือลบ padding ใดๆ
+    # พิกัดใหม่จะขึ้นอยู่กับพิกัดของ ROI (x1, y1) และขอบเขตที่เจอ (min_x, max_x, ...)
+    new_tl_x = x1 + min_x
+    new_tl_y = y1 + min_y
+    new_br_x = x1 + max_x
+    new_br_y = y1 + max_y
     
     return (new_tl_x, new_tl_y), (new_br_x, new_br_y)
 # =====================================================================
 
+# (ฟังก์ชัน match_template_masked, calculate_iou, advanced_prioritized_nms เหมือนเดิมทั้งหมด)
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
-    # ... (ไม่มีการเปลี่ยนแปลง)
     if tmpl_masked.shape[0] > img_masked.shape[0] or tmpl_masked.shape[1] > img_masked.shape[1]:
         return []
     result = cv2.matchTemplate(img_masked, tmpl_masked, cv2.TM_CCOEFF_NORMED)
@@ -86,7 +83,6 @@ def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     return boxes
 
 def calculate_iou(box1, box2):
-    # ... (ไม่มีการเปลี่ยนแปลง)
     x1_1, y1_1 = box1[0]; x2_1, y2_1 = box1[1]
     x1_2, y1_2 = box2[0]; x2_2, y2_2 = box2[1]
     x1_i = max(x1_1, x1_2); y1_i = max(y1_1, y1_2)
@@ -98,7 +94,6 @@ def calculate_iou(box1, box2):
     return intersection_area / union_area if union_area > 0 else 0.0
 
 def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
-    # ... (ไม่มีการเปลี่ยนแปลง)
     if not boxes_with_scores: return []
     detections = sorted(boxes_with_scores, key=lambda x: x[3])
     final_boxes = []
@@ -116,15 +111,14 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
         detections = remaining_boxes
     return final_boxes
 
+
 # ---------------------------------------------------
 # ส่วนที่ 2: การทำงานหลัก (Main Program)
 # ---------------------------------------------------
 
 def main():
-    """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับ"""
-    
+    # ... (ส่วนตั้งค่าและโหลด template เหมือนเดิม) ...
     PROCESSING_WIDTH = 640.0
-    
     TEMPLATE_FILES = [
         "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg",
         "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",
@@ -132,9 +126,6 @@ def main():
     ]
     MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.1
-    
-    # (ส่วนของการโหลด template และเชื่อมต่อหุ่นยนต์ เหมือนเดิมทั้งหมด)
-    # ...
     print("Loading and processing templates...")
     templates_original = []
     try:
@@ -144,25 +135,20 @@ def main():
             templates_original.append(tmpl)
     except FileNotFoundError as e:
         print(f"Error: {e}"); return
-
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
     ep_camera = ep_robot.camera
     ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
-    
     print("Waiting for first frame to calculate scale...")
     frame_for_scale = ep_camera.read_cv2_image(timeout=5)
     if frame_for_scale is None:
         print("Error: Could not get frame from camera.")
         ep_robot.close()
         return
-        
     h_orig, w_orig, _ = frame_for_scale.shape
     processing_scale = PROCESSING_WIDTH / w_orig
     h_proc = int(h_orig * processing_scale)
-    
     print(f"Original frame: {w_orig}x{h_orig}, Processing at: {int(PROCESSING_WIDTH)}x{h_proc}")
-    
     templates_masked = []
     for tmpl in templates_original:
         w_tmpl = int(tmpl.shape[1] * processing_scale)
@@ -173,7 +159,6 @@ def main():
         tmpl_gray = cv2.cvtColor(tmpl_rgb, cv2.COLOR_RGB2GRAY)
         tmpl_masked = cv2.bitwise_and(tmpl_gray, tmpl_gray, mask=tmpl_pink_mask)
         templates_masked.append(tmpl_masked)
-        
     print("Robot connected. Starting real-time detection...")
 
     try:
@@ -182,21 +167,18 @@ def main():
             frame = ep_camera.read_cv2_image()
             if frame is None: continue
 
+            # ... (ส่วนประมวลผลหลักเหมือนเดิม) ...
             frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
-            
             frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
             main_pink_mask = create_pink_mask(frame_rgb)
             main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
             main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
-
             all_detections = []
             colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
-            
             for i, tmpl_masked in enumerate(templates_masked):
                 boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
                 for top_left, bottom_right, confidence in boxes:
                     all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
-
             final_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
             
             current_time = time.time()
@@ -205,16 +187,16 @@ def main():
             cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             for top_left, bottom_right, confidence, template_id, color in final_detections:
-                # แปลงพิกัดกลับไปเป็นขนาดของเฟรมดั้งเดิม
                 tl_orig = (int(top_left[0] / processing_scale), int(top_left[1] / processing_scale))
                 br_orig = (int(bottom_right[0] / processing_scale), int(bottom_right[1] / processing_scale))
                 
-                # เรียกใช้ฟังก์ชันใหม่เพื่อปรับแก้กรอบให้แม่นยำขึ้นด้วย Mask สีชมพู
-                refined_tl, refined_br = refine_box_by_pink_mask(frame, tl_orig, br_orig, padding=5)
+                # --- จุดที่เปลี่ยนแปลง ---
+                # เรียกใช้ฟังก์ชันโดยไม่มี padding
+                refined_tl, refined_br = refine_box_by_pink_mask(frame, tl_orig, br_orig)
 
-                # ใช้พิกัดที่ปรับแก้แล้ว (refined) ในการวาด
+                # วาดกรอบที่ปรับแก้แล้ว
                 cv2.rectangle(frame, refined_tl, refined_br, color, 3)
-                label = f"T{template_id+1} (Refined Fit)"
+                label = f"T{template_id+1} (Tight Fit)"
                 cv2.putText(frame, label, (refined_tl[0], refined_tl[1] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
