@@ -231,9 +231,9 @@ def detect_pink_objects_in_frame(detector, frame):
 if __name__ == '__main__':
     # กำหนด template paths (แก้ไข path ให้ตรงกับไฟล์จริง)
     template_paths = [
-        "template/template_pic1_x_573_y_276_w_115_h_312.jpg",
-        "template/template_pic2_x_634_y_291_w_50_h_134.jpg",
-        "template/template_pic3_x_629_y_291_w_35_h_92.jpg"
+        "../../../image/template/template_pic1_x_573_y_276_w_115_h_312.jpg",
+        "../../../image/template/template_pic2_x_634_y_291_w_50_h_134.jpg",
+        "../../../image/template/template_pic3_x_629_y_291_w_35_h_92.jpg"
     ]
     
     # สร้าง Pink Object Detector
