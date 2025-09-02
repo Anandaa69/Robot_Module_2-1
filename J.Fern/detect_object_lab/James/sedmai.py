@@ -5,11 +5,11 @@ from robomaster import robot
 from robomaster import camera
 
 # --------------------------------------------------------------------
-# ส่วนที่ 1: ฟังก์ชัน (เพิ่มฟังก์ชันใหม่)
+# ส่วนที่ 1: ฟังก์ชัน (แก้ไขฟังก์ชัน refine_box)
 # --------------------------------------------------------------------
 
 def create_pink_mask(img_rgb):
-    # ... (ไม่มีการเปลี่ยนแปลง)
+    """สร้าง mask สำหรับสีชมพู"""
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     lower_pink = np.array([120, 10, 100])
@@ -20,52 +20,50 @@ def create_pink_mask(img_rgb):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
 
-# ==========================[ ฟังก์ชันใหม่ ]===========================
-def refine_box_by_white_edges(full_frame, original_tl, original_br, padding=5):
+# ==========================[ ฟังก์ชันที่แก้ไข ]===========================
+def refine_box_by_pink_mask(full_frame, original_tl, original_br, padding=5):
     """
-    ปรับแก้ Bounding Box ให้แม่นยำขึ้นโดยหาขอบสีขาวภายใน Box เดิม
+    ปรับแก้ Bounding Box ให้แม่นยำขึ้นโดยหาขอบของ Mask สีชมพูภายใน Box เดิม
     :param full_frame: เฟรมภาพต้นฉบับขนาดเต็ม
     :param original_tl: พิกัด Top-Left ของ Box เดิม (x, y)
     :param original_br: พิกัด Bottom-Right ของ Box เดิม (x, y)
-    :param padding: จำนวน pixel ที่จะขยายกรอบสุดท้ายออกไปเพื่อความสวยงาม
+    :param padding: จำนวน pixel ที่จะขยายกรอบสุดท้ายออกไป
     :return: พิกัด (new_tl, new_br) ของ Box ที่ปรับแก้แล้ว
     """
-    # ป้องกัน error หากพิกัดอยู่นอกขอบเขตภาพ
     h_frame, w_frame, _ = full_frame.shape
     x1, y1 = max(0, original_tl[0]), max(0, original_tl[1])
     x2, y2 = min(w_frame, original_br[0]), min(h_frame, original_br[1])
 
-    # ถ้ากรอบไม่มีพื้นที่ ให้คืนค่าเดิม
     if x1 >= x2 or y1 >= y2:
         return original_tl, original_br
 
     # ตัดภาพเฉพาะส่วนที่สนใจ (ROI)
     roi = full_frame[y1:y2, x1:x2]
 
-    # แปลง ROI เป็น HSV เพื่อหาขอบสีขาว
+    # แปลง ROI เป็น HSV และใช้ inRange สีชมพู (ค่าเดียวกับฟังก์ชันหลัก)
     hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    
-    # กำหนดช่วงสีขาวในระบบ HSV
-    # Hue สามารถเป็นค่าใดก็ได้, Saturation ต่ำ, Value สูง
-    lower_white = np.array([0, 0, 180])
-    upper_white = np.array([180, 50, 255])
-    white_mask = cv2.inRange(hsv_roi, lower_white, upper_white)
+    lower_pink = np.array([120, 10, 100])
+    upper_pink = np.array([170, 100, 200])
+    pink_mask = cv2.inRange(hsv_roi, lower_pink, upper_pink)
 
-    # หาตำแหน่งของ pixel ที่เป็นสีขาวทั้งหมด
-    white_pixels = np.where(white_mask > 0)
+    # ทำความสะอาด Mask ภายใน ROI เพื่อความแม่นยำ
+    kernel = np.ones((3, 3), np.uint8)
+    pink_mask = cv2.morphologyEx(pink_mask, cv2.MORPH_CLOSE, kernel)
+
+    # หาตำแหน่งของ pixel ที่เป็นสีชมพูทั้งหมด
+    pink_pixels = np.where(pink_mask > 0)
     
-    # ถ้าไม่เจอ pixel สีขาวเลย ให้คืนค่ากรอบเดิม
-    if not white_pixels[0].size > 0:
+    # ถ้าไม่เจอ pixel สีชมพูเลย ให้คืนค่ากรอบเดิม
+    if not pink_pixels[0].size > 0:
         return original_tl, original_br
 
-    # หาขอบเขต (ซ้ายสุด, ขวาสุด, บนสุด, ล่างสุด) ของ pixel สีขาว
-    min_y = np.min(white_pixels[0])
-    max_y = np.max(white_pixels[0])
-    min_x = np.min(white_pixels[1])
-    max_x = np.max(white_pixels[1])
+    # หาขอบเขต (ซ้ายสุด, ขวาสุด, บนสุด, ล่างสุด) ของ pixel สีชมพู
+    min_y = np.min(pink_pixels[0])
+    max_y = np.max(pink_pixels[0])
+    min_x = np.min(pink_pixels[1])
+    max_x = np.max(pink_pixels[1])
 
-    # แปลงพิกัดที่ได้ (ซึ่งเป็นพิกัดภายใน ROI) กลับเป็นพิกัดของเฟรมเต็ม
-    # และเพิ่ม padding เข้าไป
+    # แปลงพิกัดที่ได้กลับเป็นพิกัดของเฟรมเต็ม และเพิ่ม padding
     new_tl_x = max(0, x1 + min_x - padding)
     new_tl_y = max(0, y1 + min_y - padding)
     new_br_x = min(w_frame, x1 + max_x + padding)
@@ -119,7 +117,7 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
     return final_boxes
 
 # ---------------------------------------------------
-# ส่วนที่ 2: การทำงานหลัก (Main Program) - ปรับปรุงเพื่อเรียกใช้ฟังก์ชันใหม่
+# ส่วนที่ 2: การทำงานหลัก (Main Program)
 # ---------------------------------------------------
 
 def main():
@@ -128,15 +126,13 @@ def main():
     PROCESSING_WIDTH = 640.0
     
     TEMPLATE_FILES = [
-        "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg", # T1
-        "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",  # T2
-        "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"   # T3
+        "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg",
+        "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",
+        "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"
     ]
     MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.1
-    # ตัวแปรสำหรับชดเชยตำแหน่งแกน Y (ยังคงไว้เผื่อต้องใช้ปรับแก้ขั้นสุดท้าย)
-    Y_AXIS_ADJUSTMENT = 0 
-
+    
     # (ส่วนของการโหลด template และเชื่อมต่อหุ่นยนต์ เหมือนเดิมทั้งหมด)
     # ...
     print("Loading and processing templates...")
@@ -213,19 +209,13 @@ def main():
                 tl_orig = (int(top_left[0] / processing_scale), int(top_left[1] / processing_scale))
                 br_orig = (int(bottom_right[0] / processing_scale), int(bottom_right[1] / processing_scale))
                 
-                # ==========================[ จุดปรับแก้ ]===========================
-                # เรียกใช้ฟังก์ชันใหม่เพื่อปรับแก้กรอบให้แม่นยำขึ้น
-                refined_tl, refined_br = refine_box_by_white_edges(frame, tl_orig, br_orig, padding=5)
-                
-                # นำค่า Y_AXIS_ADJUSTMENT มาใช้กับกรอบที่ปรับแก้แล้ว (ถ้าจำเป็น)
-                tl_adjusted = (refined_tl[0], refined_tl[1] + Y_AXIS_ADJUSTMENT)
-                br_adjusted = (refined_br[0], refined_br[1] + Y_AXIS_ADJUSTMENT)
-                # =================================================================
+                # เรียกใช้ฟังก์ชันใหม่เพื่อปรับแก้กรอบให้แม่นยำขึ้นด้วย Mask สีชมพู
+                refined_tl, refined_br = refine_box_by_pink_mask(frame, tl_orig, br_orig, padding=5)
 
-                # ใช้พิกัดที่ปรับแก้แล้ว (adjusted) ในการวาด
-                cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
-                label = f"T{template_id+1} (Refined Fit)" # เปลี่ยนป้ายชื่อ
-                cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), 
+                # ใช้พิกัดที่ปรับแก้แล้ว (refined) ในการวาด
+                cv2.rectangle(frame, refined_tl, refined_br, color, 3)
+                label = f"T{template_id+1} (Refined Fit)"
+                cv2.putText(frame, label, (refined_tl[0], refined_tl[1] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
             cv2.imshow("Robomaster Pink Cup Detection", frame)
