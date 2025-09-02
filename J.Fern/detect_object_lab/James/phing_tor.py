@@ -35,94 +35,84 @@ def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
 
 def calculate_iou(box1, box2):
     """คำนวณ Intersection over Union (IoU) ระหว่าง 2 กรอบ"""
-    x1_1, y1_1 = box1[0]
-    x2_1, y2_1 = box1[1]
-    x1_2, y1_2 = box2[0]
-    x2_2, y2_2 = box2[1]
-    
-    x1_i = max(x1_1, x1_2)
-    y1_i = max(y1_1, y1_2)
-    x2_i = min(x2_1, x2_2)
-    y2_i = min(y2_1, y2_2)
-    
+    x1_1, y1_1 = box1[0]; x2_1, y2_1 = box1[1]
+    x1_2, y1_2 = box2[0]; x2_2, y2_2 = box2[1]
+    x1_i = max(x1_1, x1_2); y1_i = max(y1_1, y1_2)
+    x2_i = min(x2_1, x2_2); y2_i = min(y2_1, y2_2)
     intersection_area = max(0, x2_i - x1_i) * max(0, y2_i - y1_i)
     area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
     area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
     union_area = area1 + area2 - intersection_area
-    
     return intersection_area / union_area if union_area > 0 else 0.0
 
-# --- ฟังก์ชันใหม่ที่เพิ่มเข้ามา ---
-def non_maximum_suppression_with_containment(boxes_with_scores, iou_threshold=0.3, containment_threshold=0.9):
+# --- ฟังก์ชัน NMS ตัวใหม่ที่ใช้ "ลำดับความสำคัญ" ---
+def prioritized_non_maximum_suppression(boxes_with_scores, iou_threshold=0.3):
     """
-    NMS ที่ปรับปรุงใหม่เพื่อจัดการกับกรอบที่ซ้อนกันอยู่ข้างใน (Nested Boxes)
-    โดยจะตัดกรอบออกหาก:
-    1. มีค่า IoU สูงกว่า threshold (เหมือนเดิม)
-    2. กรอบที่เล็กกว่าถูกล้อมรอบโดยกรอบที่ใหญ่กว่า เกินกว่า containment_threshold
+    NMS ที่ให้ความสำคัญกับ Template ขนาดใหญ่ก่อน (T1 > T2 > T3)
+    ถ้ากรอบซ้อนกัน จะเลือกกรอบที่มาจาก Template ที่มี index น้อยกว่าเสมอ
+    โดยไม่สนใจค่า confidence score
     """
     if not boxes_with_scores:
         return []
+
+    # เรียงตาม confidence เพื่อจัดการกับวัตถุที่อยู่คนละที่ได้ดีขึ้น
+    # แต่การตัดสินใจว่าจะลบอันไหน จะใช้ priority ของ template เป็นหลัก
+    detections = sorted(boxes_with_scores, key=lambda x: x[2], reverse=True)
     
-    boxes_with_scores.sort(key=lambda x: x[2], reverse=True)
-    
-    selected_boxes = []
-    while boxes_with_scores:
-        current_box = boxes_with_scores.pop(0)
-        selected_boxes.append(current_box)
-        
-        remaining_boxes = []
-        for box in boxes_with_scores:
-            iou = calculate_iou(current_box, box)
-            
-            # --- ตรรกะใหม่: ตรวจสอบการถูกล้อมรอบ ---
-            is_contained = False
-            # คำนวณพื้นที่ของแต่ละกรอบ
-            area_current = (current_box[1][0] - current_box[0][0]) * (current_box[1][1] - current_box[0][1])
-            area_box = (box[1][0] - box[0][0]) * (box[1][1] - box[0][1])
-            
-            # หาพื้นที่ที่ซ้อนกัน (Intersection)
-            x1_i = max(current_box[0][0], box[0][0])
-            y1_i = max(current_box[0][1], box[0][1])
-            x2_i = min(current_box[1][0], box[1][0])
-            y2_i = min(current_box[1][1], box[1][1])
-            intersection_area = max(0, x2_i - x1_i) * max(0, y2_i - y1_i)
-            
-            # ถ้ากรอบ 'box' เล็กกว่า 'current_box' และพื้นที่ซ้อนทับกันเกือบเท่าพื้นที่ของ 'box'
-            if area_box < area_current and area_box > 0:
-                if (intersection_area / area_box) > containment_threshold:
-                    is_contained = True
+    # สร้าง list เพื่อเก็บสถานะว่ากรอบไหนควรถูกลบ (True = ลบ)
+    num_detections = len(detections)
+    suppress = [False] * num_detections
 
-            # ถ้ากรอบ 'current_box' เล็กกว่า 'box' และพื้นที่ซ้อนทับกันเกือบเท่าพื้นที่ของ 'current_box'
-            elif area_current < area_box and area_current > 0:
-                if (intersection_area / area_current) > containment_threshold:
-                    is_contained = True
+    for i in range(num_detections):
+        if suppress[i]:
+            continue
 
-            # --- เก็บกรอบไว้ถ้าไม่ทับซ้อน (IoU ต่ำ) และ ไม่ถูกล้อมรอบ ---
-            if iou < iou_threshold and not is_contained:
-                remaining_boxes.append(box)
+        box_i = detections[i]
+        template_i_priority = box_i[3]  # ID ของ template (0=T1, 1=T2, 2=T3)
 
-        boxes_with_scores = remaining_boxes
-        
-    return selected_boxes
+        for j in range(i + 1, num_detections):
+            if suppress[j]:
+                continue
+
+            box_j = detections[j]
+            
+            # --- จุดตัดสินใจหลัก ---
+            # ถ้ากรอบทับซ้อนกันมากพอ
+            if calculate_iou(box_i, box_j) > iou_threshold:
+                template_j_priority = box_j[3]
+
+                # เปรียบเทียบ priority: index น้อยกว่า = priority สูงกว่า
+                if template_i_priority <= template_j_priority:
+                    # box_i มี priority สูงกว่าหรือเท่ากัน -> ลบ box_j
+                    suppress[j] = True
+                else:
+                    # box_j มี priority สูงกว่า -> ลบ box_i และหยุดเช็คสำหรับ i นี้
+                    suppress[i] = True
+                    break # ออกจาก vòng j loop
+
+    # รวบรวมเฉพาะกรอบที่ไม่ถูกสั่งให้ลบ
+    final_boxes = [detections[i] for i in range(num_detections) if not suppress[i]]
+    return final_boxes
 
 
 # ---------------------------------------------------
-# ส่วนที่ 2: การทำงานหลัก (Main Program) - มีการแก้ไขเล็กน้อย
+# ส่วนที่ 2: การทำงานหลัก (Main Program)
 # ---------------------------------------------------
 
 def main():
     """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับ"""
     
+    # --- สำคัญ: เรียงลำดับไฟล์ Template จากใหญ่ไปเล็ก ---
+    # Index 0 (T1) จะมี Priority สูงสุด
+    # Index 1 (T2)
+    # Index 2 (T3) ...
     TEMPLATE_FILES = [
-        "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg",
-        "image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg",
-        "image/template/template_night_pic4_x_318_y_146_w_17_h_38.jpg"
+        "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg", # T1 - Priority 1
+        "image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg",  # T2 - Priority 2
+        "image/template/template_night_pic4_x_318_y_146_w_17_h_38.jpg"   # T3 - Priority 3
     ]
     MATCH_THRESHOLD = 0.5
     IOU_THRESHOLD = 0.3
-    # --- ค่าใหม่สำหรับควบคุมการตรวจจับกรอบซ้อน ---
-    # หมายความว่า ถ้ากรอบเล็กมีพื้นที่ 90% อยู่ในกรอบใหญ่ ให้ถือว่าเป็นกรอบเดียวกัน
-    CONTAINMENT_THRESHOLD = 0.9 
     
     print("Loading and processing templates...")
     templates_masked = []
@@ -168,20 +158,18 @@ def main():
             for i, tmpl_masked in enumerate(templates_masked):
                 boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
                 for top_left, bottom_right, confidence in boxes:
+                    # `i` คือ ID ของ template ซึ่งจะใช้เป็นตัวกำหนด Priority
                     all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
 
-            # --- *** แก้ไขจุดนี้: เรียกใช้ฟังก์ชัน NMS ตัวใหม่ *** ---
-            final_detections = non_maximum_suppression_with_containment(
-                all_detections, 
-                iou_threshold=IOU_THRESHOLD,
-                containment_threshold=CONTAINMENT_THRESHOLD
-            )
+            # --- *** เรียกใช้ฟังก์ชัน NMS ตัวใหม่ที่ให้ความสำคัญกับ Template *** ---
+            final_detections = prioritized_non_maximum_suppression(all_detections, IOU_THRESHOLD)
 
             cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             for top_left, bottom_right, confidence, template_id, color in final_detections:
                 cv2.rectangle(frame, top_left, bottom_right, color, 2)
-                label = f"T{template_id+1}: {confidence:.2f}"
+                # ปรับข้อความให้ชัดเจนว่ากรอบนี้ถูกเลือกเพราะ Priority
+                label = f"T{template_id+1} (Best Fit)"
                 cv2.putText(frame, label, (top_left[0], top_left[1] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
