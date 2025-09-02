@@ -245,12 +245,13 @@ if __name__ == '__main__':
     
     # เชื่อมต่อ RoboMaster
     ep_robot = robot.Robot()
-    ep_robot.initialize(conn_type="sta")
+    ep_robot.initialize(conn_type="ap")
     
     ep_camera = ep_robot.camera
     
     # เริ่ม video stream
-    ep_camera.start_video_stream(display=False)
+    ep_camera.start_video_stream(display=True )
+    #ep_camera.start_video_stream(display=True , resolution=camera.STREAM_360P) เรียกใช้camera ไม่ได้ไม่รู้ทำไม
     
     print("Starting pink object detection...")
     print("Press 'q' to quit, 'c' to capture screenshot")
