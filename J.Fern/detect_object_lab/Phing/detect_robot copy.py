@@ -14,13 +14,13 @@ def create_pink_mask(img_rgb):
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     
     # ช่วงค่าสีชมพู (สามารถปรับได้ตามสภาพแสง)
-    lower_pink = np.array([120, 10, 120])
+    lower_pink = np.array([120, 10, 100])
     upper_pink = np.array([170, 100, 200])
     
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
     
     # ลด Noise
-    mask = cv2.medianBlur(mask, 5)
+    mask = cv2.medianBlur(mask, 7)
     kernel = np.ones((7, 7), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     
@@ -96,11 +96,11 @@ def main():
     
     # --- ค่าที่ปรับได้ ---
     TEMPLATE_FILES = [
-        "image/template/template_pic1_x_573_y_276_w_115_h_312.jpg",
-        "image/template/template_pic2_x_634_y_291_w_50_h_134.jpg",
-        "image/template/template_pic3_x_629_y_291_w_35_h_92.jpg"
+            "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg"
+            ,"image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg"
+            ,"image/template/template_night_pic3_x_614_y_284_w_43_h_95.jpg"
     ]
-    MATCH_THRESHOLD = 0.65  # ลด threshold ลงเล็กน้อยเพื่อให้ตรวจจับได้ง่ายขึ้นในวิดีโอ
+    MATCH_THRESHOLD = 0.5  # ลด threshold ลงเล็กน้อยเพื่อให้ตรวจจับได้ง่ายขึ้นในวิดีโอ
     IOU_THRESHOLD = 0.3
     
     # --- 1. โหลดและประมวลผล Templates ล่วงหน้า (ทำครั้งเดียว) ---
@@ -126,7 +126,7 @@ def main():
     ep_camera = ep_robot.camera
     
     # !!! แก้ปัญหา Delay: ใช้ความละเอียด 360P แทน 720P !!!
-    ep_camera.start_video_stream(display=False, resolution=camera.STREAM_540P)
+    ep_camera.start_video_stream(display=False, resolution=camera.STREAM_360P)
     print("Robot connected. Starting real-time detection...")
 
     # --- 3. เริ่ม Loop การประมวลผลวิดีโอแบบเรียลไทม์ ---
