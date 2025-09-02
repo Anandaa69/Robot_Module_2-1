@@ -114,9 +114,9 @@ def main():
     """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับ"""
     
     TEMPLATE_FILES = [
-        "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg",
-        "image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg",
-        "image/template/template_night_pic4_x_318_y_146_w_17_h_38.jpg"
+        "image/template/template_night_pic1_x_607_y_281_w_55_h_143.jpg",
+        "image/template/template_night_pic2_x_312_y_144_w_30_h_72.jpg",
+        "image/template/template_night_pic3_x_318_y_146_w_17_h_38.jpg"
     ]
     MATCH_THRESHOLD = 0.5
     IOU_THRESHOLD = 0.3
