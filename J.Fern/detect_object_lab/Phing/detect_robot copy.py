@@ -98,7 +98,7 @@ def main():
     TEMPLATE_FILES = [
             "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg"
             ,"image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg"
-            ,"image/template/template_night_pic3_x_614_y_284_w_43_h_95.jpg"
+            ,"image/template/template_night_pic4_x_318_y_146_w_17_h_38.jpg"
     ]
     MATCH_THRESHOLD = 0.5  # ลด threshold ลงเล็กน้อยเพื่อให้ตรวจจับได้ง่ายขึ้นในวิดีโอ
     IOU_THRESHOLD = 0.3
@@ -126,7 +126,7 @@ def main():
     ep_camera = ep_robot.camera
     
     # !!! แก้ปัญหา Delay: ใช้ความละเอียด 360P แทน 720P !!!
-    ep_camera.start_video_stream(display=False, resolution=camera.STREAM_360P)
+    ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
     print("Robot connected. Starting real-time detection...")
 
     # --- 3. เริ่ม Loop การประมวลผลวิดีโอแบบเรียลไทม์ ---

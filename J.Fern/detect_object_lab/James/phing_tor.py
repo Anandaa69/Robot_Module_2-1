@@ -109,7 +109,7 @@ def main():
         "image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg",
         "image/template/template_night_pic3_x_614_y_284_w_43_h_95.jpg"
     ]
-    MATCH_THRESHOLD = 0.5
+    MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.3 # <--- ลองปรับค่านี้ดู อาจจะเพิ่มเป็น 0.4 หรือ 0.5
     
     print("Loading and processing templates...")
