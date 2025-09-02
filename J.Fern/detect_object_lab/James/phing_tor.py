@@ -107,12 +107,12 @@ def main():
     # Index 1 (T2)
     # Index 2 (T3) ...
     TEMPLATE_FILES = [
-        "image/template/template_night_pic1_x_557_y_266_w_107_h_275.jpg", # T1 - Priority 1
-        "image/template/template_night_pic2_x_607_y_281_w_55_h_143.jpg",  # T2 - Priority 2
-        "image/template/template_night_pic4_x_318_y_146_w_17_h_38.jpg"   # T3 - Priority 3
+        "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg", # T1 - Priority 1
+        "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",  # T2 - Priority 2
+        "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"   # T3 - Priority 3
     ]
-    MATCH_THRESHOLD = 0.5
-    IOU_THRESHOLD = 0.3
+    MATCH_THRESHOLD = 0.55
+    IOU_THRESHOLD = 0.4
     
     print("Loading and processing templates...")
     templates_masked = []
