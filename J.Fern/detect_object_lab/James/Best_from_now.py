@@ -5,7 +5,7 @@ from robomaster import robot
 from robomaster import camera
 
 # --------------------------------------------------------------------
-# ส่วนที่ 1: ฟังก์ชัน (ไม่มีการเปลี่ยนแปลง)
+# ส่วนที่ 1: ฟังก์ชัน (มีการปรับปรุง)
 # --------------------------------------------------------------------
 
 def create_pink_mask(img_rgb):
@@ -15,13 +15,15 @@ def create_pink_mask(img_rgb):
     lower_pink = np.array([120, 10, 100])
     upper_pink = np.array([170, 100, 200])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
-
+    
+    # --- OPTIMIZATION: ลดขนาด Kernel เพื่อความเร็ว ---
     mask = cv2.medianBlur(mask, 5)
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
+    # ไม่มีการเปลี่ยนแปลง
     if tmpl_masked.shape[0] > img_masked.shape[0] or tmpl_masked.shape[1] > img_masked.shape[1]:
         return []
     result = cv2.matchTemplate(img_masked, tmpl_masked, cv2.TM_CCOEFF_NORMED)
@@ -34,6 +36,7 @@ def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     return boxes
 
 def calculate_iou(box1, box2):
+    # ไม่มีการเปลี่ยนแปลง
     x1_1, y1_1 = box1[0]; x2_1, y2_1 = box1[1]
     x1_2, y1_2 = box2[0]; x2_2, y2_2 = box2[1]
     x1_i = max(x1_1, x1_2); y1_i = max(y1_1, y1_2)
@@ -44,14 +47,20 @@ def calculate_iou(box1, box2):
     union_area = area1 + area2 - intersection_area
     return intersection_area / union_area if union_area > 0 else 0.0
 
+# --- ฟังก์ชัน NMS ตัวใหม่ที่ฉลาดขึ้น: ใช้ทั้ง IoU และ Center Point ---
 def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
+    """
+    NMS ที่ให้ความสำคัญกับ Template ใหญ่ และเพิ่มการตรวจสอบ "Center Point Containment"
+    เพื่อแก้ปัญหากรอบซ้อนกันที่ระยะไกล
+    """
     if not boxes_with_scores:
         return []
 
-    detections = sorted(boxes_with_scores, key=lambda x: x[3])
+    detections = sorted(boxes_with_scores, key=lambda x: x[3]) # เรียงตาม Priority (T1, T2, T3) ก่อน
     
     final_boxes = []
     while detections:
+        # หยิบตัวที่มี Priority สูงสุด (T1 มาก่อน)
         current_box = detections.pop(0)
         final_boxes.append(current_box)
         
@@ -59,20 +68,26 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
         for box_to_check in detections:
             iou = calculate_iou(current_box, box_to_check)
             
+            # --- ตรรกะใหม่: ตรวจสอบว่าจุดศูนย์กลางของ box_to_check อยู่ใน current_box หรือไม่ ---
             center_x = box_to_check[0][0] + (box_to_check[1][0] - box_to_check[0][0]) / 2
             center_y = box_to_check[0][1] + (box_to_check[1][1] - box_to_check[0][1]) / 2
             
             is_center_inside = (current_box[0][0] < center_x < current_box[1][0] and
                                 current_box[0][1] < center_y < current_box[1][1])
-
+            
+            # --- เงื่อนไขการลบ ---
+            # ลบ box_to_check ทิ้ง ถ้า...
+            # 1. IoU สูงเกินไป OR
+            # 2. จุดศูนย์กลางของมัน อยู่ในกรอบที่มี Priority สูงกว่า
             if iou > iou_threshold or is_center_inside:
-                continue
+                continue # ไม่ต้องเก็บ box_to_check ไว้
             
             remaining_boxes.append(box_to_check)
             
         detections = remaining_boxes
         
     return final_boxes
+
 
 # ---------------------------------------------------
 # ส่วนที่ 2: การทำงานหลัก (Main Program) - ปรับปรุงเพื่อลด Lag
@@ -81,6 +96,8 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
 def main():
     """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับ"""
     
+    # --- OPTIMIZATION: กำหนดขนาดภาพที่จะใช้ประมวลผล ---
+    # เราจะย่อภาพจาก 1280x720 ให้มีความกว้างเหลือ 640px เพื่อลดภาระ
     PROCESSING_WIDTH = 640.0
     
     TEMPLATE_FILES = [
@@ -89,14 +106,7 @@ def main():
         "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"   # T3
     ]
     MATCH_THRESHOLD = 0.55
-    IOU_THRESHOLD = 0.1
-    
-    # ==========================[ จุดปรับแก้ ]===========================
-    # เพิ่มตัวแปรสำหรับชดเชยตำแหน่งแกน Y (ปรับค่านี้เพื่อเลื่อนกรอบลง)
-    # หากกรอบยังสูงไป ให้ "เพิ่ม" ค่านี้
-    # หากกรอบต่ำไป ให้ "ลด" ค่านี้
-    Y_AXIS_ADJUSTMENT = 25 # <<-- ปรับค่านี้ (หน่วยเป็น pixel ของภาพขนาดเต็ม)
-    # =================================================================
+    IOU_THRESHOLD = 0.1 # ลด IoU ลงเพื่อให้กำจัดกรอบที่แค่ "เฉียดกัน" ได้ดีขึ้น
     
     print("Loading and processing templates...")
     templates_original = []
@@ -113,6 +123,8 @@ def main():
     ep_camera = ep_robot.camera
     ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
     
+    # --- OPTIMIZATION: คำนวณ Scale และย่อขนาด Templates ล่วงหน้า (ทำครั้งเดียว) ---
+    # รอรับเฟรมแรกเพื่อหาขนาดและคำนวณ scale
     print("Waiting for first frame to calculate scale...")
     frame_for_scale = ep_camera.read_cv2_image(timeout=5)
     if frame_for_scale is None:
@@ -128,10 +140,12 @@ def main():
     
     templates_masked = []
     for tmpl in templates_original:
+        # ย่อขนาด Template ตามสัดส่วนของภาพหลัก
         w_tmpl = int(tmpl.shape[1] * processing_scale)
         h_tmpl = int(tmpl.shape[0] * processing_scale)
         tmpl_resized = cv2.resize(tmpl, (w_tmpl, h_tmpl), interpolation=cv2.INTER_AREA)
         
+        # ทำ Mask บน Template ที่ย่อขนาดแล้ว
         tmpl_rgb = cv2.cvtColor(tmpl_resized, cv2.COLOR_BGR2RGB)
         tmpl_pink_mask = create_pink_mask(tmpl_rgb)
         tmpl_gray = cv2.cvtColor(tmpl_rgb, cv2.COLOR_RGB2GRAY)
@@ -146,6 +160,7 @@ def main():
             frame = ep_camera.read_cv2_image()
             if frame is None: continue
 
+            # --- OPTIMIZATION: ย่อขนาดเฟรมปัจจุบันก่อนประมวลผล ---
             frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
             
             frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
@@ -157,32 +172,28 @@ def main():
             colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
             
             for i, tmpl_masked in enumerate(templates_masked):
+                # ประมวลผลบนภาพขนาดย่อ
                 boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
                 for top_left, bottom_right, confidence in boxes:
                     all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
 
+            # --- *** เรียกใช้ฟังก์ชัน NMS ตัวใหม่ที่ฉลาดขึ้น *** ---
             final_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
             
+            # --- วาดผลลัพธ์ลงบนเฟรม "ขนาดเต็ม" เพื่อการแสดงผลที่ชัดเจน ---
             current_time = time.time()
             fps = 1 / (current_time - last_time)
             last_time = current_time
             cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             for top_left, bottom_right, confidence, template_id, color in final_detections:
+                # แปลงพิกัดกลับไปเป็นขนาดของเฟรมดั้งเดิม
                 tl_orig = (int(top_left[0] / processing_scale), int(top_left[1] / processing_scale))
                 br_orig = (int(bottom_right[0] / processing_scale), int(bottom_right[1] / processing_scale))
                 
-                # ==========================[ จุดปรับแก้ ]===========================
-                # นำค่า Y_AXIS_ADJUSTMENT มาบวกเพิ่มให้กับพิกัดแกน Y ทั้งบนและล่าง
-                # เพื่อ "ดึง" กรอบทั้งหมดให้เลื่อนลงมา
-                tl_adjusted = (tl_orig[0], tl_orig[1] + Y_AXIS_ADJUSTMENT)
-                br_adjusted = (br_orig[0], br_orig[1] + Y_AXIS_ADJUSTMENT)
-                # =================================================================
-
-                # ใช้พิกัดที่ปรับแก้แล้ว (adjusted) ในการวาด
-                cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
+                cv2.rectangle(frame, tl_orig, br_orig, color, 3) # เพิ่มความหนาของเส้น
                 label = f"T{template_id+1} (Priority Fit)"
-                cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), 
+                cv2.putText(frame, label, (tl_orig[0], tl_orig[1] - 10), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
             cv2.imshow("Robomaster Pink Cup Detection", frame)
