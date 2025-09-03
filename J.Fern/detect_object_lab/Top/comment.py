@@ -4,23 +4,33 @@ import time
 from robomaster import robot
 from robomaster import camera
 
-# --------------------------------------------------------------------
-# ส่วนที่ 1: ฟังก์ชัน (ไม่มีการเปลี่ยนแปลง)
-# --------------------------------------------------------------------
+
+
+
+
+
 
 def create_pink_mask(img_rgb):
     """สร้าง mask สำหรับสีชมพู (ปรับปรุง Kernel ให้เล็กลงเพื่อความเร็ว)"""
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
-    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)# แปลงภาพจาก RGB ไปเป็น BGR แล้วเป็น HSV เพราะว่า HSV จะแยกสีได้ง่ายกว่า
+# แยกโดยการกำหนดช่วงสีชมพูไว้ในช่วง lower_pink upper_pink
     lower_pink = np.array([120, 10, 100])
     upper_pink = np.array([170, 100, 200])
-    mask = cv2.inRange(hsv, lower_pink, upper_pink)
-
-    mask = cv2.medianBlur(mask, 5)
+    mask = cv2.inRange(hsv, lower_pink, upper_pink) #สร้าง mask เป็นสีขาวดำ 
+    mask = cv2.medianBlur(mask, 5) # ลดnoise ด้วยการใช้medianblur
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
 
+
+# --------------------------------------------------------------------
+#ส่วนของฟังก์ชัน match_template_masked 
+# เปรียบเทียบทุกตำแหน่งบนภาพด้วย เทมเพลตที่ทำมา โดยเลื่อนtemplateไปทุกๆ pixel บนภาพ 
+# เลือกเฉพาะตำแหน่ที่ result >= threshold แล้วแปลงข้อมูลเป็นพิกัด x,y 
+# จากนั้นคำนวณขนาดของbox 
+# จะใช้ตำแหน่งที่ตรวจจับได้เป็นจุดมุมซ้ายบน และคำนวณมุมขวาล่าง 
+# --------------------------------------------------------------------
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     if tmpl_masked.shape[0] > img_masked.shape[0] or tmpl_masked.shape[1] > img_masked.shape[1]:
         return []
@@ -28,31 +38,33 @@ def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     locations = np.where(result >= threshold)
     boxes = []
     h, w = tmpl_masked.shape
-    for pt in zip(*locations[::-1]):
+    for pt in zip(*locations[::-1]): # แปลงจาก array_y, array_x เป็น(x,y)
         confidence = result[pt[1], pt[0]]
-        boxes.append(((pt[0], pt[1]), (pt[0] + w, pt[1] + h), confidence))
+        boxes.append(((pt[0], pt[1]), (pt[0] + w, pt[1] + h), confidence)) # เก็บ: ((x,y), (x+width, y+height), score)
     return boxes
 
 def calculate_iou(box1, box2):
     x1_1, y1_1 = box1[0]; x2_1, y2_1 = box1[1]
     x1_2, y1_2 = box2[0]; x2_2, y2_2 = box2[1]
+    # หาพื้นที่ที่ทับซ้อนกัน (intersection) โดยหามุมซ้ายบนและขวาล่างของพื้นที่ทับซ้อน
     x1_i = max(x1_1, x1_2); y1_i = max(y1_1, y1_2)
     x2_i = min(x2_1, x2_2); y2_i = min(y2_1, y2_2)
     intersection_area = max(0, x2_i - x1_i) * max(0, y2_i - y1_i)
     area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
     area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
     union_area = area1 + area2 - intersection_area
-    return intersection_area / union_area if union_area > 0 else 0.0
+    # คำนวณ IoU = พื้นทับซ้อน / พื้นที่รวม เพื่อวัดคิดว่า 2 box นี้เป็นวัตถุเดียวกันมั้ย
+    return intersection_area / union_area if union_area > 0 else 0.0 
 
 def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
     if not boxes_with_scores:
         return []
-
+# เรียงลำดับ box ตาม score ให้อันที่มีคะแนนสูงสุดก่อน
     detections = sorted(boxes_with_scores, key=lambda x: x[3])
     
     final_boxes = []
     while detections:
-        current_box = detections.pop(0)
+        current_box = detections.pop(0) # เลือก box ที่มี confidence สูงสุด
         final_boxes.append(current_box)
         
         remaining_boxes = []
@@ -64,7 +76,8 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
             
             is_center_inside = (current_box[0][0] < center_x < current_box[1][0] and
                                 current_box[0][1] < center_y < current_box[1][1])
-
+            
+            # ถ้า IoU มีค่าสูงหรือจุดศูนย์กลางอยู่ซ้อนข้างใน = ซ้ำซ้อน จะข้ามboxนี้ไป
             if iou > iou_threshold or is_center_inside:
                 continue
             
@@ -74,13 +87,7 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
         
     return final_boxes
 
-# ---------------------------------------------------
-# ส่วนที่ 2: การทำงานหลัก (Main Program) - ปรับปรุงเพื่อลด Lag
-# ---------------------------------------------------
-
 def main():
-    """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับ"""
-    
     PROCESSING_WIDTH = 640.0
     
     TEMPLATE_FILES = [
@@ -88,15 +95,13 @@ def main():
         "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",  # T2
         "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"   # T3
     ]
-    MATCH_THRESHOLD = 0.55
-    IOU_THRESHOLD = 0.1
+    MATCH_THRESHOLD = 0.55 # ค่า threshold สำหรับการจับคู่เทมเพลต
+    IOU_THRESHOLD = 0.1 # ค่า IoU threshold สำหรับกรอง box อันที่ซ้ำซ้อน
     
-    # ==========================[ จุดปรับแก้ ]===========================
-    # เพิ่มตัวแปรสำหรับชดเชยตำแหน่งแกน Y (ปรับค่านี้เพื่อเลื่อนกรอบลง)
-    # หากกรอบยังสูงไป ให้ "เพิ่ม" ค่านี้
-    # หากกรอบต่ำไป ให้ "ลด" ค่านี้
-    Y_AXIS_ADJUSTMENT = 25 # <-- ปรับค่านี้ (หน่วยเป็น pixel ของภาพขนาดเต็ม)
-    # =================================================================
+    # ตัวแปร Y_AXIS_ADJUSTMENT ใช้เพราะกรอบครอบวัตถุไม่หมดบางทีกรอบต่ำหรือสูงกว่าตัววัตถุ
+    # เพิ่มตัวแปรสำหรับชดเชยตำแหน่งแกน Y (ปรับค่า y เพื่อเลื่อนกรอบลง)
+    # หากกรอบยังสูงไป ให้เพิ่มค่า กรอบต่ำไป ให้ลดค่าลง
+    Y_AXIS_ADJUSTMENT = 25 
     
     print("Loading and processing templates...")
     templates_original = []
@@ -119,7 +124,8 @@ def main():
         print("Error: Could not get frame from camera.")
         ep_robot.close()
         return
-        
+    
+    # คำนวณอัตราส่วนการย่อขนาดภาพ
     h_orig, w_orig, _ = frame_for_scale.shape
     processing_scale = PROCESSING_WIDTH / w_orig
     h_proc = int(h_orig * processing_scale)
@@ -131,7 +137,7 @@ def main():
         w_tmpl = int(tmpl.shape[1] * processing_scale)
         h_tmpl = int(tmpl.shape[0] * processing_scale)
         tmpl_resized = cv2.resize(tmpl, (w_tmpl, h_tmpl), interpolation=cv2.INTER_AREA)
-        
+        # แปลง template เป็น RGB และสร้าง pink mask
         tmpl_rgb = cv2.cvtColor(tmpl_resized, cv2.COLOR_BGR2RGB)
         tmpl_pink_mask = create_pink_mask(tmpl_rgb)
         tmpl_gray = cv2.cvtColor(tmpl_rgb, cv2.COLOR_RGB2GRAY)
@@ -148,9 +154,9 @@ def main():
 
             frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
             
-            frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
+            frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)# แปลงภาพเป็น RGB และสร้าง pink mask
             main_pink_mask = create_pink_mask(frame_rgb)
-            main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+            main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)# แปลงเป็น grayscale + mask เพื่อให้เห็นเฉพาะสีชมพู
             main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
 
             all_detections = []
@@ -169,17 +175,16 @@ def main():
             cv2.putText(frame, f"FPS: {fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             for top_left, bottom_right, confidence, template_id, color in final_detections:
+                # แปลงพิกัดกลับเป็นขนาดภาพเต็ม
                 tl_orig = (int(top_left[0] / processing_scale), int(top_left[1] / processing_scale))
                 br_orig = (int(bottom_right[0] / processing_scale), int(bottom_right[1] / processing_scale))
                 
-                # ==========================[ จุดปรับแก้ ]===========================
                 # นำค่า Y_AXIS_ADJUSTMENT มาบวกเพิ่มให้กับพิกัดแกน Y ทั้งบนและล่าง
                 # เพื่อ "ดึง" กรอบทั้งหมดให้เลื่อนลงมา
                 tl_adjusted = (tl_orig[0], tl_orig[1] + Y_AXIS_ADJUSTMENT)
                 br_adjusted = (br_orig[0], br_orig[1] + Y_AXIS_ADJUSTMENT)
-                # =================================================================
 
-                # ใช้พิกัดที่ปรับแก้แล้ว (adjusted) ในการวาด
+                # ใช้พิกัดที่ปรับแก้แล้วในการวาดกรอบ
                 cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
                 label = f"T{template_id+1} (Priority Fit)"
                 cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), 
