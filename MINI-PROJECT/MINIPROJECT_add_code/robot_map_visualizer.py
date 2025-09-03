@@ -70,7 +70,7 @@ class RobotMapVisualizer:
         self.ax.grid(True, alpha=0.3, color=self.colors['grid'])
         self.ax.set_title('Robot Autonomous Exploration Map', fontsize=16, fontweight='bold')
         
-        # Set initial limits
+        # Set initial limit
         self.ax.set_xlim(-2, 2)
         self.ax.set_ylim(-2, 2)
         
