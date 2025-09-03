@@ -1,4 +1,3 @@
-
 import time
 from robomaster import robot
 from robomaster import camera
@@ -18,3 +17,4 @@ if __name__ == '__main__':
     ep_camera.stop_video_stream()
 
     ep_robot.close()
+
