@@ -736,13 +736,6 @@ class GraphMapper:
         self.find_next_exploration_direction = self.find_next_exploration_direction_with_priority
         self.update_unexplored_exits_absolute = self.update_unexplored_exits_with_priority
 
-    # 3. เพิ่มฟังก์ชันใหม่สำหรับตรวจสอบ boundary
-    def is_position_within_boundaries(self, position):
-        """Check if position is within map boundaries"""
-        x, y = position
-        return (self.min_x <= x <= self.max_x and 
-                self.min_y <= y <= self.max_y)
-
     def get_boundary_status(self):
         """Get current boundary configuration"""
         return {
@@ -803,94 +796,8 @@ class GraphMapper:
             current_node.scanTimestamp = datetime.now().isoformat()
             
             self.update_unexplored_exits_absolute(current_node)
-            self.build_connections()
+            self.build_connections()    
 
-    # 1. แก้ไขฟังก์ชัน update_unexplored_exits_absolute
-    def update_unexplored_exits_absolute(self, node):
-        """Update unexplored exits using ABSOLUTE directions + outer border check"""
-        node.unexploredExits = []
-        node.outOfBoundsExits = []
-        node.outOfBoundsCount = 0
-
-        x, y = node.position
-
-        possible_directions = {
-            'north': (x, y + 1),
-            'south': (x, y - 1),
-            'east':  (x + 1, y),
-            'west':  (x - 1, y)
-        }
-
-        print(f"🧭 Updating unexplored exits for {node.id} at {node.position}")
-        print(f"🔍 Wall status: {node.walls}")
-        print(f"🗺️ Map boundaries: x[{self.min_x},{self.max_x}], y[{self.min_y},{self.max_y}]")
-
-        for direction, target_pos in possible_directions.items():
-            target_x, target_y = target_pos
-            target_node_id = self.get_node_id(target_pos)
-
-            # === ✅ แก้ไขการเช็ค outer border ===
-            is_outer_boundary = (
-                target_x < self.min_x or target_x > self.max_x or
-                target_y < self.min_y or target_y > self.max_y
-            )
-
-            # เช็ค wall / explored / target exist
-            is_blocked = node.walls.get(direction, True)
-            already_explored = direction in node.exploredDirections
-            target_exists = target_node_id in self.nodes
-            target_fully_explored = False
-            if target_exists:
-                target_node = self.nodes[target_node_id]
-                target_fully_explored = target_node.fullyScanned
-
-            print(f"   🔍 Direction {direction}:")
-            print(f"      🚧 Blocked: {is_blocked}")
-            print(f"      ✅ Already explored: {already_explored}")
-            print(f"      🗃️  Target exists: {target_exists}")
-            print(f"      🔍 Target fully explored: {target_fully_explored}")
-            print(f"      🌐 Is outer boundary: {is_outer_boundary}")
-
-            should_explore = (
-                not is_blocked and
-                not already_explored and
-                (not target_exists or not target_fully_explored)
-            )
-
-            if should_explore:
-                if is_outer_boundary:
-                    node.outOfBoundsExits.append(direction)
-                    node.outOfBoundsCount = len(node.outOfBoundsExits)
-                    print(f"      🚫 OUTER BOUNDARY! Added to outOfBoundsExits, NO exploration.")
-                else:
-                    node.unexploredExits.append(direction)
-                    print(f"      ✅ ADDED to unexplored exits!")
-            else:
-                print(f"      ❌ NOT added to unexplored exits")
-
-        print(f"🎯 Final unexplored exits for {node.id}: {node.unexploredExits}")
-        print(f"🌐 Out-of-bounds exits: {node.outOfBoundsExits} (count: {node.outOfBoundsCount})")
-
-        # Frontier queue update
-        has_unexplored = len(node.unexploredExits) > 0
-        if has_unexplored and node.id not in self.frontierQueue:
-            self.frontierQueue.append(node.id)
-            print(f"🚀 Added {node.id} to frontier queue")
-        elif not has_unexplored and node.id in self.frontierQueue:
-            self.frontierQueue.remove(node.id)
-            print(f"🧹 Removed {node.id} from frontier queue")
-
-        # Dead end detection
-        blocked_count = sum(1 for blocked in node.walls.values() if blocked)
-        node.isDeadEnd = blocked_count >= 3
-        if node.isDeadEnd:
-            print(f"🚫 DEAD END CONFIRMED at {node.id} - {blocked_count} walls detected!")
-            if node.id in self.frontierQueue:
-                self.frontierQueue.remove(node.id)
-                print(f"🧹 Removed dead end {node.id} from frontier queue")
-
-
-    
     def build_connections(self):
         """Build connections between adjacent nodes"""
         for node_id, node in self.nodes.items():
@@ -971,7 +878,6 @@ class GraphMapper:
     def rotate_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
         """NEW: Rotate robot to face target ABSOLUTE direction"""
         global ROBOT_FACE
-        global CURRENT_TARGET_YAW
         print(f"🎯 Rotating from {self.currentDirection} to {target_direction}")
         
         if self.currentDirection == target_direction:
@@ -1260,24 +1166,6 @@ class GraphMapper:
             if node.id in self.frontierQueue:
                 self.frontierQueue.remove(node.id)
                 print(f"🧹 Removed dead end {node.id} from frontier queue")
-
-    def find_next_exploration_direction(self):
-        """Find the next ABSOLUTE direction to explore"""
-        current_node = self.get_current_node()
-        if not current_node:
-            return None
-        
-        if self.is_dead_end(current_node):
-            print(f"🚫 Current node is a dead end - no exploration directions available")
-            return None
-        
-        # Return first unexplored exit (now using absolute directions)
-        if current_node.unexploredExits:
-            for unexplored_dir in current_node.unexploredExits:
-                if self.can_move_to_direction_absolute(unexplored_dir):
-                    return unexplored_dir
-        
-        return None
     
     def find_path_to_frontier(self, target_node_id):
         """Find shortest path to frontier node using BFS"""
@@ -2754,7 +2642,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=49)
+                           graph_mapper, movement_controller, attitude_handler, marker_handler, ep_robot, max_nodes=200)
         
         # Export maze data to JSON file
         export_maze_data_to_json(graph_mapper, "maze_data.json")
