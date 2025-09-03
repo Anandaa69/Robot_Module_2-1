@@ -180,7 +180,7 @@ def main():
                 br_orig = (int(bottom_right[0] / processing_scale), int(bottom_right[1] / processing_scale))
                 
                 # นำค่า Y_AXIS_ADJUSTMENT มาบวกเพิ่มให้กับพิกัดแกน Y ทั้งบนและล่าง
-                # เพื่อ "ดึง" กรอบทั้งหมดให้เลื่อนลงมา
+                # เพื่อดึงกรอบให้เลื่อนลงมา
                 tl_adjusted = (tl_orig[0], tl_orig[1] + Y_AXIS_ADJUSTMENT)
                 br_adjusted = (br_orig[0], br_orig[1] + Y_AXIS_ADJUSTMENT)
 
