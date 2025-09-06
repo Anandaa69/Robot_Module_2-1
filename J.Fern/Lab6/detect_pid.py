@@ -140,7 +140,7 @@ def main():
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
                 cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 255, 255), -1)
             else:
-                 target_found = False
+                target_found = False
 
             if target_found:
                 delta_time = current_time - prev_time
