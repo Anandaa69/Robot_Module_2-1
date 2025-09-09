@@ -37,7 +37,7 @@ if __name__ == '__main__':
         key = cv2.waitKey(1) & 0xFF
         
         if key == ord('c'):  # ถ้ากด c → แคปภาพ
-            filename = f"capture_{int(time.time())}.jpg"
+            filename = f"capture_pink_{int(time.time())}.jpg"
             cv2.imwrite(filename, img)
             print(f"📸 Saved {filename}")
         
