@@ -192,9 +192,9 @@ def main():
                         cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
                         
                         if w_real > 0:
-                            distance_z_x = (K_Y * REAL_WIDTH_CM) / w_real
+                            distance_z_x = (K_Y * REAL_HEIGHT_CM) / w_real
                         if h_real > 0:
-                            distance_z_y = (K_X * REAL_HEIGHT_CM) / h_real
+                            distance_z_y = (K_X * REAL_WIDTH_CM) / h_real
                         
                         # ==========================[ จุดที่แก้ไข ]===========================
                         # <--- STEP 1: คำนวณระยะทางสุดท้ายโดยการหาค่าเฉลี่ย
