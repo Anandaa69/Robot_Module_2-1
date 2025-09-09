@@ -4,7 +4,43 @@ import time
 from robomaster import robot
 from robomaster import camera
 from robomaster import blaster
-from collections import deque  # <--- เพิ่มการ import deque สำหรับทำ moving average
+# from collections import deque # เราจะใช้ Kalman Filter แทน
+
+# --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
+class SimpleKalmanFilter:
+    def __init__(self, process_noise, measurement_noise, initial_value=0.0):
+        # Q: ความไม่แน่นอนของโมเดล (Process Noise)
+        # ยิ่งค่าน้อย ยิ่งเชื่อว่าสถานะจะไม่เปลี่ยนแปลงเร็ว (ผลลัพธ์จะนิ่งมาก แต่ตอบสนองช้า)
+        # ยิ่งค่ามาก ยิ่งเชื่อว่าสถานะเปลี่ยนแปลงได้ตลอดเวลา (ตอบสนองเร็ว แต่อาจนิ่งน้อยลง)
+        self.Q = process_noise 
+
+        # R: ความไม่แน่นอนของการวัด (Measurement Noise)
+        # ยิ่งค่าน้อย ยิ่งเชื่อมั่นในค่าที่วัดได้จากเซ็นเซอร์ (ฟิลเตอร์จะปรับตามค่าที่วัดได้เร็ว)
+        # ยิ่งค่ามาก ยิ่งไม่เชื่อค่าที่วัดได้ (ผลลัพธ์จะนิ่งมาก แต่ถ้าเป้าหมายเคลื่อนที่เร็วอาจตามไม่ทัน)
+        self.R = measurement_noise 
+
+        self.P = 1.0  # ค่าความไม่แน่นอนของการประมาณการเริ่มต้น (Error Covariance)
+        self.x = initial_value # ค่าสถานะเริ่มต้น (Initial State)
+
+    def update(self, measurement):
+        # --- ขั้นตอนการ Update ---
+        # 1. คำนวณ Kalman Gain (K)
+        K = self.P / (self.P + self.R)
+        
+        # 2. อัปเดตค่าประมาณการ (x) ด้วยค่าที่วัดได้
+        self.x = self.x + K * (measurement - self.x)
+        
+        # 3. อัปเดตค่าความไม่แน่นอนของการประมาณการ (P)
+        self.P = (1 - K) * self.P
+
+    def predict(self):
+        # --- ขั้นตอนการ Predict ---
+        # ในกรณีนี้โมเดลเราง่ายมาก คือคิดว่าระยะทางไม่น่าจะเปลี่ยนไปจากเดิมมากนัก
+        # ดังนั้นค่า x จะไม่เปลี่ยนแปลงในขั้นตอนนี้ แต่ความไม่แน่นอนจะเพิ่มขึ้นตามเวลา
+        self.P = self.P + self.Q
+        
+    def get_state(self):
+        return self.x
 
 # --- ส่วนของฟังก์ชัน (ไม่มีการเปลี่ยนแปลง) ---
 def create_pink_mask(img_rgb):
@@ -66,7 +102,6 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
 # ---------------------------------------------------
 # ส่วนที่ 2: การทำงานหลัก (Main Program)
 # ---------------------------------------------------
-
 def main():
     """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับพร้อม PID"""
     
@@ -90,9 +125,13 @@ def main():
     REAL_WIDTH_CM = 24.2
     REAL_HEIGHT_CM = 13.9
 
-    # --- [เพิ่มใหม่] ค่าสำหรับการทำ Moving Average ---
-    BUFFER_SIZE = 10  # ขนาดของ buffer (จำนวนค่าที่จะนำมาเฉลี่ย)
-    distance_buffer = deque(maxlen=BUFFER_SIZE)
+    # --- [เพิ่มใหม่] สร้าง Instance ของ Kalman Filter ---
+    # คุณสามารถ "จูน" ค่า Q และ R สองค่านี้เพื่อให้ได้ผลลัพธ์ที่ต้องการ
+    # Q (Process Noise): ค่าความเปลี่ยนแปลงที่คาดว่าจะเกิดขึ้นระหว่างเฟรม
+    # R (Measurement Noise): ค่า Noise ของการวัดระยะทางจากภาพ
+    # เริ่มต้นด้วยค่าเหล่านี้ แล้วค่อยๆ ปรับ
+    kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=4.0)
+
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -140,7 +179,7 @@ def main():
     speed_x, speed_y = 0, 0
     distance_z_x, distance_z_y = 0, 0
     final_distance = 0.0 
-    smoothed_distance = 0.0 # <--- [เพิ่มใหม่] ประกาศตัวแปรสำหรับระยะทางเฉลี่ย
+    kalman_distance = 0.0 # <--- [เพิ่มใหม่] ตัวแปรสำหรับเก็บค่าจาก Kalman Filter
 
     try:
         last_display_time = time.time()
@@ -151,6 +190,7 @@ def main():
             target_found = False
 
             frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
+            # ... (ส่วนการประมวลผลภาพเหมือนเดิม)
             frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
             main_pink_mask = create_pink_mask(frame_rgb)
             main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
@@ -164,6 +204,7 @@ def main():
             final_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
 
             if final_detections:
+                # ... (ส่วนการวาดกล่องและหา contour เหมือนเดิม)
                 best_detection = final_detections[0] 
                 top_left_proc, bottom_right_proc, confidence, template_id, color = best_detection
                 tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
@@ -209,15 +250,18 @@ def main():
                         else:
                             final_distance = distance_z_y
                         
-                        # --- [เพิ่มใหม่] ส่วนของการทำ Moving Average ---
-                        # 1. เพิ่มค่าที่คำนวณล่าสุดลงใน buffer
+                        # --- [แก้ไข] ใช้ Kalman Filter ---
                         if final_distance > 0:
-                            distance_buffer.append(final_distance)
-                        
-                        # 2. คำนวณค่าเฉลี่ยจาก buffer ถ้ามีข้อมูล
-                        if distance_buffer:
-                            smoothed_distance = sum(distance_buffer) / len(distance_buffer)
-                        # ---------------------------------------------
+                            kf_distance.predict()
+                            kf_distance.update(final_distance)
+                            kalman_distance = kf_distance.get_state()
+                        # -----------------------------------
+            
+            # --- [เพิ่มใหม่] ถ้าไม่เจอเป้าหมาย ให้ฟิลเตอร์ทำนายค่าต่อไป ---
+            if not target_found:
+                 kf_distance.predict()
+                 kalman_distance = kf_distance.get_state() # ยังคงแสดงค่าที่ทำนายไว้
+            # -----------------------------------------------------------
 
             # PID Control
             if target_found:
@@ -240,29 +284,19 @@ def main():
                 ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                 accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
                 distance_z_x, distance_z_y = 0, 0
-                final_distance = 0.0 
-                smoothed_distance = 0.0 # <--- [แก้ไข] รีเซ็ตค่าเฉลี่ย
-                distance_buffer.clear() # <--- [เพิ่มใหม่] ล้างค่าใน buffer เมื่อไม่เจอเป้าหมาย
+                final_distance = 0.0
 
             # Display information
-            delta_display_time = current_time - last_display_time
-            display_fps = 1 / delta_display_time if delta_display_time > 0 else 999.0
-            last_display_time = current_time
-            cv2.putText(frame, f"FPS: {display_fps:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            # ... (ส่วนแสดงผล FPS, error, speed เหมือนเดิม)
             cv2.putText(frame, f"e_x: {err_x:.2f}, e_y: {err_y:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
             cv2.putText(frame, f"Sp_x: {speed_x:.2f}, Sp_y: {speed_y:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
             
-            # (Optional) คุณสามารถลบ 2 บรรทัดนี้ออกไปได้ถ้าไม่ต้องการดูค่าแยก
-            cv2.putText(frame, f"Dist_x: {distance_z_x:.2f} cm", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Dist_y: {distance_z_y:.2f} cm", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            # แสดงผลระยะทางดิบ (Raw) เพื่อเปรียบเทียบ
+            cv2.putText(frame, f"Raw Dist: {final_distance:.2f} cm", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             
-            # แสดงผลระยะทางสุดท้ายที่คำนวณได้ (ค่าดิบ)
-            cv2.putText(frame, f"Distance: {final_distance:.2f} cm", (10, 190), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
-
-            # --- [เพิ่มใหม่] แสดงผลระยะทางเฉลี่ยที่นิ่งขึ้น ---
+            # --- [แก้ไข] แสดงผลระยะทางจาก Kalman Filter ---
             # ใช้ฟอนต์ที่ใหญ่ขึ้นและสีที่โดดเด่นเพื่อให้อ่านง่าย
-            cv2.putText(frame, f"Smoothed Dist: {smoothed_distance:.2f} cm", (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (50, 150, 255), 2)
-
+            cv2.putText(frame, f"Kalman Dist: {kalman_distance:.2f} cm", (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
 
             cv2.circle(frame, (int(center_x_orig), int(center_y_orig)), 5, (255, 0, 255), -1)
             cv2.imshow("Robomaster Pink Cup Detection with PID", frame)
@@ -277,4 +311,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-    #----
