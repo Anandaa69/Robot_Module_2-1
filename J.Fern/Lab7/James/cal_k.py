@@ -30,7 +30,20 @@ def main():
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
     ep_camera = ep_robot.camera
+    
+    # ==========================[ จุดที่แก้ไข ]===========================
+    # 1. ประกาศตัวแปรสำหรับควบคุม Gimbal
+    ep_gimbal = ep_robot.gimbal
+    # ===================================================================
+
     ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
+    
+    # ==========================[ จุดที่แก้ไข ]===========================
+    # 2. สั่งให้ Gimbal กลับไปที่จุดกึ่งกลางและรอจนกว่าจะเสร็จสิ้น
+    print("Recentering gimbal to a stable position...")
+    ep_gimbal.recenter(pitch_speed=150, yaw_speed=150).wait_for_completed()
+    time.sleep(1) # รอสักครู่เพื่อให้ Gimbal หยุดสนิท
+    # ===================================================================
     
     print(f"!!! Calibration Mode !!!")
     print(f"Place the object at a known distance of {Z_KNOWN_DISTANCE_CM} cm from the camera lens.")
@@ -48,6 +61,8 @@ def main():
             pink_mask = create_pink_mask(frame_rgb)
             contours, _ = cv2.findContours(pink_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
+            key_pressed = cv2.waitKey(1) & 0xFF
+
             if contours:
                 main_contour = max(contours, key=cv2.contourArea)
                 x, y, w, h = cv2.boundingRect(main_contour)
@@ -58,8 +73,7 @@ def main():
                 cv2.putText(frame, f"Height (px): {h}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
 
                 # เมื่อผู้ใช้กด 'c' ให้คำนวณและแสดงผลค่า K
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('c'):
+                if key_pressed == ord('c'):
                     if w > 0 and h > 0:
                         # ใช้สูตร K = (Z * P) / F
                         calculated_kx = (Z_KNOWN_DISTANCE_CM * w) / REAL_WIDTH_CM
@@ -78,13 +92,11 @@ def main():
                         print("="*30)
                         print("Copy these K_X and K_Y values into your main detect_pid.py script.\n")
 
-            else:
-                key = cv2.waitKey(1) & 0xFF
-
             cv2.imshow("Calibration", frame)
-            if key == ord('q'):
+            if key_pressed == ord('q'):
                 break
     finally:
+        print("Stopping calibration and releasing resources.")
         cv2.destroyAllWindows()
         ep_camera.stop_video_stream()
         ep_robot.close()
