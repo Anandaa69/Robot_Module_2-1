@@ -5,7 +5,7 @@ from robomaster import robot
 from robomaster import camera
 from robomaster import blaster
 
-# --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
+# --- คลาสสำหรับ Kalman Filter แบบ 1 มิติ (ไม่มีการเปลี่ยนแปลง) ---
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
         self.Q = process_noise 
@@ -107,8 +107,7 @@ def main():
     REAL_WIDTH_CM = 24.2
     REAL_HEIGHT_CM = 13.9
 
-    # --- [เพิ่มใหม่] ตัวแปรสำหรับควบคุมความถี่ในการ Detect ---
-    DETECTION_INTERVAL = 0.1  # ทำการ detect ใหม่ทุกๆ 0.1 วินาที
+    DETECTION_INTERVAL = 0.1
     last_detection_time = 0.0
 
     kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=4.0)
@@ -160,7 +159,7 @@ def main():
     final_distance = 0.0 
     kalman_distance = 0.0
     
-    tracked_object = None # <--- [เพิ่มใหม่] ตัวแปรสำหรับ "จำ" ตำแหน่งเป้าหมายล่าสุด
+    tracked_object = None
 
     try:
         last_display_time = time.time()
@@ -170,40 +169,27 @@ def main():
             current_time = time.time()
             target_found = False
 
-            # =================== [ บล็อกที่ 1: การค้นหาเป้าหมาย (ทำเป็นระยะ) ] =====================
             if current_time - last_detection_time >= DETECTION_INTERVAL:
                 last_detection_time = current_time
-                
-                # ทำการประมวลผลภาพเพื่อค้นหา
                 frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
                 frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
                 main_pink_mask = create_pink_mask(frame_rgb)
                 main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
                 main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
-                
                 all_detections = []
                 colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
                 for i, tmpl_masked in enumerate(templates_masked):
                     boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
                     for top_left, bottom_right, confidence in boxes:
                         all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
-                
                 final_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
-
                 if final_detections:
-                    # ถ้าเจอ ให้ "จำ" เป้าหมายที่ดีที่สุดไว้
                     tracked_object = final_detections[0]
                 else:
-                    # ถ้าไม่เจอ ให้ล้างค่าที่จำไว้
                     tracked_object = None
-            # ====================================================================================
 
-            # =================== [ บล็อกที่ 2: การติดตามและคำนวณ (ทำทุกเฟรม) ] =====================
             if tracked_object is not None:
-                # ใช้ข้อมูลจาก tracked_object ที่จำไว้ มาทำงานต่อ
                 top_left_proc, bottom_right_proc, confidence, template_id, color = tracked_object
-                
-                # แปลงพิกัดและวาดกล่อง (เหมือนเดิม)
                 tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
                 br_orig_unadjusted = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale))
                 tl_adjusted = (tl_orig_unadjusted[0], tl_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
@@ -212,7 +198,6 @@ def main():
                 label = f"T{template_id+1} Conf:{confidence:.2f} (Locked)"
                 cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
 
-                # หา Contour และคำนวณค่าต่างๆ (เหมือนเดิม)
                 roi_x1, roi_y1 = max(0, tl_adjusted[0]), max(0, tl_adjusted[1])
                 roi_x2, roi_y2 = min(frame.shape[1], br_adjusted[0]), min(frame.shape[0], br_adjusted[1])
                 
@@ -226,17 +211,22 @@ def main():
                         main_contour = max(contours, key=cv2.contourArea)
                         x_real, y_real, w_real, h_real = cv2.boundingRect(main_contour)
                         
-                        target_found = True # ตั้งค่าสถานะว่าเจอเป้าหมาย
+                        target_found = True
                         
-                        # คำนวณจุดศูนย์กลางและ error สำหรับ PID
                         real_top_left = (roi_x1 + x_real, roi_y1 + y_real)
                         real_bottom_right = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
+
+                        # <--- [เพิ่มกลับเข้ามา] วาดกรอบสีเหลืองรอบ Contour ที่เจอ
+                        cv2.rectangle(frame, real_top_left, real_bottom_right, (0, 255, 255), 2)
+                        
                         target_center_x = (real_top_left[0] + real_bottom_right[0]) / 2
                         target_center_y = (real_top_left[1] + real_bottom_right[1]) / 2
                         err_x = center_x_orig - target_center_x
                         err_y = center_y_orig - target_center_y
+
+                        # <--- [เพิ่มกลับเข้ามา] วาดวงกลมสีแดงที่จุดศูนย์กลางของ Contour
+                        cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
                         
-                        # คำนวณระยะทาง
                         distance_z_x = (K_Y * REAL_HEIGHT_CM) / w_real if w_real > 0 else 0
                         distance_z_y = (K_X * REAL_WIDTH_CM) / h_real if h_real > 0 else 0
                         
@@ -245,20 +235,16 @@ def main():
                         elif distance_z_x > 0: final_distance = distance_z_x
                         else: final_distance = distance_z_y
                         
-                        # ป้อนค่าเข้าระบบ Kalman Filter
                         if final_distance > 0:
                             kf_distance.predict()
                             kf_distance.update(final_distance)
             
-            # ถ้าไม่เจอเป้าหมาย (ทั้งจากการ detect ใหม่ และที่เคยจำไว้)
             if not target_found:
                  kf_distance.predict()
                  final_distance = 0.0
 
             kalman_distance = kf_distance.get_state()
-            # ====================================================================================
 
-            # PID Control (ส่วนนี้แทบไม่ต้องแก้)
             if target_found:
                 delta_time = current_time - prev_time
                 if delta_time == 0: delta_time = 0.001 
@@ -278,7 +264,6 @@ def main():
                 ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                 accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
 
-            # Display information
             delta_display_time = current_time - last_display_time
             display_fps = 1 / delta_display_time if delta_display_time > 0 else 999.0
             last_display_time = current_time
