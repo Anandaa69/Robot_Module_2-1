@@ -4,39 +4,21 @@ import time
 from robomaster import robot
 from robomaster import camera
 from robomaster import blaster
-# from collections import deque # เราจะใช้ Kalman Filter แทน
 
-# --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
+# --- คลาส SimpleKalmanFilter (ไม่มีการเปลี่ยนแปลง) ---
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
-        # Q: ความไม่แน่นอนของโมเดล (Process Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อว่าสถานะจะไม่เปลี่ยนแปลงเร็ว (ผลลัพธ์จะนิ่งมาก แต่ตอบสนองช้า)
-        # ยิ่งค่ามาก ยิ่งเชื่อว่าสถานะเปลี่ยนแปลงได้ตลอดเวลา (ตอบสนองเร็ว แต่อาจนิ่งน้อยลง)
         self.Q = process_noise 
-
-        # R: ความไม่แน่นอนของการวัด (Measurement Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อมั่นในค่าที่วัดได้จากเซ็นเซอร์ (ฟิลเตอร์จะปรับตามค่าที่วัดได้เร็ว)
-        # ยิ่งค่ามาก ยิ่งไม่เชื่อค่าที่วัดได้ (ผลลัพธ์จะนิ่งมาก แต่ถ้าเป้าหมายเคลื่อนที่เร็วอาจตามไม่ทัน)
         self.R = measurement_noise 
-
-        self.P = 1.0  # ค่าความไม่แน่นอนของการประมาณการเริ่มต้น (Error Covariance)
-        self.x = initial_value # ค่าสถานะเริ่มต้น (Initial State)
+        self.P = 1.0
+        self.x = initial_value
 
     def update(self, measurement):
-        # --- ขั้นตอนการ Update ---
-        # 1. คำนวณ Kalman Gain (K)
         K = self.P / (self.P + self.R)
-        
-        # 2. อัปเดตค่าประมาณการ (x) ด้วยค่าที่วัดได้
         self.x = self.x + K * (measurement - self.x)
-        
-        # 3. อัปเดตค่าความไม่แน่นอนของการประมาณการ (P)
         self.P = (1 - K) * self.P
 
     def predict(self):
-        # --- ขั้นตอนการ Predict ---
-        # ในกรณีนี้โมเดลเราง่ายมาก คือคิดว่าระยะทางไม่น่าจะเปลี่ยนไปจากเดิมมากนัก
-        # ดังนั้นค่า x จะไม่เปลี่ยนแปลงในขั้นตอนนี้ แต่ความไม่แน่นอนจะเพิ่มขึ้นตามเวลา
         self.P = self.P + self.Q
         
     def get_state(self):
@@ -125,9 +107,7 @@ def main():
     REAL_WIDTH_CM = 24.2
     REAL_HEIGHT_CM = 13.9
 
-    # --- [เพิ่มใหม่] สร้าง Instance ของ Kalman Filter ---
     kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=4.0)
-
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -177,129 +157,129 @@ def main():
     final_distance = 0.0 
     kalman_distance = 0.0 
     
-    # --- [เพิ่มใหม่] ตัวแปรสำหรับควบคุมความถี่ในการตรวจจับ ---
-    DETECTION_INTERVAL = 0.15  # วินาที
+    DETECTION_INTERVAL = 0.15
     last_detection_time = 0
-    last_known_detections = [] # เก็บผลการตรวจจับล่าสุดไว้
+    last_known_detections = []
 
+    # บล็อก try...finally ด้านนอกสุดนี้ยังคงมีไว้
+    # เพื่อให้แน่ใจว่าหุ่นยนต์จะถูกปิดการเชื่อมต่ออย่างถูกต้องเมื่อเรากด 'q'
     try:
         while True:
-            frame = ep_camera.read_cv2_image()
-            if frame is None: continue
-            current_time = time.time()
-            target_found = False
-
-            # --- [แก้ไข] ตรวจสอบว่าถึงเวลาที่ต้องประมวลผลภาพใหม่หรือยัง ---
-            if current_time - last_detection_time >= DETECTION_INTERVAL:
-                last_detection_time = current_time # อัปเดตเวลาล่าสุด
-
-                frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
-                frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
-                main_pink_mask = create_pink_mask(frame_rgb)
-                main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-                main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
+            # --- [เพิ่มใหม่] เพิ่ม try...except เข้ามาครอบการทำงานในแต่ละเฟรม ---
+            try:
+                frame = ep_camera.read_cv2_image()
+                if frame is None:
+                    time.sleep(0.01) # รอสักครู่ถ้าไม่มีเฟรมเข้ามา
+                    continue
                 
-                all_detections = []
-                colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
-                for i, tmpl_masked in enumerate(templates_masked):
-                    boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
-                    for top_left, bottom_right, confidence in boxes:
-                        all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
+                current_time = time.time()
+                target_found = False
+
+                if current_time - last_detection_time >= DETECTION_INTERVAL:
+                    last_detection_time = current_time
+                    frame_proc = cv2.resize(frame, (int(PROCESSING_WIDTH), h_proc), interpolation=cv2.INTER_AREA)
+                    frame_rgb = cv2.cvtColor(frame_proc, cv2.COLOR_BGR2RGB)
+                    main_pink_mask = create_pink_mask(frame_rgb)
+                    main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+                    main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
+                    all_detections = []
+                    colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
+                    for i, tmpl_masked in enumerate(templates_masked):
+                        boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
+                        for top_left, bottom_right, confidence in boxes:
+                            all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
+                    last_known_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
+
+                if last_known_detections:
+                    best_detection = last_known_detections[0] 
+                    top_left_proc, bottom_right_proc, confidence, template_id, color = best_detection
+                    tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
+                    br_orig_unadjusted = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale))
+                    tl_adjusted = (tl_orig_unadjusted[0], tl_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
+                    br_adjusted = (br_orig_unadjusted[0], br_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
+                    cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
+                    label = f"T{template_id+1} Conf:{confidence:.2f}"
+                    cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+
+                    roi_x1, roi_y1 = max(0, tl_adjusted[0]), max(0, tl_adjusted[1])
+                    roi_x2, roi_y2 = min(frame.shape[1], br_adjusted[0]), min(frame.shape[0], br_adjusted[1])
+                    
+                    if roi_x2 > roi_x1 and roi_y2 > roi_y1:
+                        roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
+                        roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
+                        roi_pink_mask = create_pink_mask(roi_rgb)
+                        contours, _ = cv2.findContours(roi_pink_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+                        if contours:
+                            main_contour = max(contours, key=cv2.contourArea)
+                            x_real, y_real, w_real, h_real = cv2.boundingRect(main_contour)
+                            
+                            real_top_left = (roi_x1 + x_real, roi_y1 + y_real)
+                            real_bottom_right = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
+                            cv2.rectangle(frame, real_top_left, real_bottom_right, (0, 255, 255), 2)
+                            target_center_x = (real_top_left[0] + real_bottom_right[0]) / 2
+                            target_center_y = (real_top_left[1] + real_bottom_right[1]) / 2
+                            err_x = center_x_orig - target_center_x
+                            err_y = center_y_orig - target_center_y
+                            target_found = True
+                            cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
+                            
+                            if w_real > 0: distance_z_x = (K_Y * REAL_HEIGHT_CM) / w_real
+                            if h_real > 0: distance_z_y = (K_X * REAL_WIDTH_CM) / h_real
+                            
+                            if distance_z_x > 0 and distance_z_y > 0: final_distance = (distance_z_x + distance_z_y) / 2
+                            elif distance_z_x > 0: final_distance = distance_z_x
+                            else: final_distance = distance_z_y
+                            
+                            if final_distance > 0:
+                                kf_distance.predict()
+                                kf_distance.update(final_distance)
+                                kalman_distance = kf_distance.get_state()
                 
-                # อัปเดตผลการตรวจจับล่าสุด
-                last_known_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
+                if not target_found:
+                    kf_distance.predict()
+                    kalman_distance = kf_distance.get_state()
+                    if current_time - last_detection_time > 1.0: # ถ้าไม่เจอเป้าหมายนานเกิน 1 วิ ให้เคลียร์ค่าเก่า
+                         last_known_detections = [] 
 
-            # --- [แก้ไข] ใช้ผลลัพธ์ล่าสุดในการทำงานต่อ ไม่ว่าจะประมวลผลใหม่ในรอบนี้หรือไม่ ---
-            if last_known_detections:
-                best_detection = last_known_detections[0] 
-                top_left_proc, bottom_right_proc, confidence, template_id, color = best_detection
-                tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
-                br_orig_unadjusted = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale))
-                tl_adjusted = (tl_orig_unadjusted[0], tl_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
-                br_adjusted = (br_orig_unadjusted[0], br_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
-                
-                # วาดกล่องและข้อความลงบนเฟรมปัจจุบัน
-                cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
-                label = f"T{template_id+1} Conf:{confidence:.2f}"
-                cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-
-                roi_x1, roi_y1 = max(0, tl_adjusted[0]), max(0, tl_adjusted[1])
-                roi_x2, roi_y2 = min(frame.shape[1], br_adjusted[0]), min(frame.shape[0], br_adjusted[1])
-                
-                if roi_x2 > roi_x1 and roi_y2 > roi_y1:
-                    roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
-                    roi_rgb = cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)
-                    roi_pink_mask = create_pink_mask(roi_rgb)
-                    contours, _ = cv2.findContours(roi_pink_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-                    if contours:
-                        main_contour = max(contours, key=cv2.contourArea)
-                        x_real, y_real, w_real, h_real = cv2.boundingRect(main_contour)
-                        
-                        real_top_left = (roi_x1 + x_real, roi_y1 + y_real)
-                        real_bottom_right = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
-                        cv2.rectangle(frame, real_top_left, real_bottom_right, (0, 255, 255), 2)
-                        target_center_x = (real_top_left[0] + real_bottom_right[0]) / 2
-                        target_center_y = (real_top_left[1] + real_bottom_right[1]) / 2
-                        err_x = center_x_orig - target_center_x
-                        err_y = center_y_orig - target_center_y
-                        target_found = True
-                        cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
-                        
-                        if w_real > 0:
-                            distance_z_x = (K_Y * REAL_HEIGHT_CM) / w_real
-                        if h_real > 0:
-                            distance_z_y = (K_X * REAL_WIDTH_CM) / h_real
-                        
-                        if distance_z_x > 0 and distance_z_y > 0:
-                            final_distance = (distance_z_x + distance_z_y) / 2
-                        elif distance_z_x > 0: 
-                            final_distance = distance_z_x
-                        else:
-                            final_distance = distance_z_y
-                        
-                        if final_distance > 0:
-                            kf_distance.predict()
-                            kf_distance.update(final_distance)
-                            kalman_distance = kf_distance.get_state()
-            
-            if not target_found:
-                 kf_distance.predict()
-                 kalman_distance = kf_distance.get_state() 
-                 last_known_detections = [] # เคลียร์ค่าล่าสุดเมื่อเป้าหมายหายไป
-
-            # PID Control
-            if target_found:
-                delta_time = current_time - prev_time
-                if delta_time == 0: delta_time = 0.001 
-                if prev_err_x == 0 and prev_err_y == 0:
-                    D_term_x, D_term_y = 0, 0
-                    accumulate_err_x, accumulate_err_y = 0, 0
+                if target_found:
+                    delta_time = current_time - prev_time
+                    if delta_time == 0: delta_time = 0.001 
+                    if prev_err_x == 0 and prev_err_y == 0:
+                        D_term_x, D_term_y = 0, 0
+                        accumulate_err_x, accumulate_err_y = 0, 0
+                    else:
+                        D_term_x = D_GAIN * ((prev_err_x - err_x) / delta_time)
+                        D_term_y = D_GAIN * ((prev_err_y - err_y) / delta_time)
+                        accumulate_err_x += err_x * delta_time
+                        accumulate_err_y += err_y * delta_time
+                    speed_x = (P_GAIN * err_x) + D_term_x + (I_GAIN * accumulate_err_x)
+                    speed_y = (P_GAIN * err_y) + D_term_y + (I_GAIN * accumulate_err_y)
+                    ep_gimbal.drive_speed(pitch_speed=-speed_y, yaw_speed=speed_x) 
+                    prev_err_x, prev_err_y = err_x, err_y
+                    prev_time = current_time
                 else:
-                    D_term_x = D_GAIN * ((prev_err_x - err_x) / delta_time)
-                    D_term_y = D_GAIN * ((prev_err_y - err_y) / delta_time)
-                    accumulate_err_x += err_x * delta_time
-                    accumulate_err_y += err_y * delta_time
-                speed_x = (P_GAIN * err_x) + D_term_x + (I_GAIN * accumulate_err_x)
-                speed_y = (P_GAIN * err_y) + D_term_y + (I_GAIN * accumulate_err_y)
-                ep_gimbal.drive_speed(pitch_speed=-speed_y, yaw_speed=speed_x) 
-                prev_err_x, prev_err_y = err_x, err_y
-                prev_time = current_time
-            else:
-                ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-                accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
-                distance_z_x, distance_z_y = 0, 0
-                final_distance = 0.0
+                    ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+                    accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
+                    distance_z_x, distance_z_y, final_distance = 0, 0, 0
 
-            # Display information
-            cv2.putText(frame, f"e_x: {err_x:.2f}, e_y: {err_y:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"Sp_x: {speed_x:.2f}, Sp_y: {speed_y:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-            cv2.putText(frame, f"Raw Dist: {final_distance:.2f} cm", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, f"Kalman Dist: {kalman_distance:.2f} cm", (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
-            cv2.circle(frame, (int(center_x_orig), int(center_y_orig)), 5, (255, 0, 255), -1)
-            cv2.imshow("Robomaster Pink Cup Detection with PID", frame)
+                cv2.putText(frame, f"e_x: {err_x:.2f}, e_y: {err_y:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Sp_x: {speed_x:.2f}, Sp_y: {speed_y:.2f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                cv2.putText(frame, f"Raw Dist: {final_distance:.2f} cm", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, f"Kalman Dist: {kalman_distance:.2f} cm", (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
+                cv2.circle(frame, (int(center_x_orig), int(center_y_orig)), 5, (255, 0, 255), -1)
+                cv2.imshow("Robomaster Pink Cup Detection with PID", frame)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'): break
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+            
+            # --- [เพิ่มใหม่] บล็อก except ที่จะทำงานเมื่อมีข้อผิดพลาดในเฟรมนั้นๆ ---
+            except Exception as e:
+                print(f"An error occurred in the main loop: {e}")
+                # อาจจะเพิ่ม time.sleep เล็กน้อยเพื่อป้องกันการวนลูป error ถี่ๆ
+                time.sleep(0.1) 
+                continue # ข้ามไปทำงานเฟรมถัดไป
+
     finally:
         print("Stopping detection and releasing resources.")
         ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
