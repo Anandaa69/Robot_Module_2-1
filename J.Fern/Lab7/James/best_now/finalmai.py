@@ -122,7 +122,7 @@ def main():
 
     K_X = 596.719
     K_Y = 388.348
-    REAL_WIDTH_CM = 24.2
+    REAL_WIDTH_CM = 23.9
     REAL_HEIGHT_CM = 13.9
 
     # --- [เพิ่มใหม่] สร้าง Instance ของ Kalman Filter ---
