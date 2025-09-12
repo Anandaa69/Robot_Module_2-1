@@ -1,0 +1,141 @@
+{
+  "metadata": {
+    "timestamp": "2025-09-12T11:32:31.350141",
+    "total_nodes": 8,
+    "boundaries": {
+      "min_x": -2,
+      "max_x": 0,
+      "min_y": 0,
+      "max_y": 2
+    },
+    "drift_corrections": 1
+  },
+  "nodes": {
+    "0_0": {
+      "position": [
+        0,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ]
+    },
+    "0_1": {
+      "position": [
+        0,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ]
+    },
+    "0_2": {
+      "position": [
+        0,
+        2
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "west"
+      ]
+    },
+    "-1_2": {
+      "position": [
+        -1,
+        2
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "south"
+      ]
+    },
+    "-1_1": {
+      "position": [
+        -1,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": true,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "west"
+      ]
+    },
+    "-2_1": {
+      "position": [
+        -2,
+        1
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "south"
+      ]
+    },
+    "-2_0": {
+      "position": [
+        -2,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "east"
+      ]
+    },
+    "-1_0": {
+      "position": [
+        -1,
+        0
+      ],
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": true,
+        "west": false
+      },
+      "is_dead_end": true,
+      "explored_directions": []
+    }
+  }
+}
