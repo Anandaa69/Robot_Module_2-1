@@ -13,16 +13,19 @@ if __name__ == '__main__':
 
     ep_servo = ep_robot.servo
 
-    while True :
         # 1. อ่านค่ามุมเริ่มต้น
-        initial_angle = ep_servo.get_angle(index=1)
-        print(f"--- ผลการตรวจสอบ Servo ID: {1} ---")
-        print(f"[ขั้นตอนที่ 1] มุมเริ่มต้นที่อ่านได้คือ: {initial_angle} องศา")
+    ep_servo.moveto(index=3, angle=0).wait_for_completed()
+    ep_servo.moveto(index=3, angle=-40).wait_for_completed()
+    ep_servo.moveto(index=1, angle=30).wait_for_completed()
+    # initial_angle = ep_servo.get_angle(index=1)
+    # print(f"--- ผลการตรวจสอบ Servo ID: {1} ---")
+    # print(f"[ขั้นตอนที่ 1] มุมเริ่มต้นที่อ่านได้คือ: {initial_angle} องศา")
 
 
-        initial_angle = ep_servo.get_angle(index=3)
-        print(f"--- ผลการตรวจสอบ Servo ID: {3} ---")
-        print(f"[ขั้นตอนที่ 1] มุมเริ่มต้นที่อ่านได้คือ: {initial_angle} องศา")
+    # initial_angle = ep_servo.get_angle(index=3)
+    # print(f"--- ผลการตรวจสอบ Servo ID: {3} ---")
+    # print(f"[ขั้นตอนที่ 1] มุมเริ่มต้นที่อ่านได้คือ: {initial_angle} องศา")
 
 
-        time.sleep(2)
+    time.sleep(2)
+    ep_robot.close()
