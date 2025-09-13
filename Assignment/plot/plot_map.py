@@ -1,323 +1,329 @@
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import matplotlib.animation as animation
-import numpy as np
-from collections import defaultdict
-import json
+# plot_maze_explored.py
+# Matplotlib: วาดแผนที่สำรวจ (เวอร์ชันภาพนิ่ง + อนิเมชัน)
+# อ่านจาก Assignment\data\maze_data_true_final.json
 
-# ข้อมูลแผนที่จาก JSON
-maze_data = {
-    "metadata": {
-        "timestamp": "2025-09-13T11:22:29.687115",
-        "total_nodes": 8,
-        "boundaries": {
-            "min_x": -2,
-            "max_x": 1,
-            "min_y": 0,
-            "max_y": 1
-        },
-        "drift_corrections": 1
-    },
-    "nodes": {
-        "0_0": {
-            "position": [0, 0],
-            "walls": {"north": False, "south": True, "east": True, "west": True},
-            "is_dead_end": True,
-            "explored_directions": ["north"],
-            "unexplored_exits": []
-        },
-        "0_1": {
-            "position": [0, 1],
-            "walls": {"north": True, "south": False, "east": False, "west": False},
-            "is_dead_end": False,
-            "explored_directions": ["west", "east"],
-            "unexplored_exits": []
-        },
-        "-1_1": {
-            "position": [-1, 1],
-            "walls": {"north": True, "south": False, "east": False, "west": False},
-            "is_dead_end": False,
-            "explored_directions": ["south", "west"],
-            "unexplored_exits": []
-        },
-        "-1_0": {
-            "position": [-1, 0],
-            "walls": {"north": False, "south": True, "east": True, "west": True},
-            "is_dead_end": True,
-            "explored_directions": [],
-            "unexplored_exits": []
-        },
-        "-2_1": {
-            "position": [-2, 1],
-            "walls": {"north": True, "south": False, "east": False, "west": True},
-            "is_dead_end": False,
-            "explored_directions": ["south"],
-            "unexplored_exits": []
-        },
-        "-2_0": {
-            "position": [-2, 0],
-            "walls": {"north": False, "south": True, "east": True, "west": True},
-            "is_dead_end": True,
-            "explored_directions": [],
-            "unexplored_exits": []
-        },
-        "1_1": {
-            "position": [1, 1],
-            "walls": {"north": True, "south": False, "east": True, "west": False},
-            "is_dead_end": False,
-            "explored_directions": ["south"],
-            "unexplored_exits": []
-        },
-        "1_0": {
-            "position": [1, 0],
-            "walls": {"north": False, "south": True, "east": True, "west": True},
-            "is_dead_end": True,
-            "explored_directions": [],
-            "unexplored_exits": []
+import json
+import math
+from collections import deque, defaultdict
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+# ---------- Config ----------
+JSON_PATH = Path("Assignment") / "data" / "maze_data_true_final.json"
+SAVE_STATIC = True          # เซฟภาพนิ่งเป็น PNG
+STATIC_OUT = Path("maze_static.png")
+SAVE_ANIM = False           # ถ้าต้องการเซฟอนิเมชันเป็น MP4 ให้ตั้ง True
+ANIM_OUT = Path("maze_animation.mp4")
+ANIM_INTERVAL_MS = 350      # ความเร็วอนิเมชันต่อเฟรม (ms)
+
+# ---------- Helpers ----------
+
+def load_maze(json_path: Path):
+    with open(json_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    meta = data.get("metadata", {})
+    nodes = data.get("nodes", {})
+
+    # ปรับตำแหน่งให้อยู่ใน list/tuple และ normalize คีย์
+    norm_nodes = {}
+    for key, nd in nodes.items():
+        pos = nd.get("position", None)
+        if pos is None:
+            # key อาจเป็นรูป "x_y"
+            try:
+                x_str, y_str = key.split("_")
+                pos = [int(x_str), int(y_str)]
+            except Exception:
+                continue
+        nd = {
+            "position": tuple(pos),
+            "walls": nd.get("walls", {}),
+            "is_dead_end": bool(nd.get("is_dead_end", False)),
+            "explored_directions": list(nd.get("explored_directions", [])),
+            "unexplored_exits": list(nd.get("unexplored_exits", [])),
         }
-    }
+        norm_nodes[key] = nd
+
+    # ขอบเขต: ใช้จาก metadata ถ้ามี ไม่งั้นคำนวณจากโหนด
+    bounds = meta.get("boundaries", None)
+    if not bounds:
+        xs = [nd["position"][0] for nd in norm_nodes.values()]
+        ys = [nd["position"][1] for nd in norm_nodes.values()]
+        bounds = {
+            "min_x": min(xs) - 1,
+            "max_x": max(xs) + 1,
+            "min_y": min(ys) - 1,
+            "max_y": max(ys) + 1,
+        }
+
+    return meta, norm_nodes, bounds
+
+def wall_segments(nodes):
+    """
+    แปลง walls ของแต่ละ cell เป็นเส้น (x1,y1,x2,y2) ไม่ซ้ำกัน
+    สมมติ cell กว้าง 1 หน่วย วาง cell center ที่ (x, y)
+    เส้นขอบ cell ใช้ครึ่งหน่วยจาก center
+    """
+    segs = set()
+    # ใช้ lookup สำหรับ dedupe: เส้นเป็น tuple จัดอันดับจุดซ้ายก่อน
+    def add_seg(a, b):
+        # เรียงปลายทางให้ canonical
+        if a > b:
+            a, b = b, a
+        segs.add((a[0], a[1], b[0], b[1]))
+
+    for nd in nodes.values():
+        x, y = nd["position"]
+        cx, cy = float(x), float(y)
+        half = 0.5
+
+        w = nd["walls"]
+        # เหนือ
+        if w.get("north", False):
+            a = (cx - half, cy + half)
+            b = (cx + half, cy + half)
+            add_seg(a, b)
+        # ใต้
+        if w.get("south", False):
+            a = (cx - half, cy - half)
+            b = (cx + half, cy - half)
+            add_seg(a, b)
+        # ตะวันออก
+        if w.get("east", False):
+            a = (cx + half, cy - half)
+            b = (cx + half, cy + half)
+            add_seg(a, b)
+        # ตะวันตก
+        if w.get("west", False):
+            a = (cx - half, cy - half)
+            b = (cx - half, cy + half)
+            add_seg(a, b)
+
+    return list(segs)
+
+DIR_VEC = {
+    "north": (0, 1),
+    "south": (0, -1),
+    "east":  (1, 0),
+    "west":  (-1, 0),
 }
 
-def create_static_maze_plot():
-    """สร้างกราฟแผนที่แบบภาพนิ่ง"""
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-    
-    # สี่เหลี่ยมแต่ละช่อง
-    cell_size = 1.0
-    
-    # วาดห้องทั้งหมด
-    for node_id, node_data in maze_data['nodes'].items():
-        x, y = node_data['position']
-        
-        # วาดพื้นห้อง
-        if node_data['is_dead_end']:
-            color = '#ffcccc'  # สีแดงอ่อนสำหรับทางตัน
+OPPOSITE = {"north": "south", "south": "north", "east": "west", "west": "east"}
+
+def build_graph(nodes):
+    """
+    สร้างกราฟการเชื่อมต่อระหว่าง cell จากกำแพง: ถ้าไม่มีผนังในทิศ d และเพื่อนบ้านมีอยู่ → edge
+    """
+    pos_to_key = {nd["position"]: k for k, nd in nodes.items()}
+    adj = defaultdict(list)
+
+    for k, nd in nodes.items():
+        x, y = nd["position"]
+        walls = nd["walls"]
+        for d, (dx, dy) in DIR_VEC.items():
+            if not walls.get(d, False):
+                nb_pos = (x + dx, y + dy)
+                nb_key = pos_to_key.get(nb_pos)
+                if nb_key:
+                    # ตรวจฝั่งตรงข้ามด้วย (กันกรณีข้อมูลผนังขัดแย้ง)
+                    nb_walls = nodes[nb_key]["walls"]
+                    if not nb_walls.get(OPPOSITE[d], False):
+                        adj[k].append(nb_key)
+    return adj
+
+def bfs_order(nodes, start_key=None):
+    """
+    สร้างลำดับการเยี่ยมชมโหนดด้วย BFS เพื่อใช้อธิบายการ animate
+    ถ้าไม่มี start_key จะพยายามใช้ "0_0" หรือคีย์แรกตามลำดับ
+    """
+    if not nodes:
+        return []
+
+    if start_key is None:
+        if "0_0" in nodes:
+            start_key = "0_0"
         else:
-            color = '#ccffcc'  # สีเขียวอ่อนสำหรับทางผ่าน
-            
-        rect = patches.Rectangle((x-0.4, y-0.4), 0.8, 0.8, 
-                                linewidth=1, edgecolor='black', 
-                                facecolor=color, alpha=0.7)
-        ax.add_patch(rect)
-        
-        # วาดกำแพง
-        wall_thickness = 0.1
-        if node_data['walls']['north']:
-            wall = patches.Rectangle((x-0.5, y+0.4), 1.0, wall_thickness, 
-                                   facecolor='black')
-            ax.add_patch(wall)
-        if node_data['walls']['south']:
-            wall = patches.Rectangle((x-0.5, y-0.5), 1.0, wall_thickness, 
-                                   facecolor='black')
-            ax.add_patch(wall)
-        if node_data['walls']['east']:
-            wall = patches.Rectangle((x+0.4, y-0.5), wall_thickness, 1.0, 
-                                   facecolor='black')
-            ax.add_patch(wall)
-        if node_data['walls']['west']:
-            wall = patches.Rectangle((x-0.5, y-0.5), wall_thickness, 1.0, 
-                                   facecolor='black')
-            ax.add_patch(wall)
-        
-        # แสดงพิกัด
-        ax.text(x, y, f'({x},{y})', ha='center', va='center', 
-                fontsize=10, fontweight='bold')
-        
-        # แสดงทิศทางที่สำรวจแล้ว
-        if node_data['explored_directions']:
-            directions_text = ', '.join(node_data['explored_directions'])
-            ax.text(x, y-0.25, f"สำรวจ: {directions_text}", 
-                   ha='center', va='center', fontsize=8, 
-                   style='italic', color='blue')
-    
-    # วาดเส้นเชื่อมระหว่างห้อง (ทางเดิน)
-    for node_id, node_data in maze_data['nodes'].items():
-        x, y = node_data['position']
-        
-        # เช็คการเชื่อมต่อและวาดเส้น
-        if not node_data['walls']['north']:
-            next_pos = (x, y+1)
-            next_key = f"{next_pos[0]}_{next_pos[1]}"
-            if next_key in maze_data['nodes']:
-                ax.plot([x, x], [y+0.4, y+0.6], 'g-', linewidth=3, alpha=0.8)
-        
-        if not node_data['walls']['east']:
-            next_pos = (x+1, y)
-            next_key = f"{next_pos[0]}_{next_pos[1]}"
-            if next_key in maze_data['nodes']:
-                ax.plot([x+0.4, x+0.6], [y, y], 'g-', linewidth=3, alpha=0.8)
-    
-    # ตั้งค่ากราฟ
-    ax.set_xlim(maze_data['metadata']['boundaries']['min_x']-1, 
-                maze_data['metadata']['boundaries']['max_x']+1)
-    ax.set_ylim(maze_data['metadata']['boundaries']['min_y']-1, 
-                maze_data['metadata']['boundaries']['max_y']+1)
-    ax.set_aspect('equal')
-    ax.grid(True, alpha=0.3)
-    ax.set_title('แผนที่เขาวงกต - ผลการสำรวจ\n' + 
-                f"จำนวนห้องทั้งหมด: {maze_data['metadata']['total_nodes']} ห้อง", 
-                fontsize=16, fontweight='bold', pad=20)
-    ax.set_xlabel('พิกัด X', fontsize=12)
-    ax.set_ylabel('พิกัด Y', fontsize=12)
-    
-    # Legend
-    legend_elements = [
-        patches.Patch(color='#ccffcc', alpha=0.7, label='ทางผ่าน'),
-        patches.Patch(color='#ffcccc', alpha=0.7, label='ทางตัน'),
-        patches.Patch(color='black', label='กำแพง'),
-        plt.Line2D([0], [0], color='green', lw=3, label='ทางเดิน')
-    ]
-    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))
-    
-    plt.tight_layout()
+            # เลือกโหนดที่ y สูงสุด แล้ว x ต่ำสุด เพื่อให้เริ่มบนซ้าย (ปรับได้ตามใจ)
+            start_key = sorted(nodes.keys(),
+                               key=lambda k: (-nodes[k]["position"][1], nodes[k]["position"][0]))[0]
+
+    adj = build_graph(nodes)
+    visited = set([start_key])
+    q = deque([start_key])
+    order = []
+
+    while q:
+        u = q.popleft()
+        order.append(u)
+        for v in adj[u]:
+            if v not in visited:
+                visited.add(v)
+                q.append(v)
+
+    # ถ้าเป็นกราฟไม่เชื่อมทั้งหมด ให้ต่อโหนดที่เหลือเข้าไปตามลำดับ
+    if len(order) < len(nodes):
+        for k in nodes.keys():
+            if k not in visited:
+                order.append(k)
+
+    return order
+
+# ---------- Drawing ----------
+
+def setup_axes(bounds, ax=None, title=None):
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 5))
+    else:
+        fig = ax.figure
+
+    min_x, max_x = bounds["min_x"], bounds["max_x"]
+    min_y, max_y = bounds["min_y"], bounds["max_y"]
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.set_xlim(min_x - 0.6, max_x + 0.6)
+    ax.set_ylim(min_y - 0.6, max_y + 0.6)
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.grid(True, linewidth=0.5, alpha=0.25)
+
+    if title:
+        ax.set_title(title)
+
+    # วาดกรอบขอบเขต
+    rect_x = [min_x - 0.5, max_x + 0.5, max_x + 0.5, min_x - 0.5, min_x - 0.5]
+    rect_y = [min_y - 0.5, min_y - 0.5, max_y + 0.5, max_y + 0.5, min_y - 0.5]
+    ax.plot(rect_x, rect_y, linewidth=1.2, alpha=0.6)
+
     return fig, ax
 
-def create_animated_maze_plot():
-    """สร้างกราฟแผนที่แบบอนิเมชัน"""
-    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
-    
-    # เรียงลำดับ nodes ตาม timestamp (สมมุติตามลำดับใน dict)
-    nodes_list = list(maze_data['nodes'].items())
-    
-    def animate(frame):
-        ax.clear()
-        
-        # แสดง nodes ที่ค้นพบแล้วจนถึงเฟรมปัจจุบัน
-        for i in range(min(frame + 1, len(nodes_list))):
-            node_id, node_data = nodes_list[i]
-            x, y = node_data['position']
-            
-            # วาดพื้นห้อง
-            if node_data['is_dead_end']:
-                color = '#ffcccc'  # สีแดงอ่อนสำหรับทางตัน
-            else:
-                color = '#ccffcc'  # สีเขียวอ่อนสำหรับทางผ่าน
-                
-            # เอฟเฟกต์การปรากฏ
-            alpha = 0.3 if i == frame else 0.7
-            rect = patches.Rectangle((x-0.4, y-0.4), 0.8, 0.8, 
-                                    linewidth=2 if i == frame else 1, 
-                                    edgecolor='red' if i == frame else 'black', 
-                                    facecolor=color, alpha=alpha)
-            ax.add_patch(rect)
-            
-            # วาดกำแพง
-            wall_thickness = 0.1
-            wall_color = 'red' if i == frame else 'black'
-            if node_data['walls']['north']:
-                wall = patches.Rectangle((x-0.5, y+0.4), 1.0, wall_thickness, 
-                                       facecolor=wall_color)
-                ax.add_patch(wall)
-            if node_data['walls']['south']:
-                wall = patches.Rectangle((x-0.5, y-0.5), 1.0, wall_thickness, 
-                                       facecolor=wall_color)
-                ax.add_patch(wall)
-            if node_data['walls']['east']:
-                wall = patches.Rectangle((x+0.4, y-0.5), wall_thickness, 1.0, 
-                                       facecolor=wall_color)
-                ax.add_patch(wall)
-            if node_data['walls']['west']:
-                wall = patches.Rectangle((x-0.5, y-0.5), wall_thickness, 1.0, 
-                                       facecolor=wall_color)
-                ax.add_patch(wall)
-            
-            # แสดงพิกัด
-            ax.text(x, y, f'({x},{y})', ha='center', va='center', 
-                    fontsize=12 if i == frame else 10, 
-                    fontweight='bold', 
-                    color='red' if i == frame else 'black')
-            
-            # แสดงทิศทางที่สำรวจแล้ว
-            if node_data['explored_directions'] and i <= frame:
-                directions_text = ', '.join(node_data['explored_directions'])
-                ax.text(x, y-0.25, f"สำรวจ: {directions_text}", 
-                       ha='center', va='center', fontsize=8, 
-                       style='italic', color='blue')
-        
-        # วาดเส้นเชื่อมระหว่างห้องที่ค้นพบแล้ว
-        for i in range(min(frame + 1, len(nodes_list))):
-            node_id, node_data = nodes_list[i]
-            x, y = node_data['position']
-            
-            if not node_data['walls']['north']:
-                next_pos = (x, y+1)
-                next_key = f"{next_pos[0]}_{next_pos[1]}"
-                if next_key in maze_data['nodes']:
-                    # เช็คว่า node ปลายทางถูกค้นพบแล้วหรือยัง
-                    next_index = next((j for j, (nid, _) in enumerate(nodes_list) 
-                                     if nid == next_key), None)
-                    if next_index is not None and next_index <= frame:
-                        ax.plot([x, x], [y+0.4, y+0.6], 'g-', linewidth=3, alpha=0.8)
-            
-            if not node_data['walls']['east']:
-                next_pos = (x+1, y)
-                next_key = f"{next_pos[0]}_{next_pos[1]}"
-                if next_key in maze_data['nodes']:
-                    next_index = next((j for j, (nid, _) in enumerate(nodes_list) 
-                                     if nid == next_key), None)
-                    if next_index is not None and next_index <= frame:
-                        ax.plot([x+0.4, x+0.6], [y, y], 'g-', linewidth=3, alpha=0.8)
-        
-        # ตั้งค่ากราฟ
-        ax.set_xlim(maze_data['metadata']['boundaries']['min_x']-1, 
-                    maze_data['metadata']['boundaries']['max_x']+1)
-        ax.set_ylim(maze_data['metadata']['boundaries']['min_y']-1, 
-                    maze_data['metadata']['boundaries']['max_y']+1)
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.3)
-        ax.set_title(f'แผนที่เขาวงกต - การสำรวจแบบเรียลไทม์\n' + 
-                    f"ห้องที่ค้นพบ: {min(frame + 1, len(nodes_list))}/{len(nodes_list)} ห้อง", 
-                    fontsize=16, fontweight='bold', pad=20)
-        ax.set_xlabel('พิกัด X', fontsize=12)
-        ax.set_ylabel('พิกัด Y', fontsize=12)
-        
-        # Legend
-        legend_elements = [
-            patches.Patch(color='#ccffcc', alpha=0.7, label='ทางผ่าน'),
-            patches.Patch(color='#ffcccc', alpha=0.7, label='ทางตัน'),
-            patches.Patch(color='black', label='กำแพง'),
-            plt.Line2D([0], [0], color='green', lw=3, label='ทางเดิน'),
-            patches.Patch(color='red', alpha=0.3, label='ห้องที่กำลังสำรวจ')
+def draw_static(nodes, bounds, meta=None):
+    fig, ax = setup_axes(bounds, title="Explored Maze (Static)")
+
+    # วาดผนัง
+    for (x1, y1, x2, y2) in wall_segments(nodes):
+        ax.plot([x1, x2], [y1, y2], color="black", linewidth=2)
+
+    # วาดโหนด
+    xs = []
+    ys = []
+    colors = []
+    sizes = []
+    for nd in nodes.values():
+        x, y = nd["position"]
+        xs.append(x)
+        ys.append(y)
+        if nd["is_dead_end"]:
+            colors.append("#d62728")   # แดง: ทางตัน
+            sizes.append(90)
+        else:
+            colors.append("#1f77b4")   # น้ำเงิน: โหนดทั่วไป
+            sizes.append(60)
+
+    ax.scatter(xs, ys, s=sizes, c=colors, edgecolor="white", linewidth=0.7, zorder=3)
+
+    # ติดป้ายเล็ก ๆ
+    for nd in nodes.values():
+        x, y = nd["position"]
+        ax.text(x, y + 0.18, f"{x},{y}", ha="center", va="bottom", fontsize=8, alpha=0.9)
+
+    # บอกจำนวน/เมตา
+    if meta:
+        info = [
+            f"nodes: {len(nodes)}",
+            f"drift corrections: {meta.get('drift_corrections', 0)}",
         ]
-        ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.15, 1))
-    
-    # สร้างอนิเมชัน
-    anim = animation.FuncAnimation(fig, animate, frames=len(nodes_list)+2, 
-                                  interval=1500, repeat=True, blit=False)
-    
+        ax.text(0.01, 0.99, "\n".join(info), transform=ax.transAxes,
+                ha="left", va="top", fontsize=8, alpha=0.8,
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.8"))
+
+    plt.tight_layout()
+    if SAVE_STATIC:
+        fig.savefig(STATIC_OUT, dpi=200)
+        print(f"[Saved] {STATIC_OUT}")
+    return fig, ax
+
+def animate_exploration(nodes, bounds, meta=None, start_key=None):
+    order = bfs_order(nodes, start_key=start_key)
+    order_index = {k: i for i, k in enumerate(order)}
+
+    fig, ax = setup_axes(bounds, title="Exploration Animation (BFS order)")
+    # วาดผนังคงที่
+    for (x1, y1, x2, y2) in wall_segments(nodes):
+        ax.plot([x1, x2], [y1, y2], color="black", linewidth=2, alpha=0.9)
+
+    scat = ax.scatter([], [], s=[], c=[], edgecolor="white", linewidth=0.7, zorder=3)
+    highlight, = ax.plot([], [], marker="o", markersize=14, markerfacecolor="none",
+                         markeredgecolor="#ff7f0e", markeredgewidth=2, linestyle="")
+
+    label_text = ax.text(0.99, 0.99, "", transform=ax.transAxes,
+                         ha="right", va="top", fontsize=9, alpha=0.9,
+                         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.8"))
+
+    # เตรียมข้อมูลโหนดเรียงตามเฟรม
+    node_keys = order
+    node_data = [nodes[k] for k in node_keys]
+
+    def init():
+        scat.set_offsets([])
+        scat.set_sizes([])
+        scat.set_array(None)
+        highlight.set_data([], [])
+        label_text.set_text("")
+        return scat, highlight, label_text
+
+    def update(frame):
+        # แสดงโหนดตั้งแต่ 0..frame
+        xs, ys, sizes, cols = [], [], [], []
+        for i in range(frame + 1):
+            nd = node_data[i]
+            x, y = nd["position"]
+            xs.append(x)
+            ys.append(y)
+            sizes.append(90 if nd["is_dead_end"] else 60)
+            cols.append("#d62728" if nd["is_dead_end"] else "#1f77b4")
+
+        offsets = list(zip(xs, ys))
+        scat.set_offsets(offsets)
+        scat.set_sizes(sizes)
+        scat.set_color(cols)
+
+        # ไฮไลต์โหนดปัจจุบัน
+        cx, cy = node_data[frame]["position"]
+        highlight.set_data([cx], [cy])
+
+        label_text.set_text(f"Step: {frame+1}/{len(node_data)}\nCurrent: {cx},{cy}")
+        return scat, highlight, label_text
+
+    anim = FuncAnimation(
+        fig, update, frames=len(node_data), init_func=init,
+        interval=ANIM_INTERVAL_MS, blit=True, repeat=True
+    )
+
+    # บันทึกไฟล์วิดีโอ (เลือกได้)
+    if SAVE_ANIM:
+        try:
+            anim.save(ANIM_OUT, dpi=160)
+            print(f"[Saved] {ANIM_OUT}")
+        except Exception as e:
+            print("[Warn] Save animation failed:", e)
+
     plt.tight_layout()
     return fig, anim
 
-# โหลดข้อมูลแผนที่จากไฟล์
-maze_data = load_maze_data()
+# ---------- Main ----------
 
-# สร้างและแสดงกราฟภาพนิ่ง
-print("\nสร้างกราฟแผนที่แบบภาพนิ่ง...")
-static_fig, static_ax = create_static_maze_plot(maze_data)
-plt.show()
+def main():
+    meta, nodes, bounds = load_maze(JSON_PATH)
 
-# สร้างและแสดงกราฟแบบอนิเมชัน
-print("\nสร้างกราฟแผนที่แบบอนิเมชัน...")
-anim_fig, animation_obj = create_animated_maze_plot(maze_data)
+    # 1) ภาพนิ่ง
+    draw_static(nodes, bounds, meta=meta)
 
-# บันทึกอนิเมชันเป็นไฟล์ GIF (ถ้าต้องการ)
-save_animation = input("\nต้องการบันทึกอนิเมชันเป็นไฟล์ GIF หรือไม่? (y/n): ").lower().strip()
-if save_animation == 'y' or save_animation == 'yes':
-    filename = input("ใส่ชื่อไฟล์ (ไม่ต้องใส่นามสกุล): ").strip()
-    if not filename:
-        filename = "maze_exploration"
-    try:
-        animation_obj.save(f'{filename}.gif', writer='pillow', fps=0.67)
-        print(f"บันทึกอนิเมชันเป็นไฟล์ {filename}.gif แล้ว")
-    except Exception as e:
-        print(f"ไม่สามารถบันทึกไฟล์ได้: {e}")
+    # 2) อนิเมชัน (กดปิดหน้าต่างแรก จะเปิดหน้าต่างอนิเมชันต่อ)
+    fig2, anim = animate_exploration(nodes, bounds, meta=meta, start_key=None)
 
-plt.show()
+    plt.show()
 
-print("\n=== ข้อมูลสรุปแผนที่ ===")
-print(f"จำนวนห้องทั้งหมด: {maze_data['metadata']['total_nodes']} ห้อง")
-print(f"ขอบเขตพิกัด: X({maze_data['metadata']['boundaries']['min_x']} ถึง {maze_data['metadata']['boundaries']['max_x']}), Y({maze_data['metadata']['boundaries']['min_y']} ถึง {maze_data['metadata']['boundaries']['max_y']})")
-
-dead_ends = [node for node in maze_data['nodes'].values() if node['is_dead_end']]
-print(f"จำนวนทางตัน: {len(dead_ends)} ห้อง")
-print(f"จำนวนทางผ่าน: {maze_data['metadata']['total_nodes'] - len(dead_ends)} ห้อง")
+if __name__ == "__main__":
+    main()
