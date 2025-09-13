@@ -1,0 +1,203 @@
+{
+  "metadata": {
+    "timestamp": "2025-09-13T12:34:43.075612",
+    "total_nodes": 11,
+    "boundaries": {
+      "min_x": 0,
+      "max_x": 3,
+      "min_y": -1,
+      "max_y": 2
+    },
+    "drift_corrections": 1
+  },
+  "nodes": {
+    "0_0": {
+      "position": [
+        0,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": true,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": []
+    },
+    "0_1": {
+      "position": [
+        0,
+        1
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "east"
+      ],
+      "unexplored_exits": []
+    },
+    "1_1": {
+      "position": [
+        1,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north",
+        "east"
+      ],
+      "unexplored_exits": [
+        "south"
+      ]
+    },
+    "1_2": {
+      "position": [
+        1,
+        2
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": true,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "west"
+      ],
+      "unexplored_exits": []
+    },
+    "0_2": {
+      "position": [
+        0,
+        2
+      ],
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": true,
+      "explored_directions": [],
+      "unexplored_exits": []
+    },
+    "2_1": {
+      "position": [
+        2,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": [
+        "south"
+      ]
+    },
+    "2_2": {
+      "position": [
+        2,
+        2
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "east"
+      ],
+      "unexplored_exits": []
+    },
+    "3_2": {
+      "position": [
+        3,
+        2
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": true,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "south"
+      ],
+      "unexplored_exits": []
+    },
+    "3_1": {
+      "position": [
+        3,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "south"
+      ],
+      "unexplored_exits": []
+    },
+    "3_0": {
+      "position": [
+        3,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "south"
+      ],
+      "unexplored_exits": []
+    },
+    "3_-1": {
+      "position": [
+        3,
+        -1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [],
+      "unexplored_exits": []
+    }
+  }
+}
