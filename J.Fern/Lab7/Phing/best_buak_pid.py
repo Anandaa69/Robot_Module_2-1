@@ -4,39 +4,21 @@ import time
 from robomaster import robot
 from robomaster import camera
 from robomaster import blaster
-# from collections import deque # เราจะใช้ Kalman Filter แทน
 
-# --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
+# --- คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
-        # Q: ความไม่แน่นอนของโมเดล (Process Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อว่าสถานะจะไม่เปลี่ยนแปลงเร็ว (ผลลัพธ์จะนิ่งมาก แต่ตอบสนองช้า)
-        # ยิ่งค่ามาก ยิ่งเชื่อว่าสถานะเปลี่ยนแปลงได้ตลอดเวลา (ตอบสนองเร็ว แต่อาจนิ่งน้อยลง)
         self.Q = process_noise 
-
-        # R: ความไม่แน่นอนของการวัด (Measurement Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อมั่นในค่าที่วัดได้จากเซ็นเซอร์ (ฟิลเตอร์จะปรับตามค่าที่วัดได้เร็ว)
-        # ยิ่งค่ามาก ยิ่งไม่เชื่อค่าที่วัดได้ (ผลลัพธ์จะนิ่งมาก แต่ถ้าเป้าหมายเคลื่อนที่เร็วอาจตามไม่ทัน)
         self.R = measurement_noise 
-
-        self.P = 1.0  # ค่าความไม่แน่นอนของการประมาณการเริ่มต้น (Error Covariance)
-        self.x = initial_value # ค่าสถานะเริ่มต้น (Initial State)
+        self.P = 1.0
+        self.x = initial_value
 
     def update(self, measurement):
-        # --- ขั้นตอนการ Update ---
-        # 1. คำนวณ Kalman Gain (K)
         K = self.P / (self.P + self.R)
-        
-        # 2. อัปเดตค่าประมาณการ (x) ด้วยค่าที่วัดได้
         self.x = self.x + K * (measurement - self.x)
-        
-        # 3. อัปเดตค่าความไม่แน่นอนของการประมาณการ (P)
         self.P = (1 - K) * self.P
 
     def predict(self):
-        # --- ขั้นตอนการ Predict ---
-        # ในกรณีนี้โมเดลเราง่ายมาก คือคิดว่าระยะทางไม่น่าจะเปลี่ยนไปจากเดิมมากนัก
-        # ดังนั้นค่า x จะไม่เปลี่ยนแปลงในขั้นตอนนี้ แต่ความไม่แน่นอนจะเพิ่มขึ้นตามเวลา
         self.P = self.P + self.Q
         
     def get_state(self):
@@ -117,20 +99,17 @@ def main():
     IOU_THRESHOLD = 0.1
     Y_AXIS_ADJUSTMENT = 25
         
-    P_GAIN = -0.2
-    I_GAIN = 0.1
-    D_GAIN = -0.00135 
+    # --- [จุดแก้ไขที่ 1] เปลี่ยนค่า PID Gains เป็นบวก ---
+    P_GAIN = 0.01
+    I_GAIN = 0
+    D_GAIN = 0.05
 
-    K_X = 610.235   #no 207
-    K_Y = 405.2
-    REAL_WIDTH_CM = 23.2
-    REAL_HEIGHT_CM = 13.1
+    K_X = 611.922
+    K_Y = 405.797
+    REAL_WIDTH_CM = 24.2
+    REAL_HEIGHT_CM = 13.9
 
-    # --- [ปรับแก้] ปรับจูน Kalman Filter เพื่อให้ระยะทางนิ่งขึ้น ---
-    # เพิ่มค่า measurement_noise (R) ให้สูงขึ้น เพื่อลดผลกระทบจากค่าที่แกว่งไปมา
-    # ทำให้ฟิลเตอร์เชื่อมั่นในค่าที่ตัวเองทำนายไว้มากขึ้น ผลลัพธ์ที่ได้จะนิ่งและสมูทขึ้น
     kf_distance = SimpleKalmanFilter(process_noise=0.03, measurement_noise=20.0)
-
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -160,7 +139,8 @@ def main():
             if tmpl is None: raise FileNotFoundError(f"Template file not found: {f}")
             templates_original.append(tmpl)
     except FileNotFoundError as e:
-        print(f"Error: {e}"); return
+        print(f"Error: {e}"); ep_robot.close(); return
+        
     for tmpl in templates_original:
         w_tmpl = int(tmpl.shape[1] * processing_scale)
         h_tmpl = int(tmpl.shape[0] * processing_scale)
@@ -179,8 +159,6 @@ def main():
     distance_z_x, distance_z_y = 0, 0
     final_distance = 0.0 
     kalman_distance = 0.0
-    
-    # --- [เพิ่มใหม่] ตัวแปรสถานะเพื่อจัดการการหมุนครั้งแรก ---
     is_currently_tracking = False
 
     try:
@@ -253,18 +231,14 @@ def main():
                  kf_distance.predict()
                  kalman_distance = kf_distance.get_state()
 
-            # --- [ปรับแก้] PID Control Logic ---
             if target_found:
                 delta_time = current_time - prev_time
                 if delta_time == 0: delta_time = 0.001
                 
-                # ถ้าเพิ่งเจอเป้าหมาย (จากเดิมที่ไม่เจอ)
                 if not is_currently_tracking:
-                    # ให้คำนวณแค่ P-term เพื่อการเคลื่อนที่เริ่มต้นที่นุ่มนวล
                     D_term_x, D_term_y = 0, 0
                     accumulate_err_x, accumulate_err_y = 0, 0
-                    is_currently_tracking = True # อัปเดตสถานะว่ากำลังติดตามอยู่
-                # ถ้าเจอเป้าหมายต่อเนื่อง
+                    is_currently_tracking = True
                 else:
                     D_term_x = D_GAIN * ((err_x - prev_err_x) / delta_time)
                     D_term_y = D_GAIN * ((err_y - prev_err_y) / delta_time)
@@ -274,14 +248,14 @@ def main():
                 speed_x = (P_GAIN * err_x) + D_term_x + (I_GAIN * accumulate_err_x)
                 speed_y = (P_GAIN * err_y) + D_term_y + (I_GAIN * accumulate_err_y)
                 
-                ep_gimbal.drive_speed(pitch_speed=-speed_y, yaw_speed=speed_x) 
+                # --- [จุดแก้ไขที่ 2] กลับเครื่องหมาย speed เพื่อให้ทิศทางหมุนถูกต้อง ---
+                ep_gimbal.drive_speed(pitch_speed=speed_y, yaw_speed=-speed_x) 
                 
                 prev_err_x, prev_err_y = err_x, err_y
                 prev_time = current_time
             else:
-                # รีเซ็ตค่าทั้งหมดเมื่อไม่เจอเป้าหมาย
                 ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-                is_currently_tracking = False # อัปเดตสถานะว่าไม่ได้ติดตามแล้ว
+                is_currently_tracking = False
                 accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
                 distance_z_x, distance_z_y = 0, 0
                 final_distance = 0.0
