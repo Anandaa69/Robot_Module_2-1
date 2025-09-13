@@ -304,10 +304,21 @@ class GraphMapper:
             target_fully_explored = target_node.fullyScanned if target_node else False
             if not is_blocked and not already_explored and not target_fully_explored:
                 node.unexploredExits.append(abs_dir)
-        if node.unexploredExits and node.id not in self.frontierQueue: self.frontierQueue.append(node.id)
-        elif not node.unexploredExits and node.id in self.frontierQueue: self.frontierQueue.remove(node.id)
+        
+        # CRITICAL FIX: Update frontier queue properly
+        if node.unexploredExits:
+            if node.id not in self.frontierQueue:
+                self.frontierQueue.append(node.id)
+        else:
+            # Remove from frontier if no unexplored exits
+            if node.id in self.frontierQueue:
+                self.frontierQueue.remove(node.id)
+                print(f"🗑️ Removed {node.id} from frontier queue (no unexplored exits)")
+        
         node.isDeadEnd = sum(1 for w in node.walls.values() if w) >= 3
-        if node.isDeadEnd and node.id in self.frontierQueue: self.frontierQueue.remove(node.id)
+        if node.isDeadEnd and node.id in self.frontierQueue:
+            self.frontierQueue.remove(node.id)
+            print(f"🗑️ Removed {node.id} from frontier queue (dead end)")
 
     def build_connections(self):
         for node_id, node in self.nodes.items():
@@ -350,6 +361,8 @@ class GraphMapper:
                 previous_node.exploredDirections.append(direction_to_dead_end)
             if direction_to_dead_end in previous_node.unexploredExits:
                 previous_node.unexploredExits.remove(direction_to_dead_end)
+            # CRITICAL FIX: Update frontier status after marking explored
+            self.update_unexplored_exits_with_priority(previous_node)
         return True
     
     def move_to_absolute_direction(self, target_direction, movement_controller, attitude_handler):
@@ -361,6 +374,8 @@ class GraphMapper:
         self.currentPosition = self.get_next_position(target_direction)
         if self.previous_node and target_direction not in self.previous_node.exploredDirections:
             self.previous_node.exploredDirections.append(target_direction)
+            # CRITICAL FIX: Update frontier status after marking explored
+            self.update_unexplored_exits_with_priority(self.previous_node)
         print(f"✅ Successfully moved to {self.currentPosition}")
         return True
 
@@ -415,16 +430,34 @@ class GraphMapper:
     
     def find_nearest_frontier(self):
         print("🔍 Finding nearest frontier...")
-        if not self.frontierQueue: return None, None, None
+        print(f"🔍 Current frontier queue: {self.frontierQueue}")
+        
+        # CRITICAL FIX: Clean up frontier queue before searching
+        valid_frontiers = []
+        for frontier_id in self.frontierQueue[:]:  # Copy to avoid modification during iteration
+            frontier_node = self.nodes.get(frontier_id)
+            if frontier_node and frontier_node.unexploredExits:
+                valid_frontiers.append(frontier_id)
+            else:
+                self.frontierQueue.remove(frontier_id)
+                print(f"🗑️ Cleaned up invalid frontier: {frontier_id}")
+        
+        if not valid_frontiers:
+            print(f"❌ No valid frontiers found after cleanup!")
+            return None, None, None
+            
         best_frontier, best_direction, shortest_path, min_distance = None, None, None, float('inf')
-        for frontier_id in self.frontierQueue:
+        for frontier_id in valid_frontiers:
             path = self.find_path_to_frontier(frontier_id)
             if path is not None and len(path) < min_distance:
                 frontier_node = self.nodes.get(frontier_id)
                 if frontier_node and frontier_node.unexploredExits:
                     min_distance, best_frontier, best_direction, shortest_path = len(path), frontier_id, frontier_node.unexploredExits[0], path
-        if best_frontier: print(f"🏆 SELECTED FRONTIER: {best_frontier} at distance {min_distance} via path {shortest_path}")
-        else: print(f"❌ No reachable frontiers found!")
+        
+        if best_frontier: 
+            print(f"🏆 SELECTED FRONTIER: {best_frontier} at distance {min_distance} via path {shortest_path}")
+        else: 
+            print(f"❌ No reachable frontiers found!")
         return best_frontier, best_direction, shortest_path
 
     def print_graph_summary(self):
@@ -494,9 +527,6 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     current_node.sensorReadings = scan_results
     print(f"✅ Scan complete. Walls Stored (Abs): {current_node.walls}")
 
-# ========================================================================= #
-# ## THIS IS THE FINAL MAIN LOOP, RESTORED FROM THE ORIGINAL SPEED_BUMPEN.PY LOGIC ## #
-# ========================================================================= #
 def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_handler, graph_mapper, movement_controller, attitude_handler, max_nodes=49):
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION (TRUE FINAL VERSION) ===")
     nodes_explored = 0
@@ -520,17 +550,14 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         graph_mapper.previous_node = current_node
         graph_mapper.print_graph_summary()
         
-        # Original Logic Flow:
-        # 1. Try to find a direct path from the current node.
+        # ## THIS IS THE FULLY RESTORED ORIGINAL LOGIC FROM SPEED_BUMPEN.PY ## #
         next_direction = graph_mapper.find_next_exploration_direction()
         
         if next_direction:
             graph_mapper.move_to_absolute_direction(next_direction, movement_controller, attitude_handler)
             time.sleep(0.2)
-            continue # Restart the loop at the new node
-        
-        # 2. If no direct path, it's either a dead end or a fully explored intersection.
-        #    Start the backtracking process.
+            continue 
+
         if current_node.isDeadEnd:
             graph_mapper.handle_dead_end(movement_controller)
             time.sleep(0.2)
@@ -541,7 +568,7 @@ def explore_autonomously_with_absolute_directions(gimbal, chassis, sensor, tof_h
         
         if frontier_id and path is not None:
             if not graph_mapper.execute_path_to_frontier_with_reverse(path, movement_controller, attitude_handler):
-                break # Abort if backtracking fails
+                break
             # After reaching the frontier, just continue the loop. 
             # The next iteration will handle scanning and finding the next move from there.
             continue
@@ -574,7 +601,7 @@ def generate_exploration_report(graph_mapper, movement_controller):
         }
     }
     maze_data = convert_to_json_serializable(maze_data)
-    filename = "maze_data_true_final.json"
+    filename = "Assignment/data/maze_data_2.json"
     with open(filename, 'w', encoding='utf-8') as f: json.dump(maze_data, f, indent=2)
     print(f"✅ Maze data successfully exported to: {filename}\n{'='*82}")
 

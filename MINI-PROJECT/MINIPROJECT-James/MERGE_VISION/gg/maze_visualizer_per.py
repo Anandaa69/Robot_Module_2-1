@@ -482,7 +482,7 @@ if __name__ == '__main__':
     script_dir = os.path.dirname(os.path.abspath(__file__))
 
     # ตั้งค่า path ของ JSON ให้อยู่ในโฟลเดอร์เดียวกับ .py
-    json_path = os.path.join(script_dir, "maze_data.json")
+    json_path = os.path.join(script_dir, "maze_data_true_final.json")
 
     if not os.path.exists(json_path):
         print(f"❌ ไม่พบไฟล์ maze_data.json ในโฟลเดอร์: {script_dir}")
