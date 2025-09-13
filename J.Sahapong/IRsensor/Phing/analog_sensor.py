@@ -34,8 +34,8 @@ def main():
     sensor_adaptor = ep_robot.sensor_adaptor
     
     # กำหนด ID และ Port ของเซ็นเซอร์
-    IR_SENSOR_ID = 1
-    IR_SENSOR_PORT = 2
+    IR_SENSOR_ID = 3
+    IR_SENSOR_PORT = 1
 
     print("=============================================")
     print("=== IR Sensor Calibration Program ===")

@@ -1138,6 +1138,7 @@ class GraphMapper:
         return not is_blocked
     
     def execute_path_to_frontier_with_reverse(self, path, movement_controller, attitude_handler):
+        
         """NEW: Execute path using reverse movements for backtracking WITH NODE COUNTING"""
         print(f"🗺️ Executing REVERSE path to frontier: {path}")
         
@@ -1591,9 +1592,9 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     current_node.sensorReadings = scan_results
     
     print(f"✅ Node {current_node.id} scan complete:")
-    print(f"   🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
-    print(f"   🧱 Walls stored (absolute): {current_node.walls}")
-    print(f"   📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
+    print(f"🧱 Walls detected (relative): Left={left_wall}, Right={right_wall}, Front={front_wall}")
+    print(f"🧱 Walls stored (absolute): {current_node.walls}")
+    print(f"📏 Distances: Left={left_distance:.1f}cm, Right={right_distance:.1f}cm, Front={front_distance:.1f}cm")
     
     return scan_results
 
@@ -2044,7 +2045,7 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
     # Export maze data to JSON file using merged method from hope_test
     export_maze_data_to_json(graph_mapper, "maze_data.json")
-     
+
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
@@ -2075,7 +2076,7 @@ if __name__ == '__main__':
         
         # Start autonomous exploration with absolute directions
         explore_autonomously_with_absolute_directions(ep_gimbal, ep_chassis, ep_sensor, tof_handler, 
-                           graph_mapper, movement_controller, attitude_handler, max_nodes=49)
+                        graph_mapper, movement_controller, attitude_handler, max_nodes=49)
             
     except KeyboardInterrupt:
         print("\n⚠️ Interrupted by user")
