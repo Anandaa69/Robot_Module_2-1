@@ -9,45 +9,34 @@ from robomaster import blaster
 # --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
-        # Q: ความไม่แน่นอนของโมเดล (Process Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อว่าสถานะจะไม่เปลี่ยนแปลงเร็ว (ผลลัพธ์จะนิ่งมาก แต่ตอบสนองช้า)
-        # ยิ่งค่ามาก ยิ่งเชื่อว่าสถานะเปลี่ยนแปลงได้ตลอดเวลา (ตอบสนองเร็ว แต่อาจนิ่งน้อยลง)
         self.Q = process_noise 
-
-        # R: ความไม่แน่นอนของการวัด (Measurement Noise)
-        # ยิ่งค่าน้อย ยิ่งเชื่อมั่นในค่าที่วัดได้จากเซ็นเซอร์ (ฟิลเตอร์จะปรับตามค่าที่วัดได้เร็ว)
-        # ยิ่งค่ามาก ยิ่งไม่เชื่อค่าที่วัดได้ (ผลลัพธ์จะนิ่งมาก แต่ถ้าเป้าหมายเคลื่อนที่เร็วอาจตามไม่ทัน)
         self.R = measurement_noise 
-
-        self.P = 1.0  # ค่าความไม่แน่นอนของการประมาณการเริ่มต้น (Error Covariance)
-        self.x = initial_value # ค่าสถานะเริ่มต้น (Initial State)
+        self.P = 1.0
+        self.x = initial_value
 
     def update(self, measurement):
-        # --- ขั้นตอนการ Update ---
-        # 1. คำนวณ Kalman Gain (K)
         K = self.P / (self.P + self.R)
-        
-        # 2. อัปเดตค่าประมาณการ (x) ด้วยค่าที่วัดได้
         self.x = self.x + K * (measurement - self.x)
-        
-        # 3. อัปเดตค่าความไม่แน่นอนของการประมาณการ (P)
         self.P = (1 - K) * self.P
 
     def predict(self):
-        # --- ขั้นตอนการ Predict ---
-        # ในกรณีนี้โมเดลเราง่ายมาก คือคิดว่าระยะทางไม่น่าจะเปลี่ยนไปจากเดิมมากนัก
-        # ดังนั้นค่า x จะไม่เปลี่ยนแปลงในขั้นตอนนี้ แต่ความไม่แน่นอนจะเพิ่มขึ้นตามเวลา
         self.P = self.P + self.Q
         
     def get_state(self):
         return self.x
+        
+    # --- [เพิ่มใหม่] ฟังก์ชันสำหรับรีเซ็ตค่าฟิลเตอร์ ---
+    def reset(self, value):
+        self.x = value
+        self.P = 1.0
+
 
 # --- ส่วนของฟังก์ชัน (ไม่มีการเปลี่ยนแปลง) ---
 def create_pink_mask(img_rgb):
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower_pink = np.array([120, 10, 100])
-    upper_pink = np.array([170, 100, 200])
+    lower_pink = np.array([120, 5, 100])
+    upper_pink = np.array([170, 100, 225])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
     mask = cv2.medianBlur(mask, 5)
     kernel = np.ones((5, 5), np.uint8)
@@ -109,8 +98,8 @@ def main():
     
     TEMPLATE_FILES = [
         "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg",
-        "image/template/use/template_night_pic2_x_609_y_290_w_57_h_138.jpg",
-        "image/template/use/template_night_pic3_x_622_y_293_w_40_h_93.jpg"
+        "image/template/use/template_new_pic2_x_552_y_246_w_90_h_212.jpg",
+        "image/template/use/template_new1_pic3_x_605_y_255_w_47_h_113.jpg"
     ]
     MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.1
@@ -120,16 +109,25 @@ def main():
     I_GAIN = 0
     D_GAIN = -0.00135 
 
-    K_X = 611.922
-    K_Y = 405.797
-    REAL_WIDTH_CM = 23.9
+    # --- [ปรับแก้] ค่า K ทั้ง 3 ชุดที่คุณ Calibrate มา ---
+    # ชุดที่ 1 (สำหรับ Template 1 - ระยะใกล้)
+    K_X_T1 = 600.01
+    K_Y_T1 = 371.126
+    # ชุดที่ 2 (สำหรับ Template 2 - ระยะกลาง)
+    K_X_T2 = 591.768 
+    K_Y_T2 = 395.899
+    # ชุดที่ 3 (สำหรับ Template 3 - ระยะไกล)
+    K_X_T3 = 614.324
+    K_Y_T3 = 409.928
+
+    REAL_WIDTH_CM = 21.2
     REAL_HEIGHT_CM = 13.9
 
-    # --- [ปรับแก้] ปรับจูน Kalman Filter เพื่อให้ระยะทางนิ่งขึ้น ---
-    # เพิ่มค่า measurement_noise (R) ให้สูงขึ้น เพื่อลดผลกระทบจากค่าที่แกว่งไปมา
-    # ทำให้ฟิลเตอร์เชื่อมั่นในค่าที่ตัวเองทำนายไว้มากขึ้น ผลลัพธ์ที่ได้จะนิ่งและสมูทขึ้น
     kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=15.0)
-
+    kf_x = SimpleKalmanFilter(process_noise=0.1, measurement_noise=4.0)
+    kf_y = SimpleKalmanFilter(process_noise=0.1, measurement_noise=4.0)
+    kf_w = SimpleKalmanFilter(process_noise=0.01, measurement_noise=10.0)
+    kf_h = SimpleKalmanFilter(process_noise=0.01, measurement_noise=10.0)
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -179,7 +177,6 @@ def main():
     final_distance = 0.0 
     kalman_distance = 0.0
     
-    # --- [เพิ่มใหม่] ตัวแปรสถานะเพื่อจัดการการหมุนครั้งแรก ---
     is_currently_tracking = False
 
     try:
@@ -205,6 +202,8 @@ def main():
             if final_detections:
                 best_detection = final_detections[0] 
                 top_left_proc, bottom_right_proc, confidence, template_id, color = best_detection
+                
+                # (ส่วนแสดงผล Template ยังคงเดิม)
                 tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
                 br_orig_unadjusted = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale))
                 tl_adjusted = (tl_orig_unadjusted[0], tl_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
@@ -226,6 +225,7 @@ def main():
                         main_contour = max(contours, key=cv2.contourArea)
                         x_real, y_real, w_real, h_real = cv2.boundingRect(main_contour)
                         
+                        # (ส่วนคำนวณตำแหน่ง... เหมือนเดิม)
                         real_top_left = (roi_x1 + x_real, roi_y1 + y_real)
                         real_bottom_right = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
                         cv2.rectangle(frame, real_top_left, real_bottom_right, (0, 255, 255), 2)
@@ -236,9 +236,24 @@ def main():
                         target_found = True
                         cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
                         
-                        if w_real > 0: distance_z_x = (K_Y * REAL_HEIGHT_CM) / w_real
-                        if h_real > 0: distance_z_y = (K_X * REAL_WIDTH_CM) / h_real
+                        # --- [ปรับแก้] เลือกใช้ค่า K ตาม template_id ที่ตรวจจับได้ ---
+                        current_kx = 0
+                        current_ky = 0
+                        if template_id == 0:  # ถ้าเจอ Template 1
+                            current_kx = K_X_T1
+                            current_ky = K_Y_T1
+                        elif template_id == 1: # ถ้าเจอ Template 2
+                            current_kx = K_X_T2
+                            current_ky = K_Y_T2
+                        else:  # ถ้าเจอ Template 3 (template_id == 2)
+                            current_kx = K_X_T3
+                            current_ky = K_Y_T3
+
+                        # --- [ปรับแก้] คำนวณระยะทางโดยใช้ค่า K ที่เลือกมา ---
+                        if w_real > 0: distance_z_x = (current_ky * REAL_HEIGHT_CM) / w_real
+                        if h_real > 0: distance_z_y = (current_kx * REAL_WIDTH_CM) / h_real
                         
+                        # (ส่วนที่เหลือ... เหมือนเดิม)
                         if distance_z_x > 0 and distance_z_y > 0: final_distance = (distance_z_x + distance_z_y) / 2
                         elif distance_z_x > 0: final_distance = distance_z_x
                         else: final_distance = distance_z_y
@@ -294,6 +309,7 @@ def main():
             cv2.imshow("Robomaster Pink Cup Detection with PID", frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'): break
+
     finally:
         print("Stopping detection and releasing resources.")
         ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
