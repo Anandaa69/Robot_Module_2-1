@@ -1,0 +1,83 @@
+{
+  "metadata": {
+    "timestamp": "2025-09-13T11:04:07.434956",
+    "total_nodes": 4,
+    "boundaries": {
+      "min_x": -2,
+      "max_x": 0,
+      "min_y": 0,
+      "max_y": 1
+    },
+    "drift_corrections": 0
+  },
+  "nodes": {
+    "0_0": {
+      "position": [
+        0,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": true,
+        "west": true
+      },
+      "is_dead_end": true,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": []
+    },
+    "0_1": {
+      "position": [
+        0,
+        1
+      ],
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "west"
+      ],
+      "unexplored_exits": [
+        "east"
+      ]
+    },
+    "-1_1": {
+      "position": [
+        -1,
+        1
+      ],
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "west"
+      ],
+      "unexplored_exits": []
+    },
+    "-2_1": {
+      "position": [
+        -2,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "is_dead_end": false,
+      "explored_directions": [],
+      "unexplored_exits": []
+    }
+  }
+}
