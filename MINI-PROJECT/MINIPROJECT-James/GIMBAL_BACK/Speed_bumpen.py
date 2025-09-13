@@ -2044,8 +2044,8 @@ def generate_exploration_report_absolute(graph_mapper, nodes_explored, dead_end_
     
     print(f"\n⭐ ABSOLUTE DIRECTION BENEFITS:")
     # Export maze data to JSON file using merged method from hope_test
-    export_maze_data_to_json(graph_mapper, "maze_data.json")
-
+    export_maze_data_to_json(graph_mapper, "MINI-PROJECT/MINIPROJECT-James/GIMBAL_BACK/maze_data.json")
+    
     print(f"\n{'='*60}")
     print("✅ ABSOLUTE DIRECTION EXPLORATION REPORT COMPLETE")
     print(f"{'='*60}")
