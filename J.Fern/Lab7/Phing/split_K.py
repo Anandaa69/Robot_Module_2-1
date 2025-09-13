@@ -35,27 +35,13 @@ class SimpleKalmanFilter:
 def create_pink_mask(img_rgb):
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-
-    # 🎯 ปรับ HSV Range ให้แคบลง (กันเงาสะท้อน/แสงฟุ้ง)
-    lower_pink = np.array([140, 80, 120])   # Hue แคบลง + เพิ่ม Saturation + Brightness ขั้นต่ำ
-    upper_pink = np.array([170, 255, 255])  # Hue ไม่กว้างเกินไป
-
+    lower_pink = np.array([120, 10, 100])
+    upper_pink = np.array([170, 100, 200])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
-
-    # 🔧 ลบ noise เล็กๆ
-    kernel = np.ones((3, 3), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
-
-    # 🔧 เติมช่องว่างในวัตถุ
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-    # 📌 เน้นให้ขอบคมขึ้น
-    mask = cv2.medianBlur(mask, 3)
-    edges = cv2.Canny(mask, 50, 150)       # ตรวจขอบ
-    mask = cv2.bitwise_or(mask, edges)     # รวม edges กลับเข้า mask
-
+    mask = cv2.medianBlur(mask, 5)
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
     return mask
-
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     if tmpl_masked.shape[0] > img_masked.shape[0] or tmpl_masked.shape[1] > img_masked.shape[1]:
