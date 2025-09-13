@@ -2,7 +2,7 @@ import cv2
 import os
 
 # โหลดภาพต้นฉบับ
-image_path = "./capture_1757742457.jpg"
+image_path = "./long.jpg"
 
 image = cv2.imread(image_path)
 
