@@ -1557,6 +1557,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
         ep_chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
         time.sleep(0.3)
 
+
     # Scan right (physical: 90°)
     print("🔍 Scanning RIGHT (physical: 90°)...")
     gimbal.moveto(pitch=0, yaw=90, pitch_speed=speed, yaw_speed=speed).wait_for_completed()
