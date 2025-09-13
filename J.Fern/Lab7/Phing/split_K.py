@@ -35,7 +35,7 @@ class SimpleKalmanFilter:
 def create_pink_mask(img_rgb):
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower_pink = np.array([120, 10, 100])
+    lower_pink = np.array([120, 16, 100])
     upper_pink = np.array([170, 100, 200])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
     mask = cv2.medianBlur(mask, 5)
@@ -97,9 +97,9 @@ def main():
     PROCESSING_WIDTH = 640.0
     
     TEMPLATE_FILES = [
-        "image/template/use/template_night_pic1_x_557_y_278_w_120_h_293.jpg",
-        "image/template/use/template_new_pic2_x_552_y_246_w_90_h_212.jpg",
-        "image/template/use/template_new_pic3_x_577_y_258_w_45_h_117.jpg"
+        "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg",
+        "image/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg",
+        "image/template/use/tem3_leaw.jpg"
     ]
     MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.1
@@ -120,7 +120,7 @@ def main():
     K_X_T3 = 614.324
     K_Y_T3 = 409.928
 
-    REAL_WIDTH_CM = 23.9
+    REAL_WIDTH_CM = 21
     REAL_HEIGHT_CM = 13.9
 
     kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=15.0)
