@@ -21,8 +21,8 @@ class SimpleKalmanFilter:
 
 def create_pink_mask(img_rgb):
     hsv = cv2.cvtColor(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([120, 23, 100]), np.array([170, 100, 200]))
-    mask = cv2.medianBlur(mask, 5)
+    mask = cv2.inRange(hsv, np.array([128, 20, 100]), np.array([158, 130, 200]))
+    mask = cv2.medianBlur(mask, 1)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
@@ -96,7 +96,7 @@ def processing_thread_func(templates_masked, params):
     
     p_err_x, p_err_y, acc_err_x, acc_err_y = 0,0,0,0
     p_time, tracking = time.time(), False
-    kf_dist = SimpleKalmanFilter(process_noise=0.03, measurement_noise=20.0)
+    kf_dist = SimpleKalmanFilter(process_noise=0.01, measurement_noise=25.0)
     
     INTEGRAL_LIMIT_Y = 200
 
@@ -190,10 +190,10 @@ def main():
         "PROCESSING_WIDTH": 640.0,
         "pid_yaw":   (-0.3, -0.01, -0.01),
         "pid_pitch": (-0.25, -0.15, -0.03),
-        "k_values": (610.235, 405.2),
-        "real_dims": (21.2, 13.5),
-        "detection": (0.55, 0.1), 
-        "y_adjustments": [5, 25, 25]
+        "k_values": (603.766, 393.264),
+        "real_dims": (21.2, 13.2),
+        "detection": (0.45, 0.1), 
+        "y_adjustments": [0, 0, 0]
     }
     
     ORIGINAL_TEMPLATE_FILES = [

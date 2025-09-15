@@ -4,9 +4,8 @@ import time
 from robomaster import robot
 from robomaster import camera
 from robomaster import blaster
-# from collections import deque # เราจะใช้ Kalman Filter แทน
 
-# --- [เพิ่มใหม่] คลาสสำหรับ Kalman Filter แบบ 1 มิติ ---
+# --- คลาส Kalman Filter (ไม่มีการเปลี่ยนแปลง) ---
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
         self.Q = process_noise 
@@ -24,19 +23,14 @@ class SimpleKalmanFilter:
         
     def get_state(self):
         return self.x
-        
-    # --- [เพิ่มใหม่] ฟังก์ชันสำหรับรีเซ็ตค่าฟิลเตอร์ ---
-    def reset(self, value):
-        self.x = value
-        self.P = 1.0
 
-
-# --- ส่วนของฟังก์ชัน (ไม่มีการเปลี่ยนแปลง) ---
+# --- ฟังก์ชันต่างๆ (ไม่มีการเปลี่ยนแปลง) ---
 def create_pink_mask(img_rgb):
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower_pink = np.array([120, 16, 100])
-    upper_pink = np.array([170, 100, 200])
+    # *** แนะนำ: ควรใช้ hsv_tuner.py เพื่อหาค่าที่เหมาะสมที่สุดสำหรับสภาพแสงของคุณ ***
+    lower_pink = np.array([140, 60, 80])
+    upper_pink = np.array([170, 255, 255])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
     mask = cv2.medianBlur(mask, 5)
     kernel = np.ones((5, 5), np.uint8)
@@ -69,22 +63,14 @@ def calculate_iou(box1, box2):
 def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
     if not boxes_with_scores:
         return []
-    detections = sorted(boxes_with_scores, key=lambda x: x[3])
+    # เรียงลำดับตาม template_id ก่อน แล้วค่อยตาม confidence (ถ้าจำเป็น)
+    # ในที่นี้ยังใช้ confidence เป็นหลักเหมือนเดิม
+    detections = sorted(boxes_with_scores, key=lambda x: x[2], reverse=True)
     final_boxes = []
     while detections:
-        current_box = detections.pop(0)
-        final_boxes.append(current_box)
-        remaining_boxes = []
-        for box_to_check in detections:
-            iou = calculate_iou(current_box, box_to_check)
-            center_x = box_to_check[0][0] + (box_to_check[1][0] - box_to_check[0][0]) / 2
-            center_y = box_to_check[0][1] + (box_to_check[1][1] - box_to_check[0][1]) / 2
-            is_center_inside = (current_box[0][0] < center_x < current_box[1][0] and
-                                current_box[0][1] < center_y < current_box[1][1])
-            if iou > iou_threshold or is_center_inside:
-                continue
-            remaining_boxes.append(box_to_check)
-        detections = remaining_boxes
+        current_box_data = detections.pop(0)
+        final_boxes.append(current_box_data)
+        detections = [b for b in detections if calculate_iou(current_box_data, b) < iou_threshold]
     return final_boxes
 
 
@@ -92,42 +78,36 @@ def advanced_prioritized_nms(boxes_with_scores, iou_threshold=0.3):
 # ส่วนที่ 2: การทำงานหลัก (Main Program)
 # ---------------------------------------------------
 def main():
-    """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับพร้อม PID"""
+    """ฟังก์ชันหลักสำหรับเชื่อมต่อหุ่นยนต์และเริ่มการตรวจจับพร้อม PID ที่ปรับปรุงใหม่"""
     
     PROCESSING_WIDTH = 640.0
     
     TEMPLATE_FILES = [
-        "image/template/use/template_new1_pic1_x_535_y_288_w_142_h_317.jpg",
+        "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg",
         "image/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg",
         "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg"
     ]
+
     MATCH_THRESHOLD = 0.55
     IOU_THRESHOLD = 0.1
-    Y_AXIS_ADJUSTMENT = 25
+    Y_AXIS_ADJUSTMENT = [5, 25, 25] # ปรับเป็น List ให้สอดคล้องกับแต่ละ Template
     
-    P_GAIN = -0.607
-    I_GAIN = 0
-    D_GAIN = -0.00135 
+    # --- [ปรับปรุง] นำค่า PID และ Anti-Windup จากโค้ดตัวอย่างที่สองมาใช้ ---
+    PID_YAW   = (-0.3, -0.01, -0.01)   # (P, I, D) สำหรับแกน Yaw (หมุนซ้าย-ขวา)
+    PID_PITCH = (-0.25, -0.15, -0.03)  # (P, I, D) สำหรับแกน Pitch (ก้ม-เงย)
+    INTEGRAL_LIMIT_Y = 200            # ค่าสูงสุดที่ I-term ของแกน Pitch จะสะสมได้ (Anti-Windup)
+    
+    # แกะค่า PID ออกมาเป็นตัวแปรเพื่อง่ายต่อการใช้งาน
+    P_YAW, I_YAW, D_YAW = PID_YAW
+    P_PITCH, I_PITCH, D_PITCH = PID_PITCH
 
-    # --- [ปรับแก้] ค่า K ทั้ง 3 ชุดที่คุณ Calibrate มา ---
-    # ชุดที่ 1 (สำหรับ Template 1 - ระยะใกล้)
-    K_X_T1 = 600.01
-    K_Y_T1 = 371.126
-    # ชุดที่ 2 (สำหรับ Template 2 - ระยะกลาง)
-    K_X_T2 = 591.768 
-    K_Y_T2 = 395.899
-    # ชุดที่ 3 (สำหรับ Template 3 - ระยะไกล)
-    K_X_T3 = 614.324
-    K_Y_T3 = 409.928
-
-    REAL_WIDTH_CM = 21
+    # ค่าสำหรับคำนวณระยะทาง
+    K_X = 611.235
+    K_Y = 407.2
+    REAL_WIDTH_CM = 21.2
     REAL_HEIGHT_CM = 13.9
 
-    kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=15.0)
-    kf_x = SimpleKalmanFilter(process_noise=0.1, measurement_noise=4.0)
-    kf_y = SimpleKalmanFilter(process_noise=0.1, measurement_noise=4.0)
-    kf_w = SimpleKalmanFilter(process_noise=0.01, measurement_noise=10.0)
-    kf_h = SimpleKalmanFilter(process_noise=0.01, measurement_noise=10.0)
+    kf_distance = SimpleKalmanFilter(process_noise=0.01, measurement_noise=25.0)
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -150,30 +130,29 @@ def main():
     center_x_orig, center_y_orig = w_orig / 2, h_orig / 2 
 
     templates_masked = []
-    templates_original = []
     try:
         for f in TEMPLATE_FILES:
             tmpl = cv2.imread(f)
             if tmpl is None: raise FileNotFoundError(f"Template file not found: {f}")
-            templates_original.append(tmpl)
+            w_tmpl = int(tmpl.shape[1] * processing_scale)
+            h_tmpl = int(tmpl.shape[0] * processing_scale)
+            tmpl_resized = cv2.resize(tmpl, (w_tmpl, h_tmpl), interpolation=cv2.INTER_AREA)
+            tmpl_rgb = cv2.cvtColor(tmpl_resized, cv2.COLOR_BGR2RGB)
+            tmpl_pink_mask = create_pink_mask(tmpl_rgb)
+            tmpl_gray = cv2.cvtColor(tmpl_rgb, cv2.COLOR_RGB2GRAY)
+            tmpl_masked = cv2.bitwise_and(tmpl_gray, tmpl_gray, mask=tmpl_pink_mask)
+            templates_masked.append(tmpl_masked)
     except FileNotFoundError as e:
-        print(f"Error: {e}"); return
-    for tmpl in templates_original:
-        w_tmpl = int(tmpl.shape[1] * processing_scale)
-        h_tmpl = int(tmpl.shape[0] * processing_scale)
-        tmpl_resized = cv2.resize(tmpl, (w_tmpl, h_tmpl), interpolation=cv2.INTER_AREA)
-        tmpl_rgb = cv2.cvtColor(tmpl_resized, cv2.COLOR_BGR2RGB)
-        tmpl_pink_mask = create_pink_mask(tmpl_rgb)
-        tmpl_gray = cv2.cvtColor(tmpl_rgb, cv2.COLOR_RGB2GRAY)
-        tmpl_masked = cv2.bitwise_and(tmpl_gray, tmpl_gray, mask=tmpl_pink_mask)
-        templates_masked.append(tmpl_masked)
+        print(f"Error: {e}"); ep_robot.close(); return
 
+    # ตัวแปรสำหรับ PID Controller
     prev_err_x, prev_err_y = 0, 0
     accumulate_err_x, accumulate_err_y = 0, 0
     prev_time = time.time()
     err_x, err_y = 0, 0
     speed_x, speed_y = 0, 0
-    distance_z_x, distance_z_y = 0, 0
+    
+    # ตัวแปรสำหรับคำนวณระยะทาง
     final_distance = 0.0 
     kalman_distance = 0.0
     
@@ -191,29 +170,31 @@ def main():
             main_pink_mask = create_pink_mask(frame_rgb)
             main_gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
             main_masked = cv2.bitwise_and(main_gray, main_gray, mask=main_pink_mask)
+            
             all_detections = []
             colors = [(0, 255, 0), (255, 165, 0), (0, 0, 255)]
             for i, tmpl_masked in enumerate(templates_masked):
                 boxes = match_template_masked(main_masked, tmpl_masked, threshold=MATCH_THRESHOLD)
                 for top_left, bottom_right, confidence in boxes:
                     all_detections.append((top_left, bottom_right, confidence, i, colors[i]))
+            
             final_detections = advanced_prioritized_nms(all_detections, IOU_THRESHOLD)
 
             if final_detections:
                 best_detection = final_detections[0] 
                 top_left_proc, bottom_right_proc, confidence, template_id, color = best_detection
                 
-                # (ส่วนแสดงผล Template ยังคงเดิม)
-                tl_orig_unadjusted = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale))
-                br_orig_unadjusted = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale))
-                tl_adjusted = (tl_orig_unadjusted[0], tl_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
-                br_adjusted = (br_orig_unadjusted[0], br_orig_unadjusted[1] + Y_AXIS_ADJUSTMENT)
-                cv2.rectangle(frame, tl_adjusted, br_adjusted, color, 3)
+                # ใช้ Y_AXIS_ADJUSTMENT ที่สอดคล้องกับ template ที่เจอ
+                y_adj = Y_AXIS_ADJUSTMENT[template_id]
+                
+                tl_orig = (int(top_left_proc[0] / processing_scale), int(top_left_proc[1] / processing_scale) + y_adj)
+                br_orig = (int(bottom_right_proc[0] / processing_scale), int(bottom_right_proc[1] / processing_scale) + y_adj)
+                cv2.rectangle(frame, tl_orig, br_orig, color, 3)
                 label = f"T{template_id+1} Conf:{confidence:.2f}"
-                cv2.putText(frame, label, (tl_adjusted[0], tl_adjusted[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                cv2.putText(frame, label, (tl_orig[0], tl_orig[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-                roi_x1, roi_y1 = max(0, tl_adjusted[0]), max(0, tl_adjusted[1])
-                roi_x2, roi_y2 = min(frame.shape[1], br_adjusted[0]), min(frame.shape[0], br_adjusted[1])
+                roi_x1, roi_y1 = max(0, tl_orig[0]), max(0, tl_orig[1])
+                roi_x2, roi_y2 = min(frame.shape[1], br_orig[0]), min(frame.shape[0], br_orig[1])
                 
                 if roi_x2 > roi_x1 and roi_y2 > roi_y1:
                     roi = frame[roi_y1:roi_y2, roi_x1:roi_x2]
@@ -225,80 +206,73 @@ def main():
                         main_contour = max(contours, key=cv2.contourArea)
                         x_real, y_real, w_real, h_real = cv2.boundingRect(main_contour)
                         
-                        # (ส่วนคำนวณตำแหน่ง... เหมือนเดิม)
-                        real_top_left = (roi_x1 + x_real, roi_y1 + y_real)
-                        real_bottom_right = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
-                        cv2.rectangle(frame, real_top_left, real_bottom_right, (0, 255, 255), 2)
-                        target_center_x = (real_top_left[0] + real_bottom_right[0]) / 2
-                        target_center_y = (real_top_left[1] + real_bottom_right[1]) / 2
+                        real_tl = (roi_x1 + x_real, roi_y1 + y_real)
+                        real_br = (roi_x1 + x_real + w_real, roi_y1 + y_real + h_real)
+                        cv2.rectangle(frame, real_tl, real_br, (0, 255, 255), 2)
+                        
+                        target_center_x = real_tl[0] + w_real / 2
+                        target_center_y = real_tl[1] + h_real / 2
                         err_x = center_x_orig - target_center_x
                         err_y = center_y_orig - target_center_y
                         target_found = True
                         cv2.circle(frame, (int(target_center_x), int(target_center_y)), 5, (0, 0, 255), -1)
                         
-                        # --- [ปรับแก้] เลือกใช้ค่า K ตาม template_id ที่ตรวจจับได้ ---
-                        current_kx = 0
-                        current_ky = 0
-                        if template_id == 0:  # ถ้าเจอ Template 1
-                            current_kx = K_X_T1
-                            current_ky = K_Y_T1
-                        elif template_id == 1: # ถ้าเจอ Template 2
-                            current_kx = K_X_T2
-                            current_ky = K_Y_T2
-                        else:  # ถ้าเจอ Template 3 (template_id == 2)
-                            current_kx = K_X_T3
-                            current_ky = K_Y_T3
-
-                        # --- [ปรับแก้] คำนวณระยะทางโดยใช้ค่า K ที่เลือกมา ---
-                        if w_real > 0: distance_z_x = (current_ky * REAL_HEIGHT_CM) / w_real
-                        if h_real > 0: distance_z_y = (current_kx * REAL_WIDTH_CM) / h_real
+                        dist_w = (K_Y * REAL_HEIGHT_CM) / w_real if w_real > 0 else 0
+                        dist_h = (K_X * REAL_WIDTH_CM) / h_real if h_real > 0 else 0
                         
-                        # (ส่วนที่เหลือ... เหมือนเดิม)
-                        if distance_z_x > 0 and distance_z_y > 0: final_distance = (distance_z_x + distance_z_y) / 2
-                        elif distance_z_x > 0: final_distance = distance_z_x
-                        else: final_distance = distance_z_y
+                        if dist_w > 0 and dist_h > 0: final_distance = (dist_w + dist_h) / 2
+                        elif dist_w > 0: final_distance = dist_w
+                        else: final_distance = dist_h
                         
                         if final_distance > 0:
                             kf_distance.predict()
                             kf_distance.update(final_distance)
-                            kalman_distance = kf_distance.get_state()
             
+            # อัปเดต Kalman Filter แม้จะไม่เจอเป้าหมาย เพื่อให้ค่าคาดการณ์ต่อเนื่อง
+            kalman_distance = kf_distance.get_state()
             if not target_found:
                  kf_distance.predict()
-                 kalman_distance = kf_distance.get_state()
 
-            # --- [ปรับแก้] PID Control Logic ---
+
+            # --- [ปรับปรุง] PID Control Logic ที่ยกมาจากโค้ดตัวอย่างที่สอง ---
             if target_found:
                 delta_time = current_time - prev_time
-                if delta_time == 0: delta_time = 0.001
                 
-                # ถ้าเพิ่งเจอเป้าหมาย (จากเดิมที่ไม่เจอ)
                 if not is_currently_tracking:
-                    # ให้คำนวณแค่ P-term เพื่อการเคลื่อนที่เริ่มต้นที่นุ่มนวล
-                    D_term_x, D_term_y = 0, 0
+                    # ถ้าเพิ่งเจอเป้าหมายครั้งแรก ให้รีเซ็ตค่าสะสมและไม่คำนวณ D-term
+                    D_x, D_y = 0, 0
                     accumulate_err_x, accumulate_err_y = 0, 0
-                    is_currently_tracking = True # อัปเดตสถานะว่ากำลังติดตามอยู่
-                # ถ้าเจอเป้าหมายต่อเนื่อง
+                    is_currently_tracking = True
                 else:
-                    D_term_x = D_GAIN * ((err_x - prev_err_x) / delta_time)
-                    D_term_y = D_GAIN * ((err_y - prev_err_y) / delta_time)
+                    # ถ้าเจอต่อเนื่อง ให้คำนวณ PID เต็มรูปแบบ
+                    if delta_time > 0:
+                        D_x = D_YAW * ((err_x - prev_err_x) / delta_time)
+                        D_y = D_PITCH * ((err_y - prev_err_y) / delta_time)
+                    else:
+                        D_x, D_y = 0, 0 # ป้องกันการหารด้วยศูนย์
+                    
                     accumulate_err_x += err_x * delta_time
                     accumulate_err_y += err_y * delta_time
 
-                speed_x = (P_GAIN * err_x) + D_term_x + (I_GAIN * accumulate_err_x)
-                speed_y = (P_GAIN * err_y) + D_term_y + (I_GAIN * accumulate_err_y)
+                # Anti-windup: จำกัดค่าสะสมของ I-term ในแกน Pitch
+                accumulate_err_y = np.clip(accumulate_err_y, -INTEGRAL_LIMIT_Y, INTEGRAL_LIMIT_Y)
+
+                # คำนวณความเร็วสุดท้ายโดยใช้ค่า PID ของแต่ละแกน
+                speed_x = (P_YAW * err_x) + D_x + (I_YAW * accumulate_err_x)
+                speed_y = (P_PITCH * err_y) + D_y + (I_PITCH * accumulate_err_y)
                 
                 ep_gimbal.drive_speed(pitch_speed=-speed_y, yaw_speed=speed_x) 
                 
                 prev_err_x, prev_err_y = err_x, err_y
-                prev_time = current_time
             else:
                 # รีเซ็ตค่าทั้งหมดเมื่อไม่เจอเป้าหมาย
                 ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-                is_currently_tracking = False # อัปเดตสถานะว่าไม่ได้ติดตามแล้ว
+                is_currently_tracking = False
+                speed_x, speed_y = 0, 0 # รีเซ็ตค่าความเร็วเพื่อการแสดงผล
                 accumulate_err_x, accumulate_err_y, prev_err_x, prev_err_y, err_x, err_y = 0, 0, 0, 0, 0, 0
-                distance_z_x, distance_z_y = 0, 0
                 final_distance = 0.0
+
+            prev_time = current_time
 
             # Display information
             cv2.putText(frame, f"e_x: {err_x:.2f}, e_y: {err_y:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -306,10 +280,9 @@ def main():
             cv2.putText(frame, f"Raw Dist: {final_distance:.2f} cm", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame, f"Kalman Dist: {kalman_distance:.2f} cm", (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
             cv2.circle(frame, (int(center_x_orig), int(center_y_orig)), 5, (255, 0, 255), -1)
-            cv2.imshow("Robomaster Pink Cup Detection with PID", frame)
+            cv2.imshow("Robomaster Detection - Merged PID", frame)
 
             if cv2.waitKey(1) & 0xFF == ord('q'): break
-
     finally:
         print("Stopping detection and releasing resources.")
         ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0)

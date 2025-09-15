@@ -46,8 +46,8 @@ class SimpleKalmanFilter:
 def create_pink_mask(img_rgb):
     img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
     hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
-    lower_pink = np.array([120, 19, 100])
-    upper_pink = np.array([170, 100, 200])
+    lower_pink = np.array([128, 20, 100])
+    upper_pink = np.array([158, 130, 200])
     mask = cv2.inRange(hsv, lower_pink, upper_pink)
     mask = cv2.medianBlur(mask, 5)
     kernel = np.ones((5, 5), np.uint8)
@@ -113,18 +113,18 @@ def main():
         "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg"
     ]
 
-    MATCH_THRESHOLD = 0.55
+    MATCH_THRESHOLD = 0.45
     IOU_THRESHOLD = 0.1
-    Y_AXIS_ADJUSTMENT = 25
-        
-    P_GAIN = -0.2
-    I_GAIN = 0.1
-    D_GAIN = -0.00135 
+    Y_AXIS_ADJUSTMENT = 0
+    
+    P_GAIN = -0.25
+    I_GAIN = -0.15
+    D_GAIN = -0.003 
 
-    K_X = 610.235   #no 207
-    K_Y = 405.2
-    REAL_WIDTH_CM = 23.2
-    REAL_HEIGHT_CM = 13.1
+    K_X = 603.766   #no 207
+    K_Y = 393.264
+    REAL_WIDTH_CM = 21.2
+    REAL_HEIGHT_CM = 13.2
 
     # --- [ปรับแก้] ปรับจูน Kalman Filter เพื่อให้ระยะทางนิ่งขึ้น ---
     # เพิ่มค่า measurement_noise (R) ให้สูงขึ้น เพื่อลดผลกระทบจากค่าที่แกว่งไปมา
