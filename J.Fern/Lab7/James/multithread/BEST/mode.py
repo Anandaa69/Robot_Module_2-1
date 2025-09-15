@@ -22,9 +22,9 @@ class SimpleKalmanFilter:
 
 def create_pink_mask(img_rgb):
     hsv = cv2.cvtColor(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([128, 20, 100]), np.array([158, 130, 200]))
+    mask = cv2.inRange(hsv, np.array([121, 27, 95]), np.array([157, 78, 187]))
     mask = cv2.medianBlur(mask, 1)
-    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((11, 11), np.uint8))
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
     if tmpl_masked.shape[0]>img_masked.shape[0] or tmpl_masked.shape[1]>img_masked.shape[1]: return []
@@ -200,9 +200,9 @@ def main():
         "pid_yaw":   (-0.3, -0.01, -0.01),
         "pid_pitch": (-0.25, -0.15, -0.03),
         "k_values": (603.766, 393.264),
-        "real_dims": (21.2, 13.2),
+        "real_dims": (21.2, 14),
         "detection": (0.45, 0.1),
-        "y_adjustments": [0, 0, 0]
+        "y_adjustments": [0, 0, 20]
     }
 
     ORIGINAL_TEMPLATE_FILES = [

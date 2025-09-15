@@ -12,8 +12,8 @@ from robomaster import camera
 
 # --- ADDED: Global variables for HSV trackbars ---
 # Initialize with the original pink values
-H_MIN, S_MIN, V_MIN = 128, 20, 100
-H_MAX, S_MAX, V_MAX = 158, 130, 200
+H_MIN, S_MIN, V_MIN = 121, 21, 95
+H_MAX, S_MAX, V_MAX = 157, 78, 187
 
 # --- คลาสและฟังก์ชันต่างๆ ---
 class SimpleKalmanFilter:
@@ -202,7 +202,7 @@ def main():
         "k_values": (603.766, 393.264),
         "real_dims": (21.2, 13.2),
         "detection": (0.45, 0.1),
-        "y_adjustments": [0, 0, 0]
+        "y_adjustments": [0, 0, 20]
     }
     ORIGINAL_TEMPLATE_FILES = [ "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg", "image/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg", "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg" ]
     
