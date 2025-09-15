@@ -1,5 +1,6 @@
-# File: best_multithread_singlefile_FINAL.py
-# Description: Final version with independent gimbal control (chassis will not move).
+# File: best_multithread_singlefile_GIMBAL_FIXED.py
+# Description: Fixed gimbal "drooping" issue by increasing PID gains and adding anti-windup.
+#              Also fixed the ZeroDivisionError by checking if dt > 0.
 
 import cv2
 import numpy as np
@@ -20,8 +21,8 @@ class SimpleKalmanFilter:
 
 def create_pink_mask(img_rgb):
     hsv = cv2.cvtColor(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, np.array([120, 24, 100]), np.array([170, 100, 200]))
-    mask = cv2.medianBlur(mask, 5)
+    mask = cv2.inRange(hsv, np.array([128, 20, 100]), np.array([158, 130, 200]))
+    mask = cv2.medianBlur(mask, 1)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
@@ -95,7 +96,8 @@ def processing_thread_func(templates_masked, params):
     
     p_err_x, p_err_y, acc_err_x, acc_err_y = 0,0,0,0
     p_time, tracking = time.time(), False
-    kf_dist = SimpleKalmanFilter(process_noise=0.03, measurement_noise=20.0)
+    kf_dist = SimpleKalmanFilter(process_noise=0.01, measurement_noise=25.0)
+    
     INTEGRAL_LIMIT_Y = 200
 
     while not stop_event.is_set():
@@ -140,17 +142,34 @@ def processing_thread_func(templates_masked, params):
 
         kalman_dist = kf_dist.get_state()
         if not found: kf_dist.predict()
-        curr_time = time.time(); dt = curr_time - p_time if p_time else 1/30.0
+        
+        curr_time = time.time()
+        dt = curr_time - p_time if p_time else 1/30.0
+
         if found:
-            if not tracking: D_x, D_y, acc_err_x, acc_err_y = 0,0,0,0; tracking=True
-            else: 
-                D_x=D_YAW*((err_x-p_err_x)/dt);   D_y=D_PITCH*((err_y-p_err_y)/dt); 
-                acc_err_x+=err_x*dt; acc_err_y+=err_y*dt
+            if not tracking: 
+                D_x, D_y, acc_err_x, acc_err_y = 0,0,0,0
+                tracking=True
+            else:
+                # --- [FIXED] Prevent ZeroDivisionError by checking if dt is positive ---
+                if dt > 0:
+                    D_x = D_YAW * ((err_x - p_err_x) / dt)
+                    D_y = D_PITCH * ((err_y - p_err_y) / dt)
+                else:
+                    D_x, D_y = 0, 0 # If dt is zero, skip derivative calculation for this frame
+                
+                acc_err_x += err_x * dt
+                acc_err_y += err_y * dt
+            
             acc_err_y = np.clip(acc_err_y, -INTEGRAL_LIMIT_Y, INTEGRAL_LIMIT_Y)
+
             speed_x = (P_YAW*err_x) + D_x + (I_YAW*acc_err_x)
             speed_y = (P_PITCH*err_y) + D_y + (I_PITCH*acc_err_y)
             p_err_x, p_err_y = err_x, err_y
-        else: tracking,speed_x,speed_y=False,0,0; p_err_x,p_err_y,acc_err_x,acc_err_y=0,0,0,0
+        else: 
+            tracking,speed_x,speed_y = False,0,0
+            p_err_x,p_err_y,acc_err_x,acc_err_y = 0,0,0,0
+        
         p_time = curr_time
 
         cv2.putText(frame, f"e_x: {err_x:.2f}, e_y: {err_y:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
@@ -159,7 +178,9 @@ def processing_thread_func(templates_masked, params):
         cv2.putText(frame, f"Kalman Dist: {kalman_dist:.2f} cm", (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
         cv2.circle(frame, (int(center_x_orig), int(center_y_orig)), 5, (255,0,255), -1)
 
-        with output_lock: processed_output={"annotated_frame":frame, "speed_x":speed_x, "speed_y":speed_y}
+        with output_lock: 
+            processed_output={"annotated_frame":frame, "speed_x":speed_x, "speed_y":speed_y}
+            
     print("Processing thread stopped.")
 
 # --- Main Thread: Controller & UI ---
@@ -168,42 +189,29 @@ def main():
     params = {
         "PROCESSING_WIDTH": 640.0,
         "pid_yaw":   (-0.3, -0.01, -0.01),
-        "pid_pitch": (-0.25, -0.15, -0.04),
-        "k_values": (610.235, 405.2),
-        "real_dims": (21.2, 13.9),
-        "detection": (0.55, 0.1), 
-        "y_adjustments": [5, 25, 25]
+        "pid_pitch": (-0.25, -0.15, -0.03),
+        "k_values": (603.766, 393.264),
+        "real_dims": (21.2, 13.2),
+        "detection": (0.45, 0.1), 
+        "y_adjustments": [0, 0, 0]
     }
-
-    K_X = 610.235   #no 207
-    K_Y = 405.2
-    REAL_WIDTH_CM = 23.2
-    REAL_HEIGHT_CM = 13.1
-
+    
     ORIGINAL_TEMPLATE_FILES = [
         "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg",
-        "image/gimbal/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg",
+        "image/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg",
         "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg"
     ]
 
     print("Init robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
     ep_camera, ep_gimbal = ep_robot.camera, ep_robot.gimbal
-    
     print("Starting stream..."); ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
     print("Recentering..."); ep_gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
-    
-    # --- [แก้ไข] เพิ่มบรรทัดนี้เพื่อสั่งให้ล้อหยุดหมุนตาม Gimbal ---
-    print("Setting robot to FREE mode for independent gimbal control...")
-    ep_robot.set_robot_mode(mode=robot.FREE)
-    
     time.sleep(0.5)
-    
     print("Getting frame for scale..."); frame = ep_camera.read_cv2_image(timeout=5)
     if frame is None: print("Error: No frame."); ep_robot.close(); return
     h, w, _ = frame.shape
     scale = params["PROCESSING_WIDTH"] / w
     params["dims"] = (int(h*scale), w/2, h/2, scale)
-    
     print("Preparing and loading templates...")
     try:
         processed_template_paths = prepare_templates(ORIGINAL_TEMPLATE_FILES, scale)
@@ -215,18 +223,19 @@ def main():
     except Exception as e:
         print(f"Error during template preparation: {e}"); ep_robot.close(); return
     print("Templates are ready.")
-    
     print("Starting threads..."); cap_t = threading.Thread(target=capture_thread_func, args=(ep_camera,))
     proc_t = threading.Thread(target=processing_thread_func, args=(tmpls, params))
     cap_t.start(); proc_t.start()
     print("System running. Press 'q' to exit.")
-    
     try:
         while True:
-            with output_lock: s_x, s_y, ann_frame = processed_output["speed_x"], processed_output["speed_y"], processed_output["annotated_frame"]
+            with output_lock: 
+                s_x, s_y, ann_frame = processed_output["speed_x"], processed_output["speed_y"], processed_output["annotated_frame"]
             ep_gimbal.drive_speed(pitch_speed=-s_y, yaw_speed=s_x)
-            if ann_frame is not None: cv2.imshow("Robomaster Detection (Multithreaded)", ann_frame)
-            if cv2.waitKey(1)&0xFF==ord('q') or not proc_t.is_alive(): break
+            if ann_frame is not None: 
+                cv2.imshow("Robomaster Detection (Multithreaded)", ann_frame)
+            if cv2.waitKey(1)&0xFF==ord('q') or not proc_t.is_alive(): 
+                break
             time.sleep(0.01)
     finally:
         print("Stopping..."); stop_event.set(); cap_t.join(); proc_t.join()

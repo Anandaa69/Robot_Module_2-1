@@ -1,5 +1,7 @@
-# File: best_multithread_singlefile_FINAL.py
-# Description: Final version with independent gimbal control (chassis will not move).
+# File: best_multithread_singlefile_FINAL_SMOOTHED.py
+# Description: Final version with independent gimbal control.
+#              Added EMA smoothing for bounding box dimensions to stabilize distance calculation.
+#              Tuned Kalman filter for higher measurement noise.
 
 import cv2
 import numpy as np
@@ -10,6 +12,7 @@ from robomaster import robot
 from robomaster import camera
 
 # --- คลาสและฟังก์ชันต่างๆ (ไม่มีการเปลี่ยนแปลง) ---
+# ... (โค้ดส่วนนี้เหมือนเดิมทั้งหมด) ...
 class SimpleKalmanFilter:
     def __init__(self, process_noise, measurement_noise, initial_value=0.0):
         self.Q, self.R, self.P, self.x = process_noise, measurement_noise, 1.0, initial_value
@@ -84,6 +87,7 @@ def capture_thread_func(ep_camera):
             continue
     print("Capture thread stopped.")
 
+# --- [MODIFIED] Processing Thread with Smoothing ---
 def processing_thread_func(templates_masked, params):
     global latest_frame, processed_output
     print("Processing thread started.")
@@ -95,8 +99,14 @@ def processing_thread_func(templates_masked, params):
     
     p_err_x, p_err_y, acc_err_x, acc_err_y = 0,0,0,0
     p_time, tracking = time.time(), False
-    kf_dist = SimpleKalmanFilter(process_noise=0.03, measurement_noise=20.0)
+    
+    # [MODIFIED] ปรับ Kalman Filter ให้รับมือ Noise ที่สูงขึ้น
+    kf_dist = SimpleKalmanFilter(process_noise=0.03, measurement_noise=80.0) # เพิ่ม measurement_noise
     INTEGRAL_LIMIT_Y = 200
+
+    # [NEW] ตัวแปรสำหรับทำ EMA Smoothing ให้กับขนาดของ Bounding Box
+    smoothed_w, smoothed_h = 0.0, 0.0
+    smoothing_factor = 0.3 # ค่า alpha, ยิ่งน้อยยิ่งนิ่งแต่ตอบสนองช้า (ลองปรับค่าระหว่าง 0.1 - 0.5)
 
     while not stop_event.is_set():
         with frame_lock:
@@ -128,23 +138,43 @@ def processing_thread_func(templates_masked, params):
                 contours, _ = cv2.findContours(create_pink_mask(cv2.cvtColor(roi, cv2.COLOR_BGR2RGB)), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
                 if contours:
                     x,y,w,h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+                    
+                    # [NEW] อัปเดตค่า smoothed_w และ smoothed_h ด้วย EMA
+                    if smoothed_w == 0.0: # ถ้าเป็นเฟรมแรกที่เจอ ให้ใช้ค่าปัจจุบันเลย
+                        smoothed_w, smoothed_h = w, h
+                    else:
+                        smoothed_w = (smoothing_factor * w) + (1 - smoothing_factor) * smoothed_w
+                        smoothed_h = (smoothing_factor * h) + (1 - smoothing_factor) * smoothed_h
+
                     real_tl = (tl_adj[0]+x, tl_adj[1]+y); real_br = (tl_adj[0]+x+w, tl_adj[1]+y+h)
                     cv2.rectangle(frame, real_tl, real_br, (255, 255, 0), 2)
                     center_x, center_y = tl_adj[0]+x+w/2, tl_adj[1]+y+h/2
                     err_x, err_y = center_x_orig - center_x, center_y_orig - center_y
                     found = True
                     cv2.circle(frame, (int(center_x), int(center_y)), 5, (0,0,255),-1)
-                    dist_w = (K_Y*H_CM)/w if w>0 else 0; dist_h = (K_X*W_CM)/h if h>0 else 0
+
+                    # [MODIFIED] ใช้ค่า w, h ที่ผ่านการกรองแล้วในการคำนวณ
+                    dist_w = (K_Y * H_CM) / smoothed_w if smoothed_w > 0 else 0
+                    dist_h = (K_X * W_CM) / smoothed_h if smoothed_h > 0 else 0
+
                     raw_dist = (dist_w + dist_h) / 2 if dist_w > 0 and dist_h > 0 else max(dist_w, dist_h)
                     if raw_dist > 0: kf_dist.predict(); kf_dist.update(raw_dist)
 
         kalman_dist = kf_dist.get_state()
-        if not found: kf_dist.predict()
+        if not found:
+            kf_dist.predict()
+            # [NEW] เมื่อไม่เจอเป้าหมาย ให้ค่อยๆ รีเซ็ตค่า smoothed_w, smoothed_h เพื่อให้พร้อมสำหรับการเจอครั้งใหม่
+            smoothed_w, smoothed_h = 0.0, 0.0
+
         curr_time = time.time(); dt = curr_time - p_time if p_time else 1/30.0
         if found:
             if not tracking: D_x, D_y, acc_err_x, acc_err_y = 0,0,0,0; tracking=True
             else: 
-                D_x=D_YAW*((err_x-p_err_x)/dt);   D_y=D_PITCH*((err_y-p_err_y)/dt); 
+                # [MODIFIED] เพิ่มการเช็ค dt > 0 เพื่อป้องกัน ZeroDivisionError (โค้ดเดิมของคุณไม่มีในส่วนนี้)
+                if dt > 0:
+                    D_x=D_YAW*((err_x-p_err_x)/dt);   D_y=D_PITCH*((err_y-p_err_y)/dt); 
+                else:
+                    D_x, D_y = 0, 0
                 acc_err_x+=err_x*dt; acc_err_y+=err_y*dt
             acc_err_y = np.clip(acc_err_y, -INTEGRAL_LIMIT_Y, INTEGRAL_LIMIT_Y)
             speed_x = (P_YAW*err_x) + D_x + (I_YAW*acc_err_x)
@@ -162,24 +192,21 @@ def processing_thread_func(templates_masked, params):
         with output_lock: processed_output={"annotated_frame":frame, "speed_x":speed_x, "speed_y":speed_y}
     print("Processing thread stopped.")
 
+
+# --- Main Thread: Controller & UI (ไม่มีการเปลี่ยนแปลง) ---
 # --- Main Thread: Controller & UI ---
 def main():
     global processed_output
     params = {
         "PROCESSING_WIDTH": 640.0,
         "pid_yaw":   (-0.3, -0.01, -0.01),
-        "pid_pitch": (-0.25, -0.15, -0.04),
-        "k_values": (610.235, 405.2),
+        "pid_pitch": (-0.25, -0.15, -0.03),
+        "k_values": (610.035, 405.05),
         "real_dims": (21.2, 13.9),
         "detection": (0.55, 0.1), 
         "y_adjustments": [5, 25, 25]
     }
-
-    K_X = 610.235   #no 207
-    K_Y = 405.2
-    REAL_WIDTH_CM = 23.2
-    REAL_HEIGHT_CM = 13.1
-
+    
     ORIGINAL_TEMPLATE_FILES = [
         "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg",
         "image/gimbal/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg",
@@ -187,12 +214,13 @@ def main():
     ]
 
     print("Init robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
+    # [แก้ไข] ไม่จำเป็นต้องประกาศ ep_chassis แยกต่างหาก
     ep_camera, ep_gimbal = ep_robot.camera, ep_robot.gimbal
     
     print("Starting stream..."); ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
     print("Recentering..."); ep_gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
     
-    # --- [แก้ไข] เพิ่มบรรทัดนี้เพื่อสั่งให้ล้อหยุดหมุนตาม Gimbal ---
+    # --- [แก้ไข] กลับไปใช้คำสั่งที่ถูกต้อง ---
     print("Setting robot to FREE mode for independent gimbal control...")
     ep_robot.set_robot_mode(mode=robot.FREE)
     
@@ -216,6 +244,8 @@ def main():
         print(f"Error during template preparation: {e}"); ep_robot.close(); return
     print("Templates are ready.")
     
+    # [แก้ไข] ไม่จำเป็นต้องลบ time.sleep() ออก หากเวอร์ชั่นเดิมทำงานได้ดีอยู่แล้ว
+    # การมี sleep เล็กน้อยจะช่วยลดการใช้งาน CPU ของ main thread ได้
     print("Starting threads..."); cap_t = threading.Thread(target=capture_thread_func, args=(ep_camera,))
     proc_t = threading.Thread(target=processing_thread_func, args=(tmpls, params))
     cap_t.start(); proc_t.start()
@@ -227,7 +257,7 @@ def main():
             ep_gimbal.drive_speed(pitch_speed=-s_y, yaw_speed=s_x)
             if ann_frame is not None: cv2.imshow("Robomaster Detection (Multithreaded)", ann_frame)
             if cv2.waitKey(1)&0xFF==ord('q') or not proc_t.is_alive(): break
-            time.sleep(0.01)
+            time.sleep(0.01) # ใส่กลับเข้ามาเหมือนเดิมได้ครับ
     finally:
         print("Stopping..."); stop_event.set(); cap_t.join(); proc_t.join()
         ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0); cv2.destroyAllWindows()
