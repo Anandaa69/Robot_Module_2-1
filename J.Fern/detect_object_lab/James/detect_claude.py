@@ -204,20 +204,20 @@ class PinkMaskDetector:
             
             # วาด confidence score
             cv2.putText(result_frame, f"{confidence:.2f}", 
-                       (top_left[0]+5, top_left[1]+40), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    (top_left[0]+5, top_left[1]+40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             # วาดพื้นหลังสีดำให้ข้อความ
             cv2.rectangle(result_frame, (top_left[0]+2, top_left[1]+2), 
-                         (top_left[0]+80, top_left[1]+45), (0, 0, 0), -1)
+                        (top_left[0]+80, top_left[1]+45), (0, 0, 0), -1)
             
             # วาดข้อความใหม่ทับ
             cv2.putText(result_frame, f"T{template_id}", 
-                       (top_left[0]+5, top_left[1]+20), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+                    (top_left[0]+5, top_left[1]+20), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             cv2.putText(result_frame, f"{confidence:.2f}", 
-                       (top_left[0]+5, top_left[1]+40), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    (top_left[0]+5, top_left[1]+40), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
         
         return result_frame
 
@@ -265,7 +265,7 @@ def main():
                 # แสดงจำนวนการตรวจจับ
                 info_text = f"Detections: {len(detections)}"
                 cv2.putText(result_frame, info_text, (10, 30), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
                 
                 # แสดงผล
                 cv2.imshow("RoboMaster Pink Detection", result_frame)
@@ -279,7 +279,7 @@ def main():
                         w = bottom_right[0] - top_left[0]
                         h = bottom_right[1] - top_left[1]
                         print(f"  Detection {i+1}: T{template_id} at ({x}, {y}) "
-                              f"size {w}x{h} confidence {confidence:.3f}")
+                            f"size {w}x{h} confidence {confidence:.3f}")
             
             # ตรวจสอบการกดปุ่ม 'q' เพื่อออก
             key = cv2.waitKey(1) & 0xFF
