@@ -22,7 +22,7 @@ class SimpleKalmanFilter:
 def create_pink_mask(img_rgb):
     hsv = cv2.cvtColor(cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, np.array([128, 20, 100]), np.array([158, 130, 200]))
-    mask = cv2.medianBlur(mask, 1)
+    mask = cv2.medianBlur(mask, 5)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
 def match_template_masked(img_masked, tmpl_masked, threshold=0.7):
