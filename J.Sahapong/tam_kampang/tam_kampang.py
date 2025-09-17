@@ -71,7 +71,7 @@ def align_with_left_wall(ep_robot):
     chassis = ep_robot.chassis
 
     # ตั้งค่า Gimbal ให้อยู่ในโหมดอิสระ
-    gimbal.set_follow_chassis_offset(0)
+    # gimbal.set_follow_chassis_offset(0)
 
     while True:
         # 1. วัดระยะจุดหน้า-ซ้าย
@@ -89,9 +89,9 @@ def align_with_left_wall(ep_robot):
         # 3. คำนวณ Error และตัดสินใจ
         # ถ้าค่าที่ได้ไม่ใช่ค่าที่ถูกต้อง (ไกลเกิน) ให้หยุด
         if distance_front_left > 4000 or distance_rear_left > 4000:
-             print("Wall not detected clearly. Cannot align.")
-             chassis.drive_speed(x=0, y=0, z=0)
-             break
+            print("Wall not detected clearly. Cannot align.")
+            chassis.drive_speed(x=0, y=0, z=0)
+            break
 
         error = distance_front_left - distance_rear_left
         
