@@ -1,5 +1,3 @@
-# -*-coding:utf-8-*-
-
 import robomaster
 from robomaster import robot
 import time
@@ -20,19 +18,23 @@ TARGET_DISTANCE_CM = 5.0
 FORWARD_SPEED = 0.18
 STOP_DISTANCE_CM = 32.0
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
-CHECK_RIGHT_WALL_DISTANCE_CM = 40.0 # <<<<<<<<<<<< [ใหม่!] ระยะสำหรับตรวจสอบกำแพงด้านขวา
+CHECK_RIGHT_WALL_DISTANCE_CM = 50.0 
 CHECK_RIGHT_WALL_DISTANCE_MM = CHECK_RIGHT_WALL_DISTANCE_CM * 10
+
+# --- [ใหม่!] ค่าคงที่สำหรับแก้ปัญหา ---
+ACQUISITION_NUDGE_CM = 20.0 # <<<<<<<<<<<< ระยะที่จะให้หุ่นเดินหน้าทื่อๆ หลังเลี้ยว (ปรับค่านี้ได้)
+ACQUISITION_NUDGE_SPEED = 0.1 # <<<<<<<<<<<< ความเร็วในการเดินหน้าเพื่อเข้าเลนใหม่
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
 KP_DISTANCE = 2
 KP_ANGLE = 2.5
 KD = 8.0
 MAX_ROTATE_SPEED = 30.0
+GIMBAL_ROTATE_SPEED = 120 # ความเร็วในการหัน Gimbal
 
 # --- ตัวแปร Global ---
 last_error = 0.0
 tof_distances = {}
-# imu_data ไม่จำเป็นต้องใช้แล้ว เพราะเราจะใช้คำสั่งสำเร็จรูป chassis.move()
 
 # =======================================================================
 # --- ฟังก์ชันต่างๆ ---
@@ -72,7 +74,7 @@ def main():
     print("Subscribed to ToF sensor data.")
     
     print("\n=============================================")
-    print("=== Corrected Direction Wall Following ===")
+    print("=== Wall Following (Gimbal Look-Ahead) ===")
     print(f"Target Distance: {TARGET_DISTANCE_CM} cm")
     print(f"Check Right Distance: {CHECK_RIGHT_WALL_DISTANCE_CM} cm")
     print("=============================================")
@@ -85,31 +87,40 @@ def main():
             dist_rear = convert_adc_to_cm(sensor_adaptor.get_adc(id=IR_REAR_LEFT_ID, port=IR_REAR_LEFT_PORT))
             front_tof_mm = tof_distances.get('front', float('inf'))
 
-            # --- 2. [ปรับปรุง!] ตรวจสอบเงื่อนไขการหยุดและเลี้ยว ---
+            # --- 2. ตรวจสอบ, หัน Gimbal, และตัดสินใจ ---
             if front_tof_mm <= STOP_DISTANCE_MM:
-                print("\nObstacle detected ahead. Stopping to check right side...")
+                print("\n[STEP 1] Obstacle detected. Stopping chassis...")
                 chassis.drive_speed(x=0, y=0, z=0)
                 time.sleep(0.5)
 
-                # หมุนขวา 90 องศา (z=-90 คือหมุนตามเข็มนาฬิกาสำหรับคำสั่ง move)
-                print("Turning right 90 degrees...")
-                chassis.move(z=-90, z_speed=MAX_ROTATE_SPEED).wait_for_completed()
+                print("[STEP 2] Looking right with gimbal...")
+                ep_gimbal.move(yaw=-90, yaw_speed=GIMBAL_ROTATE_SPEED).wait_for_completed()
                 
-                # รอให้หุ่นนิ่งและ ToF จับค่าได้
                 time.sleep(1.0) 
-
-                # อ่านค่า ToF อีกครั้งหลังจากหันแล้ว
                 right_side_dist_mm = tof_distances.get('front', float('inf'))
-                print(f"Distance to the right is {right_side_dist_mm / 10.0:.1f} cm.")
+                print(f"[STEP 3] Measured distance to the right: {right_side_dist_mm / 10.0:.1f} cm.")
 
-                # ตัดสินใจว่าจะไปต่อหรือหยุด
                 if right_side_dist_mm < CHECK_RIGHT_WALL_DISTANCE_MM:
-                    print("Wall found on the right. Mission complete.")
-                    break # หยุดการทำงานทั้งหมด
+                    print("[RESULT] Wall found on the right. Mission complete.")
+                    ep_gimbal.recenter().wait_for_completed()
+                    break
                 else:
-                    print("Path clear on the right. Resuming wall following.")
-                    last_error = 0.0 # รีเซ็ต PD controller ป้องกันการกระตุก
-                    continue # กลับไปเริ่มลูปใหม่ในทิศทางใหม่
+                    print("[STEP 4] Path is clear. Turning chassis...")
+                    chassis.move(z=-90, z_speed=MAX_ROTATE_SPEED).wait_for_completed()
+                    
+                    print("Resetting gimbal to forward position...")
+                    ep_gimbal.recenter().wait_for_completed()
+                    
+                    # <<<<<<<<<<<<<<<<<<<<<<<< [ส่วนแก้ไขที่สำคัญ!] >>>>>>>>>>>>>>>>>>>>>>>>
+                    print(f"[STEP 5] Nudging forward {ACQUISITION_NUDGE_CM} cm to acquire new wall...")
+                    # เดินหน้าทื่อๆ เป็นระยะทางสั้นๆ เพื่อให้พ้นมุม
+                    chassis.move(x=(ACQUISITION_NUDGE_CM / 100.0), x_speed=ACQUISITION_NUDGE_SPEED).wait_for_completed()
+                    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                    
+                    print("Resuming wall following in new direction.")
+                    last_error = 0.0
+                    time.sleep(0.5)
+                    continue
 
             # --- 3. คำนวณ Error ---
             error_distance = TARGET_DISTANCE_CM - dist_front
