@@ -12,8 +12,11 @@ from robomaster import camera
 
 # --- ADDED: Global variables for HSV trackbars ---
 # Initialize with the original pink values
-H_MIN, S_MIN, V_MIN = 121, 21, 95
-H_MAX, S_MAX, V_MAX = 157, 78, 187
+H_MIN, S_MIN, V_MIN = 119, 16, 106
+H_MAX, S_MAX, V_MAX = 150, 255, 179
+
+# H_MIN, S_MIN, V_MIN = 121, 21, 95
+# H_MAX, S_MAX, V_MAX = 157, 78, 187
 
 # --- คลาสและฟังก์ชันต่างๆ ---
 class SimpleKalmanFilter:
@@ -32,7 +35,7 @@ def create_color_mask(img_rgb):
     lower_bound = np.array([H_MIN, S_MIN, V_MIN])
     upper_bound = np.array([H_MAX, S_MAX, V_MAX])
     mask = cv2.inRange(hsv, lower_bound, upper_bound)
-    mask = cv2.medianBlur(mask, 1)
+    mask = cv2.medianBlur(mask, 5)
     return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
 
 # ... (The rest of the helper functions are unchanged) ...
@@ -200,10 +203,11 @@ def main():
         "pid_yaw":   (-0.3, -0.01, -0.01),
         "pid_pitch": (-0.25, -0.15, -0.03),
         "k_values": (603.766, 393.264),
-        "real_dims": (21.2, 13.2),
+        "real_dims": (21.2, 14),
         "detection": (0.45, 0.1),
-        "y_adjustments": [0, 0, 20]
+        "y_adjustments": [0, 18, 17]
     }
+    # ORIGINAL_TEMPLATE_FILES = [ "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg", "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg" ]
     ORIGINAL_TEMPLATE_FILES = [ "image/template/use/long_template_new1_pic3_x_327_y_344_w_157_h_345.jpg", "image/template/use/template_new2_pic2_x_580_y_291_w_115_h_235.jpg", "image/template/use/template_new1_pic3_x_607_y_286_w_70_h_142.jpg" ]
     
     use_pid_tracking = False
