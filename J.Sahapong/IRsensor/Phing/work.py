@@ -18,17 +18,10 @@ STOP_DISTANCE_CM = 13.0
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- สำหรับการควบคุมการเคลื่อนที่ (PD-Controller for Strafing) ---
-<<<<<<< HEAD
-FORWARD_SPEED = 0.15
-KP = 0.08
-KD = 0.1
-MAX_STRAFE_SPEED = 0.3
-=======
 FORWARD_SPEED = 0.1
 KP = 0.06
 KD = 0.3
 MAX_STRAFE_SPEED = 0.2
->>>>>>> c67d7fe516749981a26aed24f4631a9e4b817c87
 
 # ตัวแปรสำหรับ PD Controller
 last_error = 0.0
