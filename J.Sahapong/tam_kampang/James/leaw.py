@@ -13,23 +13,27 @@ IR_FRONT_LEFT_ID = 3
 IR_FRONT_LEFT_PORT = 1
 IR_REAR_LEFT_ID = 1
 IR_REAR_LEFT_PORT = 1
-SENSOR_OFFSET_CM = 1.0
+SENSOR_OFFSET_CM = 0.5
 
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
-TARGET_DISTANCE_CM = 15.0
-FORWARD_SPEED = 0.18
-STOP_DISTANCE_CM = 32.0
+TARGET_DISTANCE_CM = 14.0
+FORWARD_SPEED = 0.30
+STOP_DISTANCE_CM = 35
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
-KP_DISTANCE = 3
-KP_ANGLE = 3
-KD = 8.0
-MAX_ROTATE_SPEED = 20.0
+KP_DISTANCE = 6
+KP_ANGLE = 6
+KD = 6.0
+MAX_ROTATE_SPEED = 45.0
 
-# --- [ใหม่!] ค่าคงที่สำหรับตรรกะการหาผนังที่มุม ---
-SEARCH_ROTATE_SPEED = 15.0  # ความเร็วในการหมุนตัวเพื่อหาผนัง (องศา/วินาที)
+# --- ค่าคงที่สำหรับตรรกะการหาผนังที่มุม ---
+SEARCH_ROTATE_SPEED = 7.5  # ความเร็วในการหมุนตัวเพื่อหาผนัง (องศา/วินาที)
 SEARCH_TOLERANCE_CM = 5.0   # ค่าความคลาดเคลื่อนที่ยอมรับได้ในการหาระยะเป้าหมาย
+
+# --- [ใหม่!] ตัวแปรสำหรับนับการเลี้ยว ---
+MAX_CONSECUTIVE_CORNERS = 2 # จำนวนการเลี้ยวสูงสุดที่อนุญาต
+corner_count = 0
 
 # --- ตัวแปร Global ---
 last_error = 0.0
@@ -53,6 +57,7 @@ def sub_distance_handler(sub_info):
 # =======================================================================
 def main():
     global last_error
+    global corner_count
 
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
@@ -75,6 +80,7 @@ def main():
     print("=== Smart Cornering Wall Following ===")
     print(f"Target Distance: {TARGET_DISTANCE_CM} cm")
     print(f"Stop Distance: {STOP_DISTANCE_CM} cm")
+    print(f"Program will terminate after {MAX_CONSECUTIVE_CORNERS} consecutive corners.")
     print("=============================================")
     time.sleep(3)
 
@@ -86,46 +92,55 @@ def main():
 
             # --- [แก้ไข!] ตรรกะการจัดการมุมอับ (Corner Handling Logic) ---
             if front_tof_mm <= STOP_DISTANCE_MM:
-                print(f"\nObstacle detected at {front_tof_mm}mm. Starting cornering maneuver.")
-                
+                corner_count += 1
+                print(f"\nObstacle detected! Corner #{corner_count} maneuver started.")
+
+                # --- [ใหม่!] ตรวจสอบเงื่อนไขการจบโปรแกรม ---
+                if corner_count >= MAX_CONSECUTIVE_CORNERS:
+                    print(f"\nReached {MAX_CONSECUTIVE_CORNERS} consecutive corners. Terminating program.")
+                    break # ออกจาก Loop while
+
                 # 1. หยุดการเคลื่อนที่ปัจจุบัน
                 chassis.drive_speed(x=0, y=0, z=0)
                 time.sleep(0.5)
 
-                # 2. หมุนขวา 90 องศาเพื่อหลบกำแพง (z>0 คือตามเข็มนาฬิกา/ขวา)
+                # 2. หมุนขวา 90 องศาเพื่อหลบกำแพง
                 print("Step 1: Turning right to clear obstacle...")
                 chassis.move(z=-90, z_speed=45).wait_for_completed()
                 time.sleep(0.5)
                 
                 # 3. ค้นหาผนังใหม่โดยการหมุนซ้ายช้าๆ
                 print("Step 2: Searching for the new wall by rotating left...")
-                search_timeout = time.time() + 10 # ตั้งเวลาหมดเวลา 10 วินาที ป้องกันการหมุนไม่สิ้นสุด
+                search_timeout = time.time() + 10 
                 
                 while time.time() < search_timeout:
-                    # อ่านค่าเซ็นเซอร์ IR ด้านหน้าซ้าย
                     current_dist = convert_adc_to_cm(sensor_adaptor.get_adc(id=IR_FRONT_LEFT_ID, port=IR_FRONT_LEFT_PORT))
                     print(f"Searching... Current distance: {current_dist:.1f} cm", end='\r')
 
-                    # ถ้าเจอระยะที่เหมาะสม (เป้าหมาย +/- ค่าคลาดเคลื่อน)
                     if abs(current_dist - TARGET_DISTANCE_CM) <= SEARCH_TOLERANCE_CM:
                         print(f"\nWall found at {current_dist:.1f} cm. Stopping search.")
-                        chassis.drive_speed(x=0, y=0, z=0) # หยุดหมุน
+                        chassis.drive_speed(x=0, y=0, z=0) 
                         break
                     
-                    # สั่งให้หมุนซ้ายช้าๆ (z<0 คือทวนเข็มนาฬิกา/ซ้าย)
                     chassis.drive_speed(x=0, y=0, z=-SEARCH_ROTATE_SPEED)
                     time.sleep(0.05)
-                else: # กรณีที่ Loop หมุนจนหมดเวลา (Timeout)
+                else: 
                     print("\nSearch timed out. Stopping.")
                     chassis.drive_speed(x=0, y=0, z=0)
                 
                 # 4. รีเซ็ตค่า error และกลับไปทำงานในลูปหลัก
                 print("Resuming wall following.")
                 last_error = 0.0
-                time.sleep(1.0) # หยุดนิ่งเล็กน้อยก่อนเริ่มเดิน
-                continue # ข้ามไปเริ่มต้น Loop while ใหม่
+                time.sleep(1.0) 
+                continue 
 
-            # --- ส่วนของ PD Controller (เหมือนเดิม) ---
+            # --- ส่วนของ PD Controller (ถ้าไม่เจอสิ่งกีดขวาง) ---
+            
+            # [ใหม่!] รีเซ็ตตัวนับการเลี้ยวเมื่อหุ่นยนต์เดินตามกำแพงปกติ
+            if corner_count > 0:
+                print("\nBack to normal wall following. Resetting corner count.")
+                corner_count = 0
+
             error_distance = TARGET_DISTANCE_CM - dist_front
             error_angle = (dist_rear + SENSOR_OFFSET_CM) - dist_front
             total_error = (KP_DISTANCE * error_distance) + (KP_ANGLE * error_angle)
