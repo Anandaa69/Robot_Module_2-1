@@ -17,13 +17,13 @@ SENSOR_OFFSET_CM = 1.0
 
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
 TARGET_DISTANCE_CM = 5.0
-FORWARD_SPEED = 0.4
-STOP_DISTANCE_CM = 15.0
+FORWARD_SPEED = 0.18
+STOP_DISTANCE_CM = 32.0
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
 KP_DISTANCE = 2
-KP_ANGLE = 2
+KP_ANGLE = 2.5
 KD = 8.0
 MAX_ROTATE_SPEED = 30.0
 
@@ -53,14 +53,18 @@ def main():
     ep_robot = robot.Robot()
     ep_robot.initialize(conn_type="ap")
 
+    # --- [แก้ไขที่ถูกต้อง!] ตั้งค่าโหมดของ "หุ่นยนต์" ให้ Gimbal ติดตาม Chassis ---
+    ep_robot.set_robot_mode(mode=robomaster.robot.CHASSIS_LEAD)
+    print("Robot mode set to CHASSIS_LEAD.")
+
     # --- สร้าง Object สำหรับควบคุมส่วนต่างๆ ---
     sensor_adaptor = ep_robot.sensor_adaptor
     chassis = ep_robot.chassis
     sensor = ep_robot.sensor
-    ep_gimbal = ep_robot.gimbal  # <-- เพิ่ม Object สำหรับ Gimbal
+    ep_gimbal = ep_robot.gimbal
 
-    # --- ตั้งค่าเริ่มต้นให้ Gimbal ---
-    ep_gimbal.recenter().wait_for_completed()  # <-- สั่งให้ Gimbal หันหน้าตรง
+    # --- ตั้งค่าเริ่มต้นให้ Gimbal (เพื่อให้แน่ใจว่าเริ่มที่หน้าตรง) ---
+    ep_gimbal.recenter().wait_for_completed()
     print("Gimbal recentered.")
 
     sensor.sub_distance(freq=20, callback=sub_distance_handler)
@@ -96,7 +100,7 @@ def main():
             # --- 5. คำนวณค่า Derivative ---
             derivative = total_error - last_error
             
-            # --- 6. คำนวณความเร็วในการหมุน z_speed (แก้ไขแล้ว!) ---
+            # --- 6. คำนวณความเร็วในการหมุน z_speed ---
             z_speed = (total_error + (KD * derivative))
             
             last_error = total_error
@@ -104,9 +108,8 @@ def main():
             # --- 7. จำกัดความเร็วสูงสุด ---
             z_speed = max(-MAX_ROTATE_SPEED, min(MAX_ROTATE_SPEED, z_speed))
 
-            # --- 8. สั่งให้หุ่นยนต์และ Gimbal เคลื่อนที่ ---
+            # --- 8. สั่งให้หุ่นยนต์เคลื่อนที่ ---
             chassis.drive_speed(x=FORWARD_SPEED, y=0, z=z_speed)
-            ep_gimbal.drive_speed(pitch_speed=0, yaw_speed=0) # <-- สั่งให้ Gimbal อยู่กับที่ (หันหน้าตรง)
 
             # --- 9. พิมพ์สถานะ ---
             print(f"Dist F:{dist_front:5.1f} R:{dist_rear:5.1f} | Err D:{error_distance:5.1f} A:{error_angle:5.1f} | Z_Speed:{z_speed:5.1f}", end='\r')
@@ -121,6 +124,8 @@ def main():
         if ep_robot:
             chassis.drive_speed(x=0, y=0, z=0)
             sensor.unsub_distance()
+            # คืนค่าโหมดหุ่นยนต์เป็นค่าเริ่มต้น (FREE) เมื่อจบโปรแกรม
+            ep_robot.set_robot_mode(mode=robomaster.robot.FREE) 
             ep_robot.close()
             print("Connection closed.")
 
