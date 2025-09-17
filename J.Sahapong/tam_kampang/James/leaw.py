@@ -16,23 +16,27 @@ IR_REAR_LEFT_PORT = 1
 SENSOR_OFFSET_CM = 0.5
 
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
-TARGET_DISTANCE_CM = 14.0
-FORWARD_SPEED = 0.30
+TARGET_DISTANCE_CM = 16.0
+FORWARD_SPEED = 0.25 # [ปรับปรุง] ลดความเร็วลงเล็กน้อยเพื่อเพิ่มความเสถียร
 STOP_DISTANCE_CM = 35
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
-# --- PD Controller สำหรับการหมุน (แกน z) ---
-KP_DISTANCE = 6
-KP_ANGLE = 6
-KD = 6.0
-MAX_ROTATE_SPEED = 45.0
+# --- [ปรับปรุง] PD Controller สำหรับการหมุน (แกน z) ---
+KP_DISTANCE = 3.5   # ลดค่า Kp ลงเพื่อลดความรุนแรงในการหักเลี้ยว
+KP_ANGLE = 3.5      # ลดค่า Kp ลง
+KD = 8.0            # เพิ่มค่า Kd เพื่อเพิ่มความหน่วง ลดการแกว่ง
+MAX_ROTATE_SPEED = 30.0 # ลดความเร็วการหมุนสูงสุดลงเล็กน้อย
+
+# --- [ใหม่!] Deadband สำหรับความเร็วการหมุน ---
+# ถ้าความเร็วในการหมุนที่คำนวณได้ต่ำกว่าค่านี้ ให้ถือว่าเป็น 0 เพื่อป้องกันการสั่น/ส่าย
+Z_SPEED_DEADBAND = 1.0
 
 # --- ค่าคงที่สำหรับตรรกะการหาผนังที่มุม ---
-SEARCH_ROTATE_SPEED = 7.5  # ความเร็วในการหมุนตัวเพื่อหาผนัง (องศา/วินาที)
-SEARCH_TOLERANCE_CM = 5.0   # ค่าความคลาดเคลื่อนที่ยอมรับได้ในการหาระยะเป้าหมาย
+SEARCH_ROTATE_SPEED = 15.0  # [ปรับปรุง] เพิ่มความเร็วในการค้นหาเล็กน้อย
+SEARCH_TOLERANCE_CM = 5.0
 
-# --- [ใหม่!] ตัวแปรสำหรับนับการเลี้ยว ---
-MAX_CONSECUTIVE_CORNERS = 2 # จำนวนการเลี้ยวสูงสุดที่อนุญาต
+# --- ตัวแปรสำหรับนับการเลี้ยว ---
+MAX_CONSECUTIVE_CORNERS = 2
 corner_count = 0
 
 # --- ตัวแปร Global ---
@@ -77,7 +81,7 @@ def main():
     print("Subscribed to ToF sensor data.")
 
     print("\n=============================================")
-    print("=== Smart Cornering Wall Following ===")
+    print("=== Smart Cornering Wall Following (Smoother) ===")
     print(f"Target Distance: {TARGET_DISTANCE_CM} cm")
     print(f"Stop Distance: {STOP_DISTANCE_CM} cm")
     print(f"Program will terminate after {MAX_CONSECUTIVE_CORNERS} consecutive corners.")
@@ -90,26 +94,22 @@ def main():
             dist_rear = convert_adc_to_cm(sensor_adaptor.get_adc(id=IR_REAR_LEFT_ID, port=IR_REAR_LEFT_PORT))
             front_tof_mm = tof_distances.get('front', float('inf'))
 
-            # --- [แก้ไข!] ตรรกะการจัดการมุมอับ (Corner Handling Logic) ---
+            # --- ตรรกะการจัดการมุมอับ (Corner Handling Logic) ---
             if front_tof_mm <= STOP_DISTANCE_MM:
                 corner_count += 1
                 print(f"\nObstacle detected! Corner #{corner_count} maneuver started.")
 
-                # --- [ใหม่!] ตรวจสอบเงื่อนไขการจบโปรแกรม ---
                 if corner_count >= MAX_CONSECUTIVE_CORNERS:
                     print(f"\nReached {MAX_CONSECUTIVE_CORNERS} consecutive corners. Terminating program.")
-                    break # ออกจาก Loop while
+                    break
 
-                # 1. หยุดการเคลื่อนที่ปัจจุบัน
                 chassis.drive_speed(x=0, y=0, z=0)
                 time.sleep(0.5)
 
-                # 2. หมุนขวา 90 องศาเพื่อหลบกำแพง
                 print("Step 1: Turning right to clear obstacle...")
                 chassis.move(z=-90, z_speed=45).wait_for_completed()
                 time.sleep(0.5)
                 
-                # 3. ค้นหาผนังใหม่โดยการหมุนซ้ายช้าๆ
                 print("Step 2: Searching for the new wall by rotating left...")
                 search_timeout = time.time() + 10 
                 
@@ -128,7 +128,6 @@ def main():
                     print("\nSearch timed out. Stopping.")
                     chassis.drive_speed(x=0, y=0, z=0)
                 
-                # 4. รีเซ็ตค่า error และกลับไปทำงานในลูปหลัก
                 print("Resuming wall following.")
                 last_error = 0.0
                 time.sleep(1.0) 
@@ -136,22 +135,30 @@ def main():
 
             # --- ส่วนของ PD Controller (ถ้าไม่เจอสิ่งกีดขวาง) ---
             
-            # [ใหม่!] รีเซ็ตตัวนับการเลี้ยวเมื่อหุ่นยนต์เดินตามกำแพงปกติ
             if corner_count > 0:
                 print("\nBack to normal wall following. Resetting corner count.")
                 corner_count = 0
 
             error_distance = TARGET_DISTANCE_CM - dist_front
             error_angle = (dist_rear + SENSOR_OFFSET_CM) - dist_front
+            
             total_error = (KP_DISTANCE * error_distance) + (KP_ANGLE * error_angle)
             derivative = total_error - last_error
             z_speed = (total_error + (KD * derivative))
             last_error = total_error
+
+            # --- [ปรับปรุง] ใช้ Deadband ---
+            if abs(z_speed) < Z_SPEED_DEADBAND:
+                z_speed = 0
+
             z_speed = max(-MAX_ROTATE_SPEED, min(MAX_ROTATE_SPEED, z_speed))
+            
             chassis.drive_speed(x=FORWARD_SPEED, y=0, z=z_speed)
 
             print(f"Dist F:{dist_front:5.1f} R:{dist_rear:5.1f} | Err D:{error_distance:5.1f} A:{error_angle:5.1f} | Z_Speed:{z_speed:5.1f}", end='\r')
-            time.sleep(0.05)
+            
+            # --- [ปรับปรุง] ลดความถี่ของ Loop ---
+            time.sleep(0.1) # จาก 0.05 เป็น 0.1 (ทำงาน 10 ครั้งต่อวินาที)
 
     except KeyboardInterrupt:
         print("\n\nProgram stopped by user.")
