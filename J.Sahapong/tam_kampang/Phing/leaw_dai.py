@@ -23,7 +23,7 @@ CHECK_RIGHT_WALL_DISTANCE_MM = CHECK_RIGHT_WALL_DISTANCE_CM * 10
 
 # --- [ใหม่!] ค่าคงที่สำหรับแก้ปัญหา ---
 ACQUISITION_NUDGE_CM = 20.0 # <<<<<<<<<<<< ระยะที่จะให้หุ่นเดินหน้าทื่อๆ หลังเลี้ยว (ปรับค่านี้ได้)
-ACQUISITION_NUDGE_SPEED = 0.1 # <<<<<<<<<<<< ความเร็วในการเดินหน้าเพื่อเข้าเลนใหม่
+ACQUISITION_NUDGE_SPEED = 0.5 # <<<<<<<<<<<< ความเร็วในการเดินหน้าเพื่อเข้าเลนใหม่
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
 KP_DISTANCE = 2
@@ -114,7 +114,7 @@ def main():
                     # <<<<<<<<<<<<<<<<<<<<<<<< [ส่วนแก้ไขที่สำคัญ!] >>>>>>>>>>>>>>>>>>>>>>>>
                     print(f"[STEP 5] Nudging forward {ACQUISITION_NUDGE_CM} cm to acquire new wall...")
                     # เดินหน้าทื่อๆ เป็นระยะทางสั้นๆ เพื่อให้พ้นมุม
-                    chassis.move(x=(ACQUISITION_NUDGE_CM / 100.0), x_speed=ACQUISITION_NUDGE_SPEED).wait_for_completed()
+                    chassis.move(x=(ACQUISITION_NUDGE_CM / 100.0), xy_speed=ACQUISITION_NUDGE_SPEED).wait_for_completed()
                     # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
                     
                     print("Resuming wall following in new direction.")
