@@ -18,13 +18,13 @@ SENSOR_OFFSET_CM = 0.5
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
 TARGET_DISTANCE_CM = 16.0
 FORWARD_SPEED = 0.25
-STOP_DISTANCE_CM = 35
+STOP_DISTANCE_CM = 24.5
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
-KP_DISTANCE = 3.5
-KP_ANGLE = 5.75
-KD = 8.0
+KP_DISTANCE = 4.5
+KP_ANGLE = 8.75
+KD = 6.0
 MAX_ROTATE_SPEED = 40.0
 
 # --- Deadband สำหรับความเร็วการหมุน ---
@@ -32,7 +32,7 @@ Z_SPEED_DEADBAND = 1.0
 
 # --- ค่าคงที่สำหรับตรรกะการหาผนังที่มุม ---
 SEARCH_ROTATE_SPEED = 7.5
-SEARCH_TOLERANCE_CM = 3.0
+SEARCH_TOLERANCE_CM = 5.0
 
 # --- ตัวแปรสำหรับนับการเลี้ยว ---
 MAX_CONSECUTIVE_CORNERS = 2
