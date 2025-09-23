@@ -153,7 +153,7 @@ def main():
     LEFT_SENSOR_PORT = 2
     LEFT_TARGET_CM = 22.5
     RIGHT_SENSOR_PORT = 1
-    RIGHT_TARGET_CM = 26.0
+    RIGHT_TARGET_CM = 25.0
 
     controller = PositionController(ep_robot)
 
