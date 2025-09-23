@@ -18,7 +18,7 @@ SENSOR_OFFSET_CM = 0.5
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
 TARGET_DISTANCE_CM = 16.0
 FORWARD_SPEED = 0.25
-STOP_DISTANCE_CM = 24.5
+STOP_DISTANCE_CM = 29
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
@@ -144,7 +144,7 @@ def main():
                     break
 
                 chassis.drive_speed(x=0, y=0, z=0)
-                time.sleep(0.5)
+                time.sleep(1)
 
                 print("Step 1: Turning right to clear obstacle...")
                 chassis.move(z=-90, z_speed=45).wait_for_completed()
