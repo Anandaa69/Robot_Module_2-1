@@ -281,8 +281,8 @@ def perform_centering_nudge(movement_controller, scanner, initial_wall_status):
     has_left_wall = initial_wall_status['left']
     has_right_wall = initial_wall_status['right']
     
-    nudge_dist = 0.2
-    nudge_dur = 0.5
+    nudge_dist = 0.15
+    nudge_dur = 0.4
 
     if has_left_wall and not has_right_wall:
         print("   [Single Wall] Left wall detected. Nudging RIGHT to check.")
