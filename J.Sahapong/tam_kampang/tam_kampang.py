@@ -16,9 +16,9 @@ IR_REAR_LEFT_PORT = 1
 SENSOR_OFFSET_CM = 0.5
 
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
-TARGET_DISTANCE_CM = 16.0
-FORWARD_SPEED = 0.25
-STOP_DISTANCE_CM = 23.5
+TARGET_DISTANCE_CM = 16.0 # ระยะห่างจากผนัง
+FORWARD_SPEED = 0.25 
+STOP_DISTANCE_CM = 23.5 
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
