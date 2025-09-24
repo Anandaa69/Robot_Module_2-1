@@ -7,18 +7,15 @@ import json
 import os
 
 # =============================================================================
-# ===== CONFIGURATION =========================================================
+# ===== CONFIGURATION & GLOBAL STATE ==========================================
 # =============================================================================
-# ### ATTENTION: คุณต้องใช้ IR Sensor 2 ตัวที่ ID ไม่ซ้ำกัน ###
-# แก้ไข ID ให้ตรงกับเซ็นเซอร์ที่ต่อไว้จริง
 LEFT_IR_SENSOR_ID = 3
-RIGHT_IR_SENSOR_ID = 1 # <--- ตัวอย่าง: สมมติว่าตัวขวาคือ ID 4
+RIGHT_IR_SENSOR_ID = 1
 
 CURRENT_POSITION = (3, 3)
 CURRENT_DIRECTION = 0
 CURRENT_TARGET_YAW = 0.0
 
-# --- Helper function for JSON serialization ---
 def convert_to_json_serializable(obj):
     if isinstance(obj, np.bool_): return bool(obj)
     if isinstance(obj, np.integer): return int(obj)
@@ -29,7 +26,7 @@ def convert_to_json_serializable(obj):
     return obj
 
 # =============================================================================
-# ===== CORE ROBOT CONTROL CLASSES (No changes) ===============================
+# ===== CORE ROBOT CONTROL CLASSES ============================================
 # =============================================================================
 class AttitudeHandler:
     def __init__(self):
@@ -52,10 +49,18 @@ class AttitudeHandler:
         print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {target_yaw}°. Rotating: {robot_rotation:.1f}°")
         if abs(robot_rotation) > self.yaw_tolerance:
             chassis.move(x=0, y=0, z=robot_rotation, z_speed=60).wait_for_completed(timeout=3)
-        time.sleep(0.3)
+            time.sleep(0.2)
         final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
         if final_error <= self.yaw_tolerance:
             print(f"✅ Yaw Correction Success: {self.current_yaw:.1f}°"); return True
+        print(f"⚠️ First attempt incomplete. Current: {self.current_yaw:.1f}°. Fine-tuning...")
+        remaining_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
+        if abs(remaining_rotation) > 0.5 and abs(remaining_rotation) < 20:
+            chassis.move(x=0, y=0, z=remaining_rotation, z_speed=40).wait_for_completed(timeout=2)
+            time.sleep(0.2)
+        final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
+        if final_error <= self.yaw_tolerance:
+            print(f"✅ Yaw Fine-tuning Success: {self.current_yaw:.1f}°"); return True
         else:
             print(f"🔥🔥 Yaw Correction FAILED. Final Yaw: {self.current_yaw:.1f}°"); return False
 
@@ -65,8 +70,7 @@ class PID:
         self.prev_error, self.integral, self.integral_max = 0, 0, 1.0
     def compute(self, current, dt):
         error = self.setpoint - current
-        self.integral += error * dt
-        self.integral = max(min(self.integral, self.integral_max), -self.integral_max)
+        self.integral += error * dt; self.integral = max(min(self.integral, self.integral_max), -self.integral_max)
         derivative = (error - self.prev_error) / dt if dt > 0 else 0
         output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
         self.prev_error = error; return output
@@ -75,101 +79,97 @@ class MovementController:
     def __init__(self, chassis):
         self.chassis = chassis
         self.current_x_pos, self.current_y_pos = 0.0, 0.0
-        self.KP, self.KI, self.KD = 1.9, 0.25, 10
-        self.MOVE_TIMEOUT = 5.0
+        self.KP, self.KI, self.KD = 1.8, 0.25, 12
+        self.MOVE_TIMEOUT = 2
+        self.RAMP_UP_TIME = 1
         self.chassis.sub_position(freq=20, callback=self.position_handler)
+    
     def position_handler(self, position_info):
         self.current_x_pos, self.current_y_pos = position_info[0], position_info[1]
-    def move_one_grid_cell(self):
-        target_distance = 0.60
+    
+    def move_forward_one_grid(self, axis, attitude_handler):
+        print("--- Pre-move Yaw Correction ---")
+        attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
+        target_distance = 0.55
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
-        self.chassis.move(x=0, y=0, z=0, xy_speed=0).wait_for_completed()
-        start_position = self.current_x_pos
-        print(f"🚀 Moving FORWARD {target_distance}m")
+        start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
+        print(f"🚀 Moving FORWARD 0.55m, monitoring GLOBAL AXIS '{axis}'")
         while time.time() - start_time < self.MOVE_TIMEOUT:
             now = time.time(); dt = now - last_time; last_time = now
-            relative_position = abs(self.current_x_pos - start_position)
+            current_position = self.current_x_pos if axis == 'x' else self.current_y_pos
+            relative_position = abs(current_position - start_position)
             if abs(relative_position - target_distance) < 0.03:
                 print("✅ Move complete!"); break
             output = pid.compute(relative_position, dt)
-            speed = max(-1.0, min(1.0, output))
+            ramp_multiplier = min(1.0, 0.1 + ((now - start_time) / self.RAMP_UP_TIME) * 0.9)
+            speed = max(-1.0, min(1.0, output * ramp_multiplier))
             self.chassis.drive_speed(x=speed, y=0, z=0, timeout=1)
         self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1); time.sleep(0.5)
+
     def rotate_90_degrees_right(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION
-        print("🔄 Rotating 90° RIGHT..."); CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
-        attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW); CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4
+        print("🔄 Rotating 90° RIGHT...")
+        CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
+        attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
+        CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4
+    
     def rotate_90_degrees_left(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION
-        print("🔄 Rotating 90° LEFT..."); CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
-        attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW); CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4
+        print("🔄 Rotating 90° LEFT...")
+        CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
+        attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
+        CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4
+    
     def cleanup(self):
         try: self.chassis.unsub_position()
         except Exception: pass
 
 # =============================================================================
-# ===== SENSOR HANDLER (STABLE VERSION FOR S1) ================================
+# ===== SENSOR HANDLER & OGM ==================================================
 # =============================================================================
 class EnvironmentScanner:
-    def __init__(self, sensor_adaptor, tof_sensor):
-        self.sensor_adaptor = sensor_adaptor
-        self.tof_sensor = tof_sensor
-        self.tof_wall_threshold_cm = 50.0
-        self.last_tof_distance_mm = 0
-        # <<< MODIFIED: เริ่ม subscribe ToF แค่ครั้งเดียว
+    # <<< MODIFIED: รับ gimbal เข้ามาเพื่อควบคุม
+    def __init__(self, sensor_adaptor, tof_sensor, gimbal):
+        self.sensor_adaptor, self.tof_sensor, self.gimbal = sensor_adaptor, tof_sensor, gimbal
+        self.tof_wall_threshold_cm = 50.0; self.last_tof_distance_mm = 0
         self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
         print(" SENSOR: ToF distance stream started.")
 
-    def _tof_data_handler(self, sub_info):
-        self.last_tof_distance_mm = sub_info[0]
+    def _tof_data_handler(self, sub_info): self.last_tof_distance_mm = sub_info[0]
 
     def get_wall_status(self):
-        results, raw_values = {}, {}
+        # <<< MODIFIED: สั่งให้ Gimbal กลับมาตรงกลางทุกครั้งก่อนสแกน
+        self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
 
-        # 1. Read Front (using latest ToF value from continuous stream)
-        # <<< MODIFIED: ไม่ต้อง sub/unsub แล้ว
+        results, raw_values = {}, {}
+        time.sleep(0.1)
         tof_distance_cm = self.last_tof_distance_mm / 10.0
         results['front'] = tof_distance_cm < self.tof_wall_threshold_cm and self.last_tof_distance_mm > 0
         raw_values['front_cm'] = f"{tof_distance_cm:.1f}"
         print(f"[SCAN] Front (ToF): {tof_distance_cm:.1f}cm -> {'WALL' if results['front'] else 'FREE'}")
-
-        # 2. Read Left and Right IR Sensors
-        # <<< MODIFIED: แก้ไขการรับค่าจาก get_io และลบ 'port' ออก
         left_val = self.sensor_adaptor.get_io(id=LEFT_IR_SENSOR_ID)
         right_val = self.sensor_adaptor.get_io(id=RIGHT_IR_SENSOR_ID)
-
-        results['left'] = (left_val == 0)
-        results['right'] = (right_val == 0)
-        raw_values['left_ir'] = left_val
-        raw_values['right_ir'] = right_val
+        results['left'] = (left_val == 0); results['right'] = (right_val == 0)
+        raw_values['left_ir'] = left_val; raw_values['right_ir'] = right_val
         print(f"[SCAN] Left (IR ID {LEFT_IR_SENSOR_ID}): val={left_val} -> {'WALL' if results['left'] else 'FREE'}")
         print(f"[SCAN] Right (IR ID {RIGHT_IR_SENSOR_ID}): val={right_val} -> {'WALL' if results['right'] else 'FREE'}")
-
         return results, raw_values
-    
+
     def cleanup(self):
-        # <<< MODIFIED: unsub ToF ตอนจบ
-        try:
-            self.tof_sensor.unsub_distance()
-            print(" SENSOR: ToF distance stream stopped.")
+        try: self.tof_sensor.unsub_distance(); print(" SENSOR: ToF distance stream stopped.")
         except Exception: pass
 
-# =============================================================================
-# ===== OGM & EXPLORATION LOGIC (No changes needed) ===========================
-# =============================================================================
 class OccupancyGridMap:
     def __init__(self, width, height):
         self.width, self.height = width, height; self.grid = np.zeros((height, width))
         self.l_occ = np.log(0.8 / 0.2); self.l_free = np.log(0.2 / 0.8)
     def update_cell(self, y, x, is_occupied):
-        if 0 <= y < self.height and 0 <= x < self.width:
-            self.grid[y, x] += self.l_occ if is_occupied else self.l_free
+        if 0 <= y < self.height and 0 <= x < self.width: self.grid[y, x] += self.l_occ if is_occupied else self.l_free
     def get_probability_grid(self): return 1 - (1 / (1 + np.exp(self.grid)))
     def display_map(self, robot_pos, robot_dir):
         print("\n" + "="*7 + " REAL-TIME MAP " + "="*7)
-        prob_grid = self.get_probability_grid()
-        dir_symbols = {0: '^', 1: '>', 2: 'v', 3: '<'}
+        prob_grid = self.get_probability_grid(); dir_symbols = {0: '^', 1: '>', 2: 'v', 3: '<'}
         for r in range(self.height):
             row_str = "|"
             for c in range(self.width):
@@ -182,8 +182,12 @@ class OccupancyGridMap:
             print(row_str)
         print("="*27)
 
+# =============================================================================
+# ===== EXPLORATION LOGIC =====================================================
+# =============================================================================
 def explore_with_ogm(scanner, movement_controller, attitude_handler, og_map, max_steps=40):
     global CURRENT_POSITION, CURRENT_DIRECTION
+    
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH OGM ===")
     with open("experiment_log.txt", "w") as log_file:
         log_file.write("Step\tRobot Pos(y,x)\tIR Left\tToF Front (cm)\tIR Right\n")
@@ -194,7 +198,9 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, og_map, max
             
             dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
             front_dir, right_dir, left_dir = CURRENT_DIRECTION, (CURRENT_DIRECTION + 1) % 4, (CURRENT_DIRECTION - 1 + 4) % 4
-            front_cell, right_cell, left_cell = (CURRENT_POSITION[0] + dir_vectors[front_dir][0], CURRENT_POSITION[1] + dir_vectors[front_dir][1]), (CURRENT_POSITION[0] + dir_vectors[right_dir][0], CURRENT_POSITION[1] + dir_vectors[right_dir][1]), (CURRENT_POSITION[0] + dir_vectors[left_dir][0], CURRENT_POSITION[1] + dir_vectors[left_dir][1])
+            front_cell = (CURRENT_POSITION[0] + dir_vectors[front_dir][0], CURRENT_POSITION[1] + dir_vectors[front_dir][1])
+            right_cell = (CURRENT_POSITION[0] + dir_vectors[right_dir][0], CURRENT_POSITION[1] + dir_vectors[right_dir][1])
+            left_cell = (CURRENT_POSITION[0] + dir_vectors[left_dir][0], CURRENT_POSITION[1] + dir_vectors[left_dir][1])
             og_map.update_cell(front_cell[0], front_cell[1], wall_status['front']); og_map.update_cell(right_cell[0], right_cell[1], wall_status['right']); og_map.update_cell(left_cell[0], left_cell[1], wall_status['left'])
             og_map.display_map(CURRENT_POSITION, CURRENT_DIRECTION)
             
@@ -203,7 +209,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, og_map, max
             elif not wall_status['left']: print("Decision: Turning LEFT."); movement_controller.rotate_90_degrees_left(attitude_handler)
             else: print("Decision: DEAD END. Turning around."); movement_controller.rotate_90_degrees_right(attitude_handler); movement_controller.rotate_90_degrees_right(attitude_handler)
             
-            movement_controller.move_one_grid_cell()
+            axis_to_monitor = 'x' if CURRENT_DIRECTION == 0 or CURRENT_DIRECTION == 2 else 'y'
+            movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
             
             new_pos_y, new_pos_x = CURRENT_POSITION[0] + dir_vectors[CURRENT_DIRECTION][0], CURRENT_POSITION[1] + dir_vectors[CURRENT_DIRECTION][1]
             if not (0 <= new_pos_y < og_map.height and 0 <= new_pos_x < og_map.width):
@@ -223,14 +230,13 @@ if __name__ == '__main__':
     try:
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         
-        ep_chassis = ep_robot.chassis
-        ep_gimbal = ep_robot.gimbal
-        ep_tof_sensor = ep_robot.sensor
-        ep_sensor_adaptor = ep_robot.sensor_adaptor
+        ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
+        ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
         
         print(" GIMBAL: Centering gimbal..."); ep_gimbal.recenter().wait_for_completed(); print(" GIMBAL: Centered.")
         
-        scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor)
+        # <<< MODIFIED: ส่ง gimbal เข้าไปใน scanner
+        scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor, ep_gimbal)
         movement_controller = MovementController(ep_chassis)
         attitude_handler.start_monitoring(ep_chassis)
         
