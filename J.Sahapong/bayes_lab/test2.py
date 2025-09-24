@@ -10,12 +10,10 @@ import os
 # ===== CONFIGURATION & GLOBAL STATE ==========================================
 # =============================================================================
 # แก้ไข ID ให้ตรงกับเซ็นเซอร์ IR ที่ต่อไว้จริง
-# จาก Log ล่าสุดของคุณ: ซ้ายคือ ID 3, ขวาคือ ID 1
 LEFT_IR_SENSOR_ID = 3
 RIGHT_IR_SENSOR_ID = 1
 
 # --- Logical state for the grid map ---
-# จาก Log ล่าสุดของคุณ: เริ่มต้นที่ (3, 3)
 CURRENT_POSITION = (3, 3) # (แถว, คอลัมน์)
 CURRENT_DIRECTION = 0     # 0:North, 1:East, 2:South, 3:West
 
@@ -38,23 +36,18 @@ def convert_to_json_serializable(obj):
 class AttitudeHandler:
     def __init__(self):
         self.current_yaw, self.yaw_tolerance, self.is_monitoring = 0.0, 3.0, False
-
     def attitude_handler(self, attitude_info):
         if self.is_monitoring: self.current_yaw = attitude_info[0]
-
     def start_monitoring(self, chassis):
         self.is_monitoring = True; chassis.sub_attitude(freq=20, callback=self.attitude_handler)
-
     def stop_monitoring(self, chassis):
         self.is_monitoring = False
         try: chassis.unsub_attitude()
         except Exception: pass
-
     def normalize_angle(self, angle):
         while angle > 180: angle -= 360
         while angle <= -180: angle += 360
         return angle
-
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
         normalized_target = self.normalize_angle(target_yaw); time.sleep(0.2)
         robot_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
@@ -63,16 +56,13 @@ class AttitudeHandler:
             chassis.move(x=0, y=0, z=robot_rotation, z_speed=60).wait_for_completed(timeout=3)
         time.sleep(0.3)
         final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
-        if final_error <= self.yaw_tolerance:
-            print(f"✅ Yaw Correction Success: {self.current_yaw:.1f}°"); return True
-        else:
-            print(f"🔥🔥 Yaw Correction FAILED. Final Yaw: {self.current_yaw:.1f}°"); return False
+        if final_error <= self.yaw_tolerance: print(f"✅ Yaw Correction Success: {self.current_yaw:.1f}°"); return True
+        else: print(f"🔥🔥 Yaw Correction FAILED. Final Yaw: {self.current_yaw:.1f}°"); return False
 
 class PID:
     def __init__(self, Kp, Ki, Kd, setpoint=0):
         self.Kp, self.Ki, self.Kd, self.setpoint = Kp, Ki, Kd, setpoint
         self.prev_error, self.integral, self.integral_max = 0, 0, 1.0
-
     def compute(self, current, dt):
         error = self.setpoint - current
         self.integral += error * dt; self.integral = max(min(self.integral, self.integral_max), -self.integral_max)
@@ -92,14 +82,15 @@ class MovementController:
     def position_handler(self, position_info):
         self.current_x_pos, self.current_y_pos = position_info[0], position_info[1]
     
-    def move_along_axis(self, axis, direction):
-        target_distance = 0.55
+    # <<< MODIFIED: ฟังก์ชันนี้ถูกแก้ไขให้ง่ายและถูกต้อง
+    def move_forward_one_grid(self, axis):
+        """Moves the robot physically FORWARD, while monitoring the correct global axis."""
+        target_distance = 0.57 # คุณตั้งค่านี้ไว้ในโค้ดล่าสุด
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         
-        move_dir_str = "POSITIVE" if direction == 1 else "NEGATIVE"
-        print(f"🚀 Moving 0.6m along GLOBAL AXIS '{axis}' in {move_dir_str} direction")
+        print(f"🚀 Moving FORWARD 0.55m, monitoring GLOBAL AXIS '{axis}'")
 
         while time.time() - start_time < self.MOVE_TIMEOUT:
             now = time.time(); dt = now - last_time; last_time = now
@@ -113,9 +104,8 @@ class MovementController:
             ramp_multiplier = min(1.0, 0.1 + ((now - start_time) / self.RAMP_UP_TIME) * 0.9)
             speed = max(-1.0, min(1.0, output * ramp_multiplier))
             
-            # การสั่ง drive_speed(x=...) คือการสั่งให้ "เดินไปข้างหน้า" ตามทิศที่หุ่นหัน
-            # เราจึงต้องคูณ speed ด้วย direction เพื่อบอกว่าข้างหน้าที่ว่านี้คือบวกหรือลบ
-            self.chassis.drive_speed(x=speed * direction, y=0, z=0, timeout=1)
+            # คำสั่งทางกายภาพคือ "เดินหน้า" เสมอ (x เป็นบวก)
+            self.chassis.drive_speed(x=speed, y=0, z=0, timeout=1)
 
         self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.1)
         time.sleep(0.5)
@@ -147,26 +137,21 @@ class EnvironmentScanner:
         self.tof_wall_threshold_cm = 50.0; self.last_tof_distance_mm = 0
         self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
         print(" SENSOR: ToF distance stream started.")
-
     def _tof_data_handler(self, sub_info): self.last_tof_distance_mm = sub_info[0]
-
     def get_wall_status(self):
         results, raw_values = {}, {}
-        time.sleep(0.1) # ให้เวลารับค่า ToF ล่าสุด
+        time.sleep(0.1)
         tof_distance_cm = self.last_tof_distance_mm / 10.0
         results['front'] = tof_distance_cm < self.tof_wall_threshold_cm and self.last_tof_distance_mm > 0
         raw_values['front_cm'] = f"{tof_distance_cm:.1f}"
         print(f"[SCAN] Front (ToF): {tof_distance_cm:.1f}cm -> {'WALL' if results['front'] else 'FREE'}")
-        
         left_val = self.sensor_adaptor.get_io(id=LEFT_IR_SENSOR_ID)
         right_val = self.sensor_adaptor.get_io(id=RIGHT_IR_SENSOR_ID)
-        
         results['left'] = (left_val == 0); results['right'] = (right_val == 0)
         raw_values['left_ir'] = left_val; raw_values['right_ir'] = right_val
         print(f"[SCAN] Left (IR ID {LEFT_IR_SENSOR_ID}): val={left_val} -> {'WALL' if results['left'] else 'FREE'}")
         print(f"[SCAN] Right (IR ID {RIGHT_IR_SENSOR_ID}): val={right_val} -> {'WALL' if results['right'] else 'FREE'}")
         return results, raw_values
-
     def cleanup(self):
         try: self.tof_sensor.unsub_distance(); print(" SENSOR: ToF distance stream stopped.")
         except Exception: pass
@@ -175,12 +160,9 @@ class OccupancyGridMap:
     def __init__(self, width, height):
         self.width, self.height = width, height; self.grid = np.zeros((height, width))
         self.l_occ = np.log(0.8 / 0.2); self.l_free = np.log(0.2 / 0.8)
-
     def update_cell(self, y, x, is_occupied):
         if 0 <= y < self.height and 0 <= x < self.width: self.grid[y, x] += self.l_occ if is_occupied else self.l_free
-
     def get_probability_grid(self): return 1 - (1 / (1 + np.exp(self.grid)))
-
     def display_map(self, robot_pos, robot_dir):
         print("\n" + "="*7 + " REAL-TIME MAP " + "="*7)
         prob_grid = self.get_probability_grid(); dir_symbols = {0: '^', 1: '>', 2: 'v', 3: '<'}
@@ -202,15 +184,6 @@ class OccupancyGridMap:
 def explore_with_ogm(scanner, movement_controller, attitude_handler, og_map, max_steps=40):
     global CURRENT_POSITION, CURRENT_DIRECTION
     
-    # หัวใจของการแก้ไข: แปลงทิศทางในแผนที่ (Logic) ไปสู่การเคลื่อนไหวจริง (Physical)
-    # (Logical Direction) -> (Physical Axis, Physical Direction Multiplier)
-    DIRECTION_TO_MOTION_MAPPING = {
-        0: ('x', 1),   # North -> เคลื่อนที่ไปข้างหน้า (+1) บนแกน X
-        1: ('y', 1),   # East  -> เคลื่อนที่ไปข้างหน้า (+1) บนแกน Y
-        2: ('x', -1),  # South -> เคลื่อนที่ไปข้างหน้า (-1) บนแกน X (ถอยหลังบนแกน X)
-        3: ('y', -1)   # West  -> เคลื่อนที่ไปข้างหน้า (-1) บนแกน Y (ถอยหลังบนแกน Y)
-    }
-
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH OGM ===")
     with open("experiment_log.txt", "w") as log_file:
         log_file.write("Step\tRobot Pos(y,x)\tIR Left\tToF Front (cm)\tIR Right\n")
@@ -232,8 +205,11 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, og_map, max
             elif not wall_status['left']: print("Decision: Turning LEFT."); movement_controller.rotate_90_degrees_left(attitude_handler)
             else: print("Decision: DEAD END. Turning around."); movement_controller.rotate_90_degrees_right(attitude_handler); movement_controller.rotate_90_degrees_right(attitude_handler)
             
-            axis_of_motion, direction_of_motion = DIRECTION_TO_MOTION_MAPPING[CURRENT_DIRECTION]
-            movement_controller.move_along_axis(axis=axis_of_motion, direction=direction_of_motion)
+            # <<< MODIFIED: กำหนดแกนที่จะใช้วัดระยะทางให้ถูกต้อง
+            # North (0) และ South (2) -> เคลื่อนที่บนแกน X
+            # East (1) และ West (3) -> เคลื่อนที่บนแกน Y
+            axis_to_monitor = 'x' if CURRENT_DIRECTION == 0 or CURRENT_DIRECTION == 2 else 'y'
+            movement_controller.move_forward_one_grid(axis=axis_to_monitor)
             
             new_pos_y, new_pos_x = CURRENT_POSITION[0] + dir_vectors[CURRENT_DIRECTION][0], CURRENT_POSITION[1] + dir_vectors[CURRENT_DIRECTION][1]
             if not (0 <= new_pos_y < og_map.height and 0 <= new_pos_x < og_map.width):
