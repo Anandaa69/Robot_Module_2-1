@@ -1,154 +1,261 @@
-[
-  [
-    {
-      "visited": false,
-      "walls": {
-        "north": false,
-        "south": true,
-        "east": false,
-        "west": false
+{
+  "map": [
+    [
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": true
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 0,
+          "west": 2
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 4,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": false,
+          "east": true,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 0,
+          "east": 2,
+          "west": 0
+        }
       }
-    },
-    {
-      "visited": false,
-      "walls": {
-        "north": false,
-        "south": true,
-        "east": false,
-        "west": false
+    ],
+    [
+      {
+        "visited": false,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": false,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": true,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 2,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": false,
+          "east": false,
+          "west": true
+        },
+        "wall_confidence": {
+          "north": 4,
+          "south": 0,
+          "east": 0,
+          "west": 2
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": false,
+          "south": false,
+          "east": true,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 0,
+          "south": 0,
+          "east": 2,
+          "west": 0
+        }
       }
-    },
-    {
-      "visited": false,
-      "walls": {
-        "north": false,
-        "south": true,
-        "east": false,
-        "west": false
+    ],
+    [
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": true,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 2,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": false,
+          "south": true,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 0,
+          "south": 2,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": false,
+          "south": false,
+          "east": true,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 0,
+          "south": 0,
+          "east": 2,
+          "west": 0
+        }
       }
-    },
-    {
-      "visited": false,
-      "walls": {
-        "north": false,
-        "south": true,
-        "east": false,
-        "west": false
+    ],
+    [
+      {
+        "visited": false,
+        "walls": {
+          "north": true,
+          "south": false,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 0,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": false,
+        "walls": {
+          "north": true,
+          "south": false,
+          "east": false,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 0,
+          "east": 0,
+          "west": 0
+        }
+      },
+      {
+        "visited": false,
+        "walls": {
+          "north": true,
+          "south": false,
+          "east": true,
+          "west": false
+        },
+        "wall_confidence": {
+          "north": 2,
+          "south": 0,
+          "east": 2,
+          "west": 0
+        }
+      },
+      {
+        "visited": true,
+        "walls": {
+          "north": false,
+          "south": false,
+          "east": true,
+          "west": true
+        },
+        "wall_confidence": {
+          "north": 0,
+          "south": 0,
+          "east": 2,
+          "west": 2
+        }
       }
-    }
+    ]
   ],
-  [
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": true,
-        "east": false,
-        "west": true
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": true,
-        "east": false,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": true,
-        "east": false,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": false,
-        "east": false,
-        "west": false
-      }
-    }
+  "final_position": [
+    2,
+    0
   ],
-  [
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": false,
-        "east": false,
-        "west": true
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": false,
-        "east": false,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": true,
-        "east": false,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": false,
-        "south": false,
-        "east": true,
-        "west": false
-      }
-    }
+  "target_destination": [
+    3,
+    0
   ],
-  [
-    {
-      "visited": true,
-      "walls": {
-        "north": false,
-        "south": false,
-        "east": false,
-        "west": true
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": false,
-        "south": true,
-        "east": false,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": true,
-        "south": true,
-        "east": true,
-        "west": false
-      }
-    },
-    {
-      "visited": true,
-      "walls": {
-        "north": false,
-        "south": false,
-        "east": true,
-        "west": true
-      }
-    }
-  ]
-]
+  "mission_completed": false
+}
