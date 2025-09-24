@@ -14,9 +14,15 @@ from collections import deque
 # =============================================================================
 LEFT_IR_SENSOR_ID = 3
 RIGHT_IR_SENSOR_ID = 1
-CURRENT_POSITION = (3, 3)
-CURRENT_DIRECTION = 0
+
+# --- Logical state for the grid map ---
+CURRENT_POSITION = (3, 3) # (แถว, คอลัมน์)
+CURRENT_DIRECTION = 0     # 0:North, 1:East, 2:South, 3:West
+FINAL_DESTINATION_COORDS = (0, 0) # (แถว, คอลัมน์) - พิกัดสุดท้ายที่ต้องการให้หุ่นยนต์ไปหยุด
+
+# --- Physical state for the robot (from slide_kak.py) ---
 CURRENT_TARGET_YAW = 0.0
+ROBOT_FACE = 1 # ใช้อ้างอิงแกนการเคลื่อนที่ (1,3,5.. = X axis), (2,4,6.. = Y axis)
 
 def convert_to_json_serializable(obj):
     if isinstance(obj, np.bool_): return bool(obj)
@@ -28,7 +34,7 @@ def convert_to_json_serializable(obj):
     return obj
 
 # =============================================================================
-# ===== STRUCTURAL MAP & VISUALIZATION CLASSES ================================
+# ===== STRUCTURAL MAP & ADVANCED VISUALIZATION ===============================
 # =============================================================================
 class MapCell:
     def __init__(self):
@@ -46,7 +52,7 @@ class MazeMap:
             if direction == 'north' and r > 0: self.grid[r-1][c].walls['south'] = has_wall
             if direction == 'south' and r < self.height - 1: self.grid[r+1][c].walls['north'] = has_wall
             if direction == 'west' and c > 0: self.grid[r][c-1].walls['east'] = has_wall
-            if direction == 'east' and c < self.width - 1: self.grid[r][c+1].walls['west'] = has_wall
+            if direction == 'east' and c < self.width - 1: self.grid[r][c+1]['west'] = has_wall
     def has_wall(self, r, c, direction):
         if 0 <= r < self.height and 0 <= c < self.width:
             return self.grid[r][c].walls[direction]
@@ -147,7 +153,7 @@ class MovementController:
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
-        print(f"🚀 Moving FORWARD 0.55m, monitoring GLOBAL AXIS '{axis}'")
+        print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
         while time.time() - start_time < self.MOVE_TIMEOUT:
             now = time.time(); dt = now - last_time; last_time = now
             current_position = self.current_x_pos if axis == 'x' else self.current_y_pos
@@ -171,17 +177,20 @@ class MovementController:
         elif diff == 3: self.rotate_90_degrees_left(attitude_handler)
         elif diff == 2: self.rotate_90_degrees_right(attitude_handler); self.rotate_90_degrees_right(attitude_handler)
     def rotate_90_degrees_right(self, attitude_handler):
-        global CURRENT_TARGET_YAW, CURRENT_DIRECTION
+        global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° RIGHT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
         attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
         CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4
+        ROBOT_FACE += 1
     def rotate_90_degrees_left(self, attitude_handler):
-        global CURRENT_TARGET_YAW, CURRENT_DIRECTION
+        global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° LEFT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
         attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
         CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4
+        ROBOT_FACE -= 1
+        if ROBOT_FACE < 1: ROBOT_FACE += 4
     def cleanup(self):
         try: self.chassis.unsub_position()
         except Exception: pass
@@ -190,14 +199,18 @@ class MovementController:
 # ===== SENSOR HANDLER ========================================================
 # =============================================================================
 class EnvironmentScanner:
-    def __init__(self, sensor_adaptor, tof_sensor, gimbal):
-        self.sensor_adaptor, self.tof_sensor, self.gimbal = sensor_adaptor, tof_sensor, gimbal
+    def __init__(self, sensor_adaptor, tof_sensor, gimbal, chassis):
+        self.sensor_adaptor, self.tof_sensor, self.gimbal, self.chassis = sensor_adaptor, tof_sensor, gimbal, chassis
         self.tof_wall_threshold_cm = 50.0; self.last_tof_distance_mm = 0
         self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
         print(" SENSOR: ToF distance stream started.")
     def _tof_data_handler(self, sub_info): self.last_tof_distance_mm = sub_info[0]
     def get_wall_status(self):
+        # Lock wheels before gimbal movement for stability
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+        time.sleep(0.2)
         self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
+        
         results, raw_values = {}, {}
         time.sleep(0.1)
         tof_distance_cm = self.last_tof_distance_mm / 10.0
@@ -252,77 +265,77 @@ def execute_backtrack_path(path, movement_controller, attitude_handler, visualiz
         dr, dc = path[i+1][0] - path[i][0], path[i+1][1] - path[i][1]
         target_direction = dir_vectors[(dr, dc)]
         movement_controller.rotate_to_direction(target_direction, attitude_handler)
-        axis_to_monitor = 'x' if CURRENT_DIRECTION == 0 or CURRENT_DIRECTION == 2 else 'y'
+        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
         movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
         CURRENT_POSITION = path[i+1]
     visualizer.update_plot(maze_map, CURRENT_POSITION)
 
-# =============================================================================
-# ===== INCREMENTAL CENTERING LOGIC (UPGRADED) ================================
-# =============================================================================
 def perform_centering_nudge(movement_controller, scanner, initial_wall_status):
-    print("--- Performing Incremental Centering Nudge ---")
-    has_left_wall = initial_wall_status['left']
-    has_right_wall = initial_wall_status['right']
+    print("--- Performing Advanced Centering Nudge ---")
+    has_left_wall_initial = initial_wall_status['left']
+    has_right_wall_initial = initial_wall_status['right']
+    
+    nudge_dist = 0.1
+    nudge_dur = 0.25
 
-    NUDGE_STEP_DIST = 0.025  # 5 cm
-    NUDGE_STEP_DUR = 0.25   # 250 ms
-    MAX_NUDGE_STEPS = 2     # Total 10 cm max
-    RETURN_RATIO = 0.8      # 80%
-
-    # กรณีที่ 1: เจอผนังด้านเดียว
-    if has_left_wall and not has_right_wall:
-        print("   [Single Wall] Left wall detected. Incrementally nudging RIGHT.")
-        for i in range(MAX_NUDGE_STEPS):
-            movement_controller.nudge_robot(y_speed=NUDGE_STEP_DIST/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR)
-            new_wall_status, _ = scanner.get_wall_status()
-            if new_wall_status['right']:
-                print(f"   -> Opposite wall found after {i+1} step(s). Centering.")
-                movement_controller.nudge_robot(y_speed=-((i+1)*NUDGE_STEP_DIST/2)/(NUDGE_STEP_DUR/2), duration=NUDGE_STEP_DUR/2)
-                return
-        print("   -> No opposite wall found. Returning to offset position.")
-        movement_controller.nudge_robot(y_speed=-(MAX_NUDGE_STEPS*NUDGE_STEP_DIST*RETURN_RATIO)/(NUDGE_STEP_DUR*RETURN_RATIO), duration=NUDGE_STEP_DUR*RETURN_RATIO)
+    # กรณีที่ 1 & 2: เจอผนังด้านเดียว (Logic เดิมดีอยู่แล้ว)
+    if has_left_wall_initial and not has_right_wall_initial:
+        print("   [Single Wall] Left wall detected initially. Nudging RIGHT to check for opposite wall.")
+        movement_controller.nudge_robot(y_speed=nudge_dist/nudge_dur, duration=nudge_dur)
+        status_after_nudge, _ = scanner.get_wall_status()
+        if status_after_nudge['right']:
+            print("   -> Found opposite (right) wall. Now centering between the two walls.")
+            movement_controller.nudge_robot(y_speed=-(nudge_dist/2)/nudge_dur, duration=nudge_dur/2)
+        else:
+            print("   -> No opposite wall found. Returning to a safe offset from the initial left wall.")
+            movement_controller.nudge_robot(y_speed=-(nudge_dist*0.9)/nudge_dur, duration=nudge_dur*0.9)
         return
         
-    if not has_left_wall and has_right_wall:
-        print("   [Single Wall] Right wall detected. Incrementally nudging LEFT.")
-        for i in range(MAX_NUDGE_STEPS):
-            movement_controller.nudge_robot(y_speed=-(NUDGE_STEP_DIST/NUDGE_STEP_DUR), duration=NUDGE_STEP_DUR)
-            new_wall_status, _ = scanner.get_wall_status()
-            if new_wall_status['left']:
-                print(f"   -> Opposite wall found after {i+1} step(s). Centering.")
-                movement_controller.nudge_robot(y_speed=((i+1)*NUDGE_STEP_DIST/2)/(NUDGE_STEP_DUR/2), duration=NUDGE_STEP_DUR/2)
-                return
-        print("   -> No opposite wall found. Returning to offset position.")
-        movement_controller.nudge_robot(y_speed=(MAX_NUDGE_STEPS*NUDGE_STEP_DIST*RETURN_RATIO)/(NUDGE_STEP_DUR*RETURN_RATIO), duration=NUDGE_STEP_DUR*RETURN_RATIO)
+    if not has_left_wall_initial and has_right_wall_initial:
+        print("   [Single Wall] Right wall detected initially. Nudging LEFT to check for opposite wall.")
+        movement_controller.nudge_robot(y_speed=-(nudge_dist/nudge_dur), duration=nudge_dur)
+        status_after_nudge, _ = scanner.get_wall_status()
+        if status_after_nudge['left']:
+            print("   -> Found opposite (left) wall. Now centering between the two walls.")
+            movement_controller.nudge_robot(y_speed=(nudge_dist/2)/nudge_dur, duration=nudge_dur/2)
+        else:
+            print("   -> No opposite wall found. Returning to a safe offset from the initial right wall.")
+            movement_controller.nudge_robot(y_speed=-(nudge_dist*0.9)/nudge_dur, duration=nudge_dur*0.9)
         return
 
-    # กรณีที่ 2: ไม่เจอผนังทั้งสองข้าง (พื้นที่เปิด)
-    if not has_left_wall and not has_right_wall:
+    # =============================================================================
+    # ===== LOGIC ที่เรียบง่ายที่สุด: เจอแล้วหยุดเลย =============================
+    # =============================================================================
+    if not has_left_wall_initial and not has_right_wall_initial:
         print("   [Open Space] Probing for nearby walls.")
-        # Probe Right
-        found_right = False
-        for _ in range(MAX_NUDGE_STEPS):
-            movement_controller.nudge_robot(y_speed=NUDGE_STEP_DIST/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR)
-            probe_status, _ = scanner.get_wall_status()
-            if probe_status['right']: found_right = True; break
-        # Probe Left
-        total_dist_to_left = (MAX_NUDGE_STEPS * NUDGE_STEP_DIST) * 2
-        movement_controller.nudge_robot(y_speed=-(total_dist_to_left/ (NUDGE_STEP_DUR * 2)), duration=NUDGE_STEP_DUR * 2)
-        found_left = False
-        for _ in range(MAX_NUDGE_STEPS):
-             probe_status, _ = scanner.get_wall_status()
-             if probe_status['left']: found_left = True; break
-             movement_controller.nudge_robot(y_speed=-(NUDGE_STEP_DIST/NUDGE_STEP_DUR), duration=NUDGE_STEP_DUR)
+        
+        # 1. เลื่อนไปทางขวาเพื่อสแกน
+        print("   -> Probing RIGHT...")
+        movement_controller.nudge_robot(y_speed=nudge_dist/nudge_dur, duration=nudge_dur)
+        right_probe, _ = scanner.get_wall_status()
+        
+        # 2. ถ้าเจอกำแพงขวา: หยุดอยู่ตรงนั้น แล้วจบการทำงานทันที
+        if right_probe['right']:
+            print("   -> Found a wall on the right. Stopping here.")
+            return # <-- ออกจากฟังก์ชันทันที โดยไม่ขยับอีก
 
-        # Reposition
-        if found_left and found_right: print("   -> Found walls on both sides. Centering."); movement_controller.nudge_robot(y_speed=(MAX_NUDGE_STEPS*NUDGE_STEP_DIST)/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR)
-        elif found_left and not found_right: print("   -> Found wall only on the left. Aligning."); movement_controller.nudge_robot(y_speed=(MAX_NUDGE_STEPS*NUDGE_STEP_DIST*RETURN_RATIO)/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR*RETURN_RATIO)
-        elif not found_left and found_right: print("   -> Found wall only on the right. Aligning."); movement_controller.nudge_robot(y_speed=-(MAX_NUDGE_STEPS*NUDGE_STEP_DIST*(1-RETURN_RATIO))/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR*(1-RETURN_RATIO))
-        else: print("   -> Still open space. Returning to center."); movement_controller.nudge_robot(y_speed=(MAX_NUDGE_STEPS*NUDGE_STEP_DIST)/NUDGE_STEP_DUR, duration=NUDGE_STEP_DUR)
+        # 3. ถ้าไม่เจอผนังขวา ค่อยไปสแกนฝั่งซ้าย
+        print("   -> Right is clear. Probing LEFT...")
+        movement_controller.nudge_robot(y_speed=-(nudge_dist*2)/nudge_dur, duration=nudge_dur*2)
+        left_probe, _ = scanner.get_wall_status()
+        
+        # 4. ถ้าเจอกำแพงซ้าย: หยุดอยู่ตรงนั้น แล้วจบการทำงานทันที
+        if left_probe['left']:
+            print("   -> Found a wall on the left. Stopping here.")
+            return # <-- ออกจากฟังก์ชันทันที โดยไม่ขยับอีก
+        
+        # 5. ถ้าไม่เจออะไรเลย ให้กลับมาที่ "จุดเริ่มต้น" ที่เดียว
+        print("   -> No walls found on either side. Returning to original starting point.")
+        movement_controller.nudge_robot(y_speed=nudge_dist/nudge_dur, duration=nudge_dur)
         return
         
-    print("   [Corridor] Walls on both sides. Skipping nudge.")
+    # กรณีที่ 4: เจอผนังทั้งสองด้านตั้งแต่แรก
+    print("   [Corridor] Walls detected on both sides initially. Skipping nudge.")
 
 # =============================================================================
 # ===== EXPLORATION LOGIC =====================================================
@@ -336,7 +349,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, v
         for step in range(max_steps):
             r, c = CURRENT_POSITION
             maze_map.set_visited(r, c)
-            print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]} ---")
+            print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]} (ROBOT_FACE: {ROBOT_FACE}) ---")
 
             initial_wall_status, _ = scanner.get_wall_status()
             perform_centering_nudge(movement_controller, scanner, initial_wall_status)
@@ -366,15 +379,26 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, v
             
             if not next_move_found:
                 print("No local unvisited path. Searching for nearest unvisited cell...")
-                path = find_nearest_unvisited(maze_map, CURRENT_POSITION)
-                if path:
-                    execute_backtrack_path(path, movement_controller, attitude_handler, visualizer, maze_map)
+                path_to_unvisited = find_nearest_unvisited(maze_map, CURRENT_POSITION)
+                if path_to_unvisited:
+                    execute_backtrack_path(path_to_unvisited, movement_controller, attitude_handler, visualizer, maze_map)
                     continue
                 else:
-                    print("🎉 EXPLORATION COMPLETE! No unvisited cells reachable.")
-                    break
+                    print("\n🎉 EXPLORATION COMPLETE! No unvisited cells reachable.")
+                    print(f"🗺️ Now calculating final path to destination: {FINAL_DESTINATION_COORDS}")
+                    final_path = find_path_bfs(maze_map, CURRENT_POSITION, FINAL_DESTINATION_COORDS)
+                    
+                    if final_path and len(final_path) > 1:
+                        print(f"✅ Final path found: {final_path}")
+                        execute_backtrack_path(final_path, movement_controller, attitude_handler, visualizer, maze_map)
+                        print(f"🏁 Arrived at final destination: {CURRENT_POSITION}. Stopping program.")
+                    elif final_path and len(final_path) <=1:
+                        print(f"🏁 Already at final destination: {CURRENT_POSITION}. Stopping program.")
+                    else:
+                        print(f"⚠️ Could not find a path to the final destination {FINAL_DESTINATION_COORDS}. Stopping at current location.")
+                    break # จบการทำงานของ for loop
             
-            axis_to_monitor = 'x' if CURRENT_DIRECTION == 0 or CURRENT_DIRECTION == 2 else 'y'
+            axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
             CURRENT_POSITION = (r + dir_vectors[CURRENT_DIRECTION][0], c + dir_vectors[CURRENT_DIRECTION][1])
     
@@ -399,9 +423,15 @@ if __name__ == '__main__':
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
         
-        print(" GIMBAL: Centering gimbal..."); ep_gimbal.recenter().wait_for_completed(); print(" GIMBAL: Centered.")
+        print(" ROBOT: Locking wheels for stable gimbal recentering...")
+        ep_chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.5)
+        print(" GIMBAL: Centering gimbal...")
+        ep_gimbal.recenter().wait_for_completed()
+        print(" ROBOT: Re-locking wheels post-recenter to ensure stability.")
+        ep_chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.5)
+        print(" GIMBAL: Centered. Robot is stable.")
         
-        scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor, ep_gimbal)
+        scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor, ep_gimbal, ep_chassis)
         movement_controller = MovementController(ep_chassis)
         attitude_handler.start_monitoring(ep_chassis)
         

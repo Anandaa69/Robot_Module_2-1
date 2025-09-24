@@ -1,0 +1,154 @@
+[
+  [
+    {
+      "visited": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    }
+  ],
+  [
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": true
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": false
+      }
+    }
+  ],
+  [
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": true
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": false,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": false
+      }
+    }
+  ],
+  [
+    {
+      "visited": true,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": true
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": true,
+        "west": false
+      }
+    },
+    {
+      "visited": true,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      }
+    }
+  ]
+]
