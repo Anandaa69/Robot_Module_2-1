@@ -14,7 +14,6 @@ from collections import deque
 # =============================================================================
 LEFT_IR_SENSOR_ID = 3
 RIGHT_IR_SENSOR_ID = 1
-
 CURRENT_POSITION = (3, 3)
 CURRENT_DIRECTION = 0
 CURRENT_TARGET_YAW = 0.0
@@ -29,7 +28,7 @@ def convert_to_json_serializable(obj):
     return obj
 
 # =============================================================================
-# ===== STRUCTURAL MAP & VISUALIZATION CLASSES ================================
+# ===== STRUCTURAL MAP & ADVANCED VISUALIZATION ===============================
 # =============================================================================
 class MapCell:
     def __init__(self):
@@ -62,36 +61,42 @@ class MazeMap:
 class RealTimeVisualizer:
     def __init__(self, grid_size):
         self.grid_size = grid_size
-        self.vis_size = self.grid_size * 2 + 1
-        self.heatmap_data = np.zeros((self.vis_size, self.vis_size))
-        self.UNKNOWN, self.FREE, self.VISITED, self.ROBOT, self.PATH, self.WALL = 0, 1, 2, 3, 4, 5
         plt.ion()
         self.fig, self.ax = plt.subplots(figsize=(6, 6))
-        self.cmap = ListedColormap(['#A0A0A0', '#FFFFFF', '#D0D0FF', '#0000FF', '#FFFF00', '#000000'])
-        self.image = self.ax.imshow(self.heatmap_data, cmap=self.cmap, vmin=0, vmax=5)
-        self.ax.set_xticks([]); self.ax.set_yticks([])
-        self.ax.set_title("Real-time Structural Map"); self.fig.tight_layout(); plt.show()
+        
+        self.colors = {
+            "visited": "#D0D0FF", # สีฟ้าอ่อน
+            "unvisited": "#A0A0A0", # สีเทา
+            "robot": "#0000FF", # สีน้ำเงิน
+            "path": "#FFFF00" # สีเหลือง
+        }
 
     def update_plot(self, maze_map, robot_pos, path=None):
-        self.heatmap_data.fill(self.FREE)
+        self.ax.clear()
+        self.ax.set_title("Real-time Structural Map")
+        self.ax.set_xticks([]); self.ax.set_yticks([])
+        self.ax.set_xlim(-0.5, self.grid_size - 0.5)
+        self.ax.set_ylim(self.grid_size - 0.5, -0.5) # Invert Y-axis
+
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                vis_r, vis_c = 2 * r + 1, 2 * c + 1
-                if maze_map.grid[r][c].visited:
-                    self.heatmap_data[vis_r, vis_c] = self.VISITED
-                else:
-                    self.heatmap_data[vis_r, vis_c] = self.UNKNOWN
-                if maze_map.has_wall(r, c, 'north'): self.heatmap_data[vis_r - 1, vis_c-1:vis_c+2] = self.WALL
-                if maze_map.has_wall(r, c, 'south'): self.heatmap_data[vis_r + 1, vis_c-1:vis_c+2] = self.WALL
-                if maze_map.has_wall(r, c, 'west'): self.heatmap_data[vis_r-1:vis_r+2, vis_c - 1] = self.WALL
-                if maze_map.has_wall(r, c, 'east'): self.heatmap_data[vis_r-1:vis_r+2, vis_c + 1] = self.WALL
+                color = self.colors['visited'] if maze_map.grid[r][c].visited else self.colors['unvisited']
+                self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=color, edgecolor='k', lw=0.5))
+
+                # วาดกำแพงเป็นเส้นหนา
+                if maze_map.has_wall(r, c, 'north'): self.ax.plot([c-0.5, c+0.5], [r-0.5, r-0.5], color='black', linewidth=4)
+                if maze_map.has_wall(r, c, 'south'): self.ax.plot([c-0.5, c+0.5], [r+0.5, r+0.5], color='black', linewidth=4)
+                if maze_map.has_wall(r, c, 'west'): self.ax.plot([c-0.5, c-0.5], [r-0.5, r+0.5], color='black', linewidth=4)
+                if maze_map.has_wall(r, c, 'east'): self.ax.plot([c+0.5, c+0.5], [r-0.5, r+0.5], color='black', linewidth=4)
+        
         if path:
             for r, c in path:
-                self.heatmap_data[2 * r + 1, 2 * c + 1] = self.PATH
+                 self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=self.colors['path'], edgecolor='k', lw=0.5, alpha=0.7))
+
         if robot_pos:
             r, c = robot_pos
-            self.heatmap_data[2 * r + 1, 2 * c + 1] = self.ROBOT
-        self.image.set_data(self.heatmap_data)
+            self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=self.colors['robot'], edgecolor='k', lw=0.5))
+
         self.fig.canvas.draw(); self.fig.canvas.flush_events(); plt.pause(0.01)
 
 # =============================================================================
@@ -156,7 +161,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         print("--- Pre-move Yaw Correction ---")
         attitude_handler.correct_yaw_to_target(self.chassis, CURRENT_TARGET_YAW)
-        target_distance = 0.55
+        target_distance = 0.6
         pid = PID(Kp=self.KP, Ki=self.KI, Kd=self.KD, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
@@ -176,8 +181,7 @@ class MovementController:
         print(f"🔩 Nudging robot: y_speed={y_speed}, duration={duration}s")
         self.chassis.drive_speed(x=0, y=y_speed, z=0, timeout=duration + 0.5)
         time.sleep(duration)
-        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5)
-        time.sleep(0.2)
+        self.chassis.drive_speed(x=0, y=0, z=0, timeout=0.5); time.sleep(0.2)
 
     def rotate_to_direction(self, target_direction, attitude_handler):
         global CURRENT_DIRECTION
@@ -244,32 +248,22 @@ def find_path_bfs(maze_map, start, end):
     while queue:
         path = queue.popleft()
         r, c = path[-1]
-        if (r, c) == end:
-            return path
+        if (r, c) == end: return path
         for direction, (dr, dc) in dir_map.items():
             if not maze_map.has_wall(r, c, direction):
                 nr, nc = r + dr, c + dc
                 if 0 <= nr < maze_map.height and 0 <= nc < maze_map.width and (nr, nc) not in visited:
-                    visited.add((nr, nc))
-                    new_path = list(path)
-                    new_path.append((nr, nc))
-                    queue.append(new_path)
+                    visited.add((nr, nc)); new_path = list(path); new_path.append((nr, nc)); queue.append(new_path)
     return None
 
 def find_nearest_unvisited(maze_map, current_pos):
-    unvisited_cells = []
-    for r in range(maze_map.height):
-        for c in range(maze_map.width):
-            if not maze_map.grid[r][c].visited:
-                unvisited_cells.append((r,c))
-    if not unvisited_cells:
-        return None
+    unvisited_cells = [ (r,c) for r in range(maze_map.height) for c in range(maze_map.width) if not maze_map.grid[r][c].visited ]
+    if not unvisited_cells: return None
     shortest_path = None
     for cell in unvisited_cells:
         path = find_path_bfs(maze_map, current_pos, cell)
-        if path:
-            if not shortest_path or len(path) < len(shortest_path):
-                shortest_path = path
+        if path and (not shortest_path or len(path) < len(shortest_path)):
+            shortest_path = path
     return shortest_path
 
 def execute_backtrack_path(path, movement_controller, attitude_handler, visualizer, maze_map):
@@ -286,19 +280,35 @@ def execute_backtrack_path(path, movement_controller, attitude_handler, visualiz
         CURRENT_POSITION = path[i+1]
     visualizer.update_plot(maze_map, CURRENT_POSITION)
 
-def perform_centering_nudge(movement_controller, scanner):
+def perform_centering_nudge(movement_controller, scanner, initial_wall_status):
     print("--- Performing Centering Nudge ---")
-    wall_status, _ = scanner.get_wall_status()
-    has_left_wall = wall_status['left']
-    has_right_wall = wall_status['right']
+    has_left_wall = initial_wall_status['left']
+    has_right_wall = initial_wall_status['right']
+    
+    # ทำงานก็ต่อเมื่อมีกำแพงแค่ด้านเดียว
     if has_left_wall and not has_right_wall:
-        print("   Left wall detected. Nudging RIGHT.")
-        movement_controller.nudge_robot(y_speed=0.1, duration=0.3)
+        print("   Left wall detected. Nudging RIGHT to check for opposite wall.")
+        movement_controller.nudge_robot(y_speed=0.2, duration=0.4) # ขยับขวา
+        new_wall_status, _ = scanner.get_wall_status()
+        if new_wall_status['right']:
+            print("   Opposite wall found. Nudging back to center.")
+            movement_controller.nudge_robot(y_speed=-0.1, duration=0.4) # กลับมาซ้ายครึ่งนึง
+        else:
+            print("   No opposite wall. Returning to original position.")
+            movement_controller.nudge_robot(y_speed=-0.2, duration=0.4) # กลับมาซ้ายเท่าเดิม
     elif not has_left_wall and has_right_wall:
-        print("   Right wall detected. Nudging LEFT.")
-        movement_controller.nudge_robot(y_speed=-0.1, duration=0.3)
+        print("   Right wall detected. Nudging LEFT to check for opposite wall.")
+        movement_controller.nudge_robot(y_speed=-0.2, duration=0.4) # ขยับซ้าย
+        new_wall_status, _ = scanner.get_wall_status()
+        if new_wall_status['left']:
+            print("   Opposite wall found. Nudging back to center.")
+            movement_controller.nudge_robot(y_speed=0.1, duration=0.4) # กลับมาขวาครึ่งนึง
+        else:
+            print("   No opposite wall. Returning to original position.")
+            movement_controller.nudge_robot(y_speed=0.2, duration=0.4) # กลับมาขวาเท่าเดิม
     else:
-        print("   No single wall detected for nudging. Skipping.")
+        print("   Corridor or open space. Skipping nudge.")
+        return # คืนค่าทันที ไม่ต้องทำอะไรต่อ
 
 # =============================================================================
 # ===== EXPLORATION LOGIC =====================================================
@@ -306,9 +316,6 @@ def perform_centering_nudge(movement_controller, scanner):
 def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, visualizer, max_steps=40):
     global CURRENT_POSITION, CURRENT_DIRECTION
     
-    node_visit_count = 0
-    CENTERING_INTERVAL = 2
-
     print("\n🚀 === STARTING AUTONOMOUS EXPLORATION WITH OGM ===")
     with open("experiment_log.txt", "w") as log_file:
         log_file.write("Step\tRobot Pos(y,x)\tIR Left\tToF Front (cm)\tIR Right\n")
@@ -316,19 +323,29 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, v
             r, c = CURRENT_POSITION
             maze_map.set_visited(r, c)
             print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]} ---")
-            wall_status, raw_values = scanner.get_wall_status()
+
+            # 1. Initial Scan
+            initial_wall_status, _ = scanner.get_wall_status()
+
+            # 2. Perform Centering Nudge (if applicable)
+            perform_centering_nudge(movement_controller, scanner, initial_wall_status)
+
+            # 3. Final, definitive scan from the centered position
+            print("--- Performing Final Scan for Mapping ---")
+            final_wall_status, raw_values = scanner.get_wall_status()
             log_file.write(f"{step+1}\t({r},{c})\t\t{raw_values['left_ir']}\t{raw_values['front_cm']}\t\t{raw_values['right_ir']}\n")
             
+            # 4. Update map with the most accurate data
             dir_map_rel_abs = {'front': CURRENT_DIRECTION, 'right': (CURRENT_DIRECTION + 1) % 4, 'left': (CURRENT_DIRECTION - 1 + 4) % 4}
             dir_map_idx_name = {0: 'north', 1: 'east', 2: 'south', 3: 'west'}
-            for rel_dir, has_wall in wall_status.items():
+            for rel_dir, has_wall in final_wall_status.items():
                 abs_dir_idx = dir_map_rel_abs[rel_dir]
                 abs_dir_name = dir_map_idx_name[abs_dir_idx]
                 maze_map.set_wall(r, c, abs_dir_name, has_wall)
 
             visualizer.update_plot(maze_map, CURRENT_POSITION)
             
-            # --- Decision Logic ---
+            # 5. Decision Logic using the accurate data
             next_move_found = False
             priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
             dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
@@ -345,7 +362,6 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, v
                 path = find_nearest_unvisited(maze_map, CURRENT_POSITION)
                 if path:
                     execute_backtrack_path(path, movement_controller, attitude_handler, visualizer, maze_map)
-                    node_visit_count = 0 # Reset count after a long travel
                     continue
                 else:
                     print("🎉 EXPLORATION COMPLETE! No unvisited cells reachable.")
@@ -354,11 +370,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, maze_map, v
             axis_to_monitor = 'x' if CURRENT_DIRECTION == 0 or CURRENT_DIRECTION == 2 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
             
-            node_visit_count += 1
             CURRENT_POSITION = (r + dir_vectors[CURRENT_DIRECTION][0], c + dir_vectors[CURRENT_DIRECTION][1])
-
-            if node_visit_count % CENTERING_INTERVAL == 0:
-                perform_centering_nudge(movement_controller, scanner)
     
     print("\n🎉 === EXPLORATION FINISHED ==="); visualizer.update_plot(maze_map, CURRENT_POSITION)
     with open("final_structural_map.json", "w") as f:
