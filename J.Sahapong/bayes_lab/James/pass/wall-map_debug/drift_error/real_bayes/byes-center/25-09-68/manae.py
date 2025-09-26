@@ -16,8 +16,8 @@ LEFT_IR_SENSOR_ID = 3
 RIGHT_IR_SENSOR_ID = 1
 
 # --- Logical state for the grid map ---
-CURRENT_POSITION = (3, 3) # (แถว, คอลัมน์)
-CURRENT_DIRECTION = 0     # 0:North, 1:East, 2:South, 3:West
+CURRENT_POSITION = (0, 0) # (แถว, คอลัมน์)
+CURRENT_DIRECTION = 1     # 0:North, 1:East, 2:South, 3:West
 TARGET_DESTINATION = (3, 0)
 
 # --- Physical state for the robot ---
@@ -207,7 +207,6 @@ class MovementController:
             drive_speed = np.sign(distance_m) * min(max_speed, speed)
             rotation_speed_z = self._calculate_yaw_correction(attitude_handler, CURRENT_TARGET_YAW)
             
-            # Since robot always moves "forward" in its own reference frame, the speed is always on the x-axis.
             self.chassis.drive_speed(x=drive_speed, y=0, z=rotation_speed_z)
             time.sleep(0.02)
         self.chassis.drive_speed(x=0, y=0, z=0)
@@ -360,7 +359,8 @@ def execute_path(path, movement_controller, attitude_handler, visualizer, occupa
 def perform_centering_nudge(movement_controller, scanner, initial_readings, attitude_handler):
     print("--- Performing Advanced Centering Nudge ---")
     has_left_wall, has_right_wall = initial_readings['left'], initial_readings['right']
-    nudge_dist, nudge_dur = 0.1, 0.25
+    
+    nudge_dist, nudge_dur = 0.08, 0.3
     y_speed = nudge_dist / nudge_dur
     
     # กรณีที่ 1: เจอผนังด้านซ้ายด้านเดียว
@@ -369,12 +369,9 @@ def perform_centering_nudge(movement_controller, scanner, initial_readings, atti
         movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         readings_after = scanner.get_sensor_readings(quiet=True)
         if readings_after['right']:
-            # >> LOGIC ใหม่ <<
-            # เจอผนังอีกด้านแล้ว (เซ็นเซอร์ติดทั้งสองข้าง) ไม่ต้องปรับตำแหน่งอีก
-            print("   -> Found opposite wall. Centering complete, both sensors are now active. No further adjustment needed.")
+            print("   -> Found opposite wall. Centering complete, both sensors are now active.")
             return
         else:
-            # ไม่เจอผนังอีกด้าน ให้กลับไปที่เดิม
             print("   -> No opposite wall found. Returning to original position.")
             movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
@@ -385,39 +382,36 @@ def perform_centering_nudge(movement_controller, scanner, initial_readings, atti
         movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         readings_after = scanner.get_sensor_readings(quiet=True)
         if readings_after['left']:
-            # >> LOGIC ใหม่ <<
-            # เจอผนังอีกด้านแล้ว (เซ็นเซอร์ติดทั้งสองข้าง) ไม่ต้องปรับตำแหน่งอีก
-            print("   -> Found opposite wall. Centering complete, both sensors are now active. No further adjustment needed.")
+            print("   -> Found opposite wall. Centering complete, both sensors are now active.")
             return
         else:
-            # ไม่เจอผนังอีกด้าน ให้กลับไปที่เดิม
             print("   -> No opposite wall found. Returning to original position.")
             movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
         
-    # กรณีที่ 3: ไม่เจอผนังทั้งสองด้าน (ที่โล่ง) - คง Logic เดิมไว้
+    # กรณีที่ 3: ไม่เจอผนังทั้งสองด้าน (ที่โล่ง)
     if not has_left_wall and not has_right_wall:
         print("   [Open Space] Probing for nearby walls.")
         
-        # แหย่ไปทางขวาเพื่อหาผนัง
+        # 1. แหย่ไปทางขวาเพื่อหาผนัง
         print("   -> Probing RIGHT...")
-        movement_controller.slide_with_yaw_lock(y_speed=y_speed*0.95, duration=nudge_dur*0.95, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         right_probe = scanner.get_sensor_readings(quiet=True)
         if right_probe['right']:
             print("   -> Found a wall on the right. Stopping here.")
             return
 
-        # ถ้าไม่เจอ ให้กลับมาตรงกลางแล้วแหย่ไปทางซ้าย
+        # 2. ถ้าไม่เจอ ให้สไลด์กลับมาที่จุดเริ่มต้น แล้วเลยไปทางซ้ายต่อ (ใช้เวลา 2 เท่า แต่ความเร็วเท่าเดิม)
         print("   -> Right is clear. Probing LEFT...")
-        movement_controller.slide_with_yaw_lock(y_speed=-(y_speed*2), duration=nudge_dur*2, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=(nudge_dur * 2), attitude_handler=attitude_handler)
         left_probe = scanner.get_sensor_readings(quiet=True)
         if left_probe['left']:
             print("   -> Found a wall on the left. Stopping here.")
             return
 
-        # ถ้าไม่เจอทั้งสองฝั่ง ให้กลับมาที่จุดเริ่มต้น
+        # 3. ถ้าไม่เจอทั้งสองฝั่ง ให้กลับมาที่จุดเริ่มต้นเป๊ะๆ
         print("   -> No walls found on either side. Returning to original starting point.")
-        movement_controller.slide_with_yaw_lock(y_speed=y_speed*0.95, duration=nudge_dur*0.95, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
 
     # กรณีที่ 4: เจอผนังทั้งสองด้าน (ทางเดิน)
@@ -425,8 +419,8 @@ def perform_centering_nudge(movement_controller, scanner, initial_readings, atti
 
 def perform_safety_distance_correction(scanner, movement_controller, attitude_handler):
     print("--- Performing Safety Distance Check ---")
-    MIN_DISTANCE_THRESHOLD_CM = 20.0
-    FIXED_RETREAT_DISTANCE_M = 0.05  # 15 cm
+    MIN_DISTANCE_THRESHOLD_CM = 2.0
+    FIXED_RETREAT_DISTANCE_M = 0.05
 
     current_distance_cm = scanner.get_front_tof_cm()
     print(f"   Current front distance: {current_distance_cm:.1f} cm")
@@ -434,7 +428,6 @@ def perform_safety_distance_correction(scanner, movement_controller, attitude_ha
     if 0 < current_distance_cm < MIN_DISTANCE_THRESHOLD_CM:
         print(f"   Distance is too close! Moving BACKWARD by a fixed {FIXED_RETREAT_DISTANCE_M * 100:.1f} cm.")
         
-        # We always move backward along the robot's current X-axis (its frame of reference)
         movement_controller.move_precise_distance(-FIXED_RETREAT_DISTANCE_M, 'x', attitude_handler)
         
         final_dist_cm = scanner.get_front_tof_cm()
