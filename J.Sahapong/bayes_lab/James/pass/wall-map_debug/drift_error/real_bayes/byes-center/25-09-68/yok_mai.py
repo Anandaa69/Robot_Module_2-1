@@ -16,8 +16,8 @@ LEFT_IR_SENSOR_ID = 3
 RIGHT_IR_SENSOR_ID = 1
 
 # --- Logical state for the grid map ---
-CURRENT_POSITION = (3, 3) # (แถว, คอลัมน์)
-CURRENT_DIRECTION = 0     # 0:North, 1:East, 2:South, 3:West
+CURRENT_POSITION = (0, 0) # (แถว, คอลัมน์)
+CURRENT_DIRECTION = 1     # 0:North, 1:East, 2:South, 3:West
 TARGET_DESTINATION = (3, 0)
 
 # --- Physical state for the robot ---
@@ -44,61 +44,133 @@ FREE_THRESHOLD = 0.3
 # =============================================================================
 # ===== OCCUPANCY GRID MAP & VISUALIZATION ====================================
 # =============================================================================
-class OGMCell:
+
+class WallBelief:
+    """Class สำหรับจัดการความเชื่อของ 'กำแพง'"""
     def __init__(self):
         self.log_odds = 0.0
+
+    def update(self, is_occupied_reading, sensor_type):
+        if is_occupied_reading:
+            self.log_odds += LOG_ODDS_OCC[sensor_type]
+        else:
+            self.log_odds += LOG_ODDS_FREE[sensor_type]
+        self.log_odds = max(min(self.log_odds, 10), -10)
+
     def get_probability(self):
         return 1.0 - 1.0 / (1.0 + math.exp(self.log_odds))
+
+    def is_occupied(self):
+        return self.get_probability() > OCCUPANCY_THRESHOLD
+
+class OGMCell:
+    """Class สำหรับ Cell ที่เก็บความเชื่อของ 'พื้นที่' และ 'กำแพง'"""
+    def __init__(self):
+        self.log_odds_occupied = 0.0 
+        self.walls = {'N': None, 'E': None, 'S': None, 'W': None}
+
+    def get_node_probability(self):
+        return 1.0 - 1.0 / (1.0 + math.exp(self.log_odds_occupied))
+    
+    def is_node_occupied(self):
+        return self.get_node_probability() > OCCUPANCY_THRESHOLD
 
 class OccupancyGridMap:
     def __init__(self, width, height):
         self.width = width
         self.height = height
         self.grid = [[OGMCell() for _ in range(width)] for _ in range(height)]
-    
-    def update_cell(self, r, c, is_occupied_reading, sensor_type='ir'):
+        self._link_walls()
+
+    def _link_walls(self):
+        for r in range(self.height):
+            for c in range(self.width):
+                if self.grid[r][c].walls['N'] is None:
+                    wall = WallBelief()
+                    self.grid[r][c].walls['N'] = wall
+                    if r > 0:
+                        self.grid[r-1][c].walls['S'] = wall
+                
+                if self.grid[r][c].walls['W'] is None:
+                    wall = WallBelief()
+                    self.grid[r][c].walls['W'] = wall
+                    if c > 0:
+                        self.grid[r][c-1].walls['E'] = wall
+
+                if self.grid[r][c].walls['S'] is None:
+                    self.grid[r][c].walls['S'] = WallBelief()
+                if self.grid[r][c].walls['E'] is None:
+                    self.grid[r][c].walls['E'] = WallBelief()
+
+    def update_wall(self, r, c, direction_char, is_occupied_reading, sensor_type):
+        if 0 <= r < self.height and 0 <= c < self.width:
+            wall = self.grid[r][c].walls.get(direction_char)
+            if wall:
+                wall.update(is_occupied_reading, sensor_type)
+
+    def update_node(self, r, c, is_occupied_reading, sensor_type='tof'):
         if 0 <= r < self.height and 0 <= c < self.width:
             if is_occupied_reading:
-                self.grid[r][c].log_odds += LOG_ODDS_OCC[sensor_type]
+                self.grid[r][c].log_odds_occupied += LOG_ODDS_OCC[sensor_type]
             else:
-                self.grid[r][c].log_odds += LOG_ODDS_FREE[sensor_type]
-            self.grid[r][c].log_odds = max(min(self.grid[r][c].log_odds, 10), -10)
+                self.grid[r][c].log_odds_occupied += LOG_ODDS_FREE[sensor_type]
 
-    def get_probability(self, r, c):
-        if 0 <= r < self.height and 0 <= c < self.width:
-            return self.grid[r][c].get_probability()
-        return 1.0
+    def is_path_clear(self, r1, c1, r2, c2):
+        dr, dc = r2 - r1, c2 - c1
+        if abs(dr) + abs(dc) != 1: return False
 
-    def is_occupied(self, r, c):
-        return self.get_probability(r, c) > OCCUPANCY_THRESHOLD
+        if dr == -1: wall_char = 'N'
+        elif dr == 1: wall_char = 'S'
+        elif dc == 1: wall_char = 'E'
+        elif dc == -1: wall_char = 'W'
+        else: return False
 
-    def is_free(self, r, c):
-        return self.get_probability(r, c) < FREE_THRESHOLD
+        wall = self.grid[r1][c1].walls.get(wall_char)
+        if wall and wall.is_occupied():
+            return False
+        
+        if self.grid[r2][c2].is_node_occupied():
+             return False
+        
+        return True
 
 class RealTimeVisualizer:
     def __init__(self, grid_size, target_dest=None):
         self.grid_size = grid_size
         self.target_dest = target_dest
         plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=(7, 7))
-        self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00"}
+        self.fig, self.ax = plt.subplots(figsize=(8, 7))
+        self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000"}
     
     def update_plot(self, occupancy_map, robot_pos, path=None):
         self.ax.clear()
-        self.ax.set_title("Real-time Occupancy Grid Map")
+        self.ax.set_title("Real-time Hybrid Belief Map (Nodes & Walls)")
         self.ax.set_xticks([]); self.ax.set_yticks([])
         self.ax.set_xlim(-0.5, self.grid_size - 0.5)
         self.ax.set_ylim(self.grid_size - 0.5, -0.5)
 
         for r in range(self.grid_size):
             for c in range(self.grid_size):
-                prob = occupancy_map.get_probability(r, c)
+                prob = occupancy_map.grid[r][c].get_node_probability()
                 if prob > OCCUPANCY_THRESHOLD: color = '#8B0000'
                 elif prob < FREE_THRESHOLD: color = '#D3D3D3'
                 else: color = '#90EE90'
                 
                 self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=color, edgecolor='k', lw=0.5))
                 self.ax.text(c, r, f"{prob:.2f}", ha="center", va="center", color="black", fontsize=8)
+
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                cell = occupancy_map.grid[r][c]
+                if cell.walls['N'].is_occupied():
+                    self.ax.plot([c - 0.5, c + 0.5], [r - 0.5, r - 0.5], color=self.colors['wall'], linewidth=4)
+                if cell.walls['W'].is_occupied():
+                    self.ax.plot([c - 0.5, c - 0.5], [r - 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
+                # วาดขอบล่างและขวาของแผนที่
+                if r == self.grid_size - 1 and cell.walls['S'].is_occupied():
+                    self.ax.plot([c - 0.5, c + 0.5], [r + 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
+                if c == self.grid_size - 1 and cell.walls['E'].is_occupied():
+                     self.ax.plot([c + 0.5, c + 0.5], [r - 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
 
         if self.target_dest:
              r_t, c_t = self.target_dest
@@ -112,13 +184,13 @@ class RealTimeVisualizer:
             r_r, c_r = robot_pos
             self.ax.add_patch(plt.Rectangle((c_r - 0.5, r_r - 0.5), 1, 1, facecolor=self.colors['robot'], edgecolor='k', lw=2))
 
-        legend_elements = [ plt.Rectangle((0,0),1,1, facecolor='#8B0000', label=f'Occupied (P>{OCCUPANCY_THRESHOLD})'), plt.Rectangle((0,0),1,1, facecolor='#90EE90', label=f'Unknown'), plt.Rectangle((0,0),1,1, facecolor='#D3D3D3', label=f'Free (P<{FREE_THRESHOLD})'), plt.Rectangle((0,0),1,1, facecolor=self.colors['robot'], label='Robot'), plt.Rectangle((0,0),1,1, facecolor=self.colors['target'], label='Target') ]
-        self.ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.45, 1.0))
-        self.fig.tight_layout(rect=[0, 0, 0.8, 1])
+        legend_elements = [ plt.Rectangle((0,0),1,1, facecolor='#8B0000', label=f'Node Occupied (P>{OCCUPANCY_THRESHOLD})'), plt.Rectangle((0,0),1,1, facecolor='#90EE90', label=f'Node Unknown'), plt.Rectangle((0,0),1,1, facecolor='#D3D3D3', label=f'Node Free (P<{FREE_THRESHOLD})'), plt.Line2D([0], [0], color=self.colors['wall'], lw=4, label='Wall Occupied'), plt.Rectangle((0,0),1,1, facecolor=self.colors['robot'], label='Robot'), plt.Rectangle((0,0),1,1, facecolor=self.colors['target'], label='Target') ]
+        self.ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.55, 1.0))
+        self.fig.tight_layout(rect=[0, 0, 0.75, 1])
         self.fig.canvas.draw(); self.fig.canvas.flush_events(); plt.pause(0.01)
 
 # =============================================================================
-# ===== CORE ROBOT CONTROL CLASSES ============================================
+# ===== CORE ROBOT CONTROL CLASSES (ไม่มีการเปลี่ยนแปลง) =========================
 # =============================================================================
 class AttitudeHandler:
     def __init__(self):
@@ -138,7 +210,7 @@ class AttitudeHandler:
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
         normalized_target = self.normalize_angle(target_yaw); time.sleep(0.2)
         robot_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
-        print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {target_yaw}°. Rotating: {robot_rotation:.1f}°")
+        print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {target_yaw:.1f}°. Rotating: {robot_rotation:.1f}°")
         if abs(robot_rotation) > self.yaw_tolerance:
             chassis.move(x=0, y=0, z=robot_rotation, z_speed=60).wait_for_completed(timeout=3)
             time.sleep(0.2)
@@ -207,7 +279,6 @@ class MovementController:
             drive_speed = np.sign(distance_m) * min(max_speed, speed)
             rotation_speed_z = self._calculate_yaw_correction(attitude_handler, CURRENT_TARGET_YAW)
             
-            # Since robot always moves "forward" in its own reference frame, the speed is always on the x-axis.
             self.chassis.drive_speed(x=drive_speed, y=0, z=rotation_speed_z)
             time.sleep(0.02)
         self.chassis.drive_speed(x=0, y=0, z=0)
@@ -306,11 +377,12 @@ def find_path_bfs(occupancy_map, start, end):
         if (r, c) == end: return path
         for dr, dc in moves:
             nr, nc = r + dr, c + dc
-            if not occupancy_map.is_occupied(nr, nc) and (nr, nc) not in visited:
-                visited.add((nr, nc))
-                new_path = list(path)
-                new_path.append((nr, nc))
-                queue.append(new_path)
+            if 0 <= nr < occupancy_map.height and 0 <= nc < occupancy_map.width:
+                if occupancy_map.is_path_clear(r, c, nr, nc) and (nr, nc) not in visited:
+                    visited.add((nr, nc))
+                    new_path = list(path)
+                    new_path.append((nr, nc))
+                    queue.append(new_path)
     return None
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
@@ -318,7 +390,7 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
     unvisited_cells_coords = []
     for r in range(h):
         for c in range(w):
-            if (r, c) not in visited_cells and not occupancy_map.is_occupied(r, c):
+            if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
                 unvisited_cells_coords.append((r, c))
 
     if not unvisited_cells_coords:
@@ -360,83 +432,66 @@ def execute_path(path, movement_controller, attitude_handler, visualizer, occupa
 def perform_centering_nudge(movement_controller, scanner, initial_readings, attitude_handler):
     print("--- Performing Advanced Centering Nudge ---")
     has_left_wall, has_right_wall = initial_readings['left'], initial_readings['right']
-    nudge_dist, nudge_dur = 0.1, 0.25
+    
+    nudge_dist, nudge_dur = 0.08, 0.3
     y_speed = nudge_dist / nudge_dur
     
-    # กรณีที่ 1: เจอผนังด้านซ้ายด้านเดียว
     if has_left_wall and not has_right_wall:
         print("   [Single Wall] Left wall detected. Nudging RIGHT to find the opposite wall.")
         movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         readings_after = scanner.get_sensor_readings(quiet=True)
         if readings_after['right']:
-            # >> LOGIC ใหม่ <<
-            # เจอผนังอีกด้านแล้ว (เซ็นเซอร์ติดทั้งสองข้าง) ไม่ต้องปรับตำแหน่งอีก
-            print("   -> Found opposite wall. Centering complete, both sensors are now active. No further adjustment needed.")
-            return
+            print("   -> Found opposite wall. Centering complete, both sensors are now active.")
         else:
-            # ไม่เจอผนังอีกด้าน ให้กลับไปที่เดิม
             print("   -> No opposite wall found. Returning to original position.")
             movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
 
-    # กรณีที่ 2: เจอผนังด้านขวาด้านเดียว
     if not has_left_wall and has_right_wall:
         print("   [Single Wall] Right wall detected. Nudging LEFT to find the opposite wall.")
         movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         readings_after = scanner.get_sensor_readings(quiet=True)
         if readings_after['left']:
-            # >> LOGIC ใหม่ <<
-            # เจอผนังอีกด้านแล้ว (เซ็นเซอร์ติดทั้งสองข้าง) ไม่ต้องปรับตำแหน่งอีก
-            print("   -> Found opposite wall. Centering complete, both sensors are now active. No further adjustment needed.")
-            return
+            print("   -> Found opposite wall. Centering complete, both sensors are now active.")
         else:
-            # ไม่เจอผนังอีกด้าน ให้กลับไปที่เดิม
             print("   -> No opposite wall found. Returning to original position.")
             movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
         
-    # กรณีที่ 3: ไม่เจอผนังทั้งสองด้าน (ที่โล่ง) - คง Logic เดิมไว้
     if not has_left_wall and not has_right_wall:
         print("   [Open Space] Probing for nearby walls.")
-        
-        # แหย่ไปทางขวาเพื่อหาผนัง
         print("   -> Probing RIGHT...")
-        movement_controller.slide_with_yaw_lock(y_speed=y_speed*0.95, duration=nudge_dur*0.95, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         right_probe = scanner.get_sensor_readings(quiet=True)
         if right_probe['right']:
             print("   -> Found a wall on the right. Stopping here.")
             return
 
-        # ถ้าไม่เจอ ให้กลับมาตรงกลางแล้วแหย่ไปทางซ้าย
         print("   -> Right is clear. Probing LEFT...")
-        movement_controller.slide_with_yaw_lock(y_speed=-(y_speed*2), duration=nudge_dur*2, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=-y_speed, duration=(nudge_dur * 2), attitude_handler=attitude_handler)
         left_probe = scanner.get_sensor_readings(quiet=True)
         if left_probe['left']:
             print("   -> Found a wall on the left. Stopping here.")
             return
 
-        # ถ้าไม่เจอทั้งสองฝั่ง ให้กลับมาที่จุดเริ่มต้น
         print("   -> No walls found on either side. Returning to original starting point.")
-        movement_controller.slide_with_yaw_lock(y_speed=y_speed*0.95, duration=nudge_dur*0.95, attitude_handler=attitude_handler)
+        movement_controller.slide_with_yaw_lock(y_speed=y_speed, duration=nudge_dur, attitude_handler=attitude_handler)
         return
 
-    # กรณีที่ 4: เจอผนังทั้งสองด้าน (ทางเดิน)
     print("   [Corridor] Walls detected on both sides. Skipping nudge.")
 
 def perform_safety_distance_correction(scanner, movement_controller, attitude_handler):
     print("--- Performing Safety Distance Check ---")
     MIN_DISTANCE_THRESHOLD_CM = 20.0
-    FIXED_RETREAT_DISTANCE_M = 0.05  # 15 cm
+    FIXED_RETREAT_DISTANCE_M = 0.05
 
     current_distance_cm = scanner.get_front_tof_cm()
     print(f"   Current front distance: {current_distance_cm:.1f} cm")
 
     if 0 < current_distance_cm < MIN_DISTANCE_THRESHOLD_CM:
         print(f"   Distance is too close! Moving BACKWARD by a fixed {FIXED_RETREAT_DISTANCE_M * 100:.1f} cm.")
-        
-        # We always move backward along the robot's current X-axis (its frame of reference)
-        movement_controller.move_precise_distance(-FIXED_RETREAT_DISTANCE_M, 'x', attitude_handler)
-        
+        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+        movement_controller.move_precise_distance(-FIXED_RETREAT_DISTANCE_M, axis_to_monitor, attitude_handler)
         final_dist_cm = scanner.get_front_tof_cm()
         print(f"   Correction complete. New front distance: {final_dist_cm:.1f} cm.")
 
@@ -455,17 +510,16 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         print("--- Performing Official Scan for Mapping ---")
         sensor_readings = scanner.get_sensor_readings()
         
-        dir_map_rel_abs = {'front': CURRENT_DIRECTION, 'left': (CURRENT_DIRECTION - 1 + 4) % 4, 'right': (CURRENT_DIRECTION + 1) % 4}
-        dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+        dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
+        front_dir_abs = CURRENT_DIRECTION
+        left_dir_abs = (CURRENT_DIRECTION - 1 + 4) % 4
+        right_dir_abs = (CURRENT_DIRECTION + 1) % 4
         
-        front_dr, front_dc = dir_vectors[dir_map_rel_abs['front']]
-        occupancy_map.update_cell(r + front_dr, c + front_dc, sensor_readings['front'], 'tof')
-        left_dr, left_dc = dir_vectors[dir_map_rel_abs['left']]
-        occupancy_map.update_cell(r + left_dr, c + left_dc, sensor_readings['left'], 'ir')
-        right_dr, right_dc = dir_vectors[dir_map_rel_abs['right']]
-        occupancy_map.update_cell(r + right_dr, c + right_dc, sensor_readings['right'], 'ir')
+        occupancy_map.update_wall(r, c, dir_map_abs_char[front_dir_abs], sensor_readings['front'], 'tof')
+        occupancy_map.update_wall(r, c, dir_map_abs_char[left_dir_abs], sensor_readings['left'], 'ir')
+        occupancy_map.update_wall(r, c, dir_map_abs_char[right_dir_abs], sensor_readings['right'], 'ir')
         
-        occupancy_map.update_cell(r, c, False, 'tof') 
+        occupancy_map.update_node(r, c, False, 'tof') 
         visited_cells.add((r, c))
         visualizer.update_plot(occupancy_map, CURRENT_POSITION)
         
@@ -473,36 +527,40 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         
         priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
         moved = False
+        dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+
         for target_dir in priority_dirs:
             target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
             
-            if (target_r, target_c) not in visited_cells and not occupancy_map.is_occupied(target_r, target_c):
-                print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                movement_controller.rotate_to_direction(target_dir, attitude_handler)
-                
-                perform_safety_distance_correction(scanner, movement_controller, attitude_handler)
+            # ===== FIX: เพิ่มการตรวจสอบขอบเขตของแผนที่ก่อน =====
+            if 0 <= target_r < occupancy_map.height and 0 <= target_c < occupancy_map.width:
+            
+                if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
+                    print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
+                    movement_controller.rotate_to_direction(target_dir, attitude_handler)
+                    
+                    print("    Confirming path forward with ToF...")
+                    is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                    
+                    occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+                    print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
+                    visualizer.update_plot(occupancy_map, CURRENT_POSITION)
 
-                print("    Confirming path forward with ToF...")
-                is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-                occupancy_map.update_cell(target_r, target_c, is_blocked, 'tof')
-                print(f"    ToF confirmation: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
-                visualizer.update_plot(occupancy_map, CURRENT_POSITION)
-
-                if not occupancy_map.is_occupied(target_r, target_c):
-                    axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
-                    movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
-                    CURRENT_POSITION = (target_r, target_c)
-                    moved = True
-                    break
-                else:
-                    print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
+                    if occupancy_map.is_path_clear(r, c, target_r, target_c):
+                        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+                        movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+                        CURRENT_POSITION = (target_r, target_c)
+                        moved = True
+                        break
+                    else:
+                        print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked after ToF check. Re-evaluating.")
         
         if not moved:
             print("No immediate unvisited path. Initiating backtrack...")
             backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
 
             if backtrack_path and len(backtrack_path) > 1:
-                path_to_staging_area = backtrack_path[:-1]
+                path_to_staging_area = backtrack_path[:-1] 
                 
                 if path_to_staging_area:
                     execute_path(path_to_staging_area, movement_controller, attitude_handler, visualizer, occupancy_map)
@@ -551,10 +609,12 @@ if __name__ == '__main__':
             ep_robot.close()
             print("🔌 Connection closed.")
         
-        final_map_data = [[cell.get_probability() for cell in row] for row in occupancy_map.grid]
-        with open("final_occupancy_map.json", "w") as f:
+        final_map_data = {
+            'nodes': [[cell.get_node_probability() for cell in row] for row in occupancy_map.grid]
+        }
+        with open("final_hybrid_map.json", "w") as f:
             json.dump(final_map_data, f, indent=2)
-        print("✅ Final Occupancy Grid Map saved to final_occupancy_map.json")
+        print("✅ Final Hybrid Belief Map saved to final_hybrid_map.json")
         print("... You can close the plot window now ...")
         plt.ioff()
         plt.show()
