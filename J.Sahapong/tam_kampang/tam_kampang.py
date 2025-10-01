@@ -16,9 +16,9 @@ IR_REAR_LEFT_PORT = 1
 SENSOR_OFFSET_CM = 0.5
 
 # --- การตั้งค่าเป้าหมายการเคลื่อนที่ ---
-TARGET_DISTANCE_CM = 16.0 # ระยะห่างจากผนัง
-FORWARD_SPEED = 0.25 
-STOP_DISTANCE_CM = 23.5 
+TARGET_DISTANCE_CM = 16.0
+FORWARD_SPEED = 0.25
+STOP_DISTANCE_CM = 29
 STOP_DISTANCE_MM = STOP_DISTANCE_CM * 10
 
 # --- PD Controller สำหรับการหมุน (แกน z) ---
@@ -108,7 +108,7 @@ def main():
     try:
         # รอเพื่อให้แน่ใจว่าได้รับข้อมูลเริ่มต้นจาก callback แล้ว
         time.sleep(0.5)
-        start_dist_left = convert_adc_to_cm(sensor_adaptor.get_adc(id=IR_FRONT_LEFT_ID, port=IR_FRONT_LEFT_PORT))
+        start_dist_left = convert_adc_to_cm(s3(id=IR_FRONT_LEFT_ID, port=IR_FRONT_LEFT_PORT))
         start_yaw = imu_data.get('yaw', 0.0)
         start_time = time.time()
 
@@ -144,7 +144,7 @@ def main():
                     break
 
                 chassis.drive_speed(x=0, y=0, z=0)
-                time.sleep(0.5)
+                time.sleep(1)
 
                 print("Step 1: Turning right to clear obstacle...")
                 chassis.move(z=-90, z_speed=45).wait_for_completed()

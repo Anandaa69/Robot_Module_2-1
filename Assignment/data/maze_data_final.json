@@ -1,0 +1,81 @@
+{
+  "metadata": {
+    "timestamp": "2025-09-18T12:25:44.769957",
+    "total_nodes": 3,
+    "boundaries": {
+      "min_x": 0,
+      "max_x": 0,
+      "min_y": 0,
+      "max_y": 2
+    },
+    "drift_corrections": 0
+  },
+  "nodes": {
+    "0_0": {
+      "position": [
+        0,
+        0
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": [
+        "east"
+      ],
+      "out_of_bounds_exits": [
+        "west"
+      ]
+    },
+    "0_1": {
+      "position": [
+        0,
+        1
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": [
+        "east"
+      ],
+      "out_of_bounds_exits": [
+        "west"
+      ]
+    },
+    "0_2": {
+      "position": [
+        0,
+        2
+      ],
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "is_dead_end": false,
+      "explored_directions": [
+        "north"
+      ],
+      "unexplored_exits": [
+        "east"
+      ],
+      "out_of_bounds_exits": [
+        "west"
+      ]
+    }
+  }
+}
