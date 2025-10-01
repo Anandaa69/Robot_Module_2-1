@@ -27,6 +27,11 @@ import time
 CALIBRATION_SLOPE = 0.0894
 CALIBRATION_Y_INTERCEPT = 3.8409
 
+
+# ระยะทางจริง = (0.0960 * ค่าเซ็นเซอร์) + (1.2260)
+# ดังนั้น ค่า Slope (m): 0.0960
+# และ ค่า Y-intercept (c): 1.2260
+
 # ฟังก์ชันสำหรับแปลงค่าดิบจาก ToF ให้เป็นระยะทางที่สอบเทียบแล้ว
 def calibrate_tof_value(raw_tof_value):
     """
@@ -79,10 +84,10 @@ if __name__ == '__main__':
     try:
         print("✅ Subscribing to ToF distance data...")
         # freq=20 หมายถึงรับข้อมูล 20 ครั้งต่อวินาที
-        ep_sensor.sub_distance(freq=20, callback=sub_data_handler)
+        ep_sensor.sub_distance(freq=10, callback=sub_data_handler)
         
         print("⏱️ Collecting data for 10 seconds...")
-        time.sleep(10) # รอ 10 วินาทีเพื่อเก็บข้อมูล
+        time.sleep(1000) # รอ 10 วินาทีเพื่อเก็บข้อมูล
 
     except Exception as e:
         print(f"❌ An error occurred: {e}")

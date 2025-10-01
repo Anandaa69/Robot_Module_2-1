@@ -30,7 +30,7 @@ class PositionController:
         self.current_yaw = 0.0
         self.target_yaw = 0.0
         self.chassis.sub_attitude(freq=20, callback=self._attitude_callback)
-        time.sleep(1) 
+        time.sleep(0.5) 
         self.target_yaw = self.current_yaw 
         print(f"Controller initialized. Initial target Yaw: {self.target_yaw:.2f} degrees")
 
@@ -39,7 +39,7 @@ class PositionController:
         self.current_yaw = yaw
 
     def _calculate_yaw_correction(self):
-        KP_YAW = 0.8
+        KP_YAW = 1.6
         MAX_YAW_SPEED = 20
         yaw_error = self.target_yaw - self.current_yaw
         if yaw_error > 180: yaw_error -= 360
@@ -150,10 +150,12 @@ def main():
     sensor_adaptor = ep_robot.sensor_adaptor
     
     SENSOR_ADAPTOR_ID = 1
-    LEFT_SENSOR_PORT = 2
-    LEFT_TARGET_CM = 22.5
+    LEFT_SENSOR_PORT = 1
+    LEFT_TARGET_CM = 18
+
+    RIGHT_ADAPTOR_ID = 2
     RIGHT_SENSOR_PORT = 1
-    RIGHT_TARGET_CM = 25.0
+    RIGHT_TARGET_CM = 16.0
 
     controller = PositionController(ep_robot)
 
@@ -175,7 +177,7 @@ def main():
 
         # --- ลำดับที่ 2: ตรวจสอบและปรับตำแหน่งด้านขวา ---
         # ### แก้ไข: เพิ่ม direction_multiplier=-1 (สำหรับสไลด์ขวา) ###
-        right_wall_found = controller.adjust_position(sensor_adaptor, SENSOR_ADAPTOR_ID,
+        right_wall_found = controller.adjust_position(sensor_adaptor, RIGHT_ADAPTOR_ID,
                                                       RIGHT_SENSOR_PORT, RIGHT_TARGET_CM, 
                                                       "Right", direction_multiplier=-1)
         
