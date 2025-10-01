@@ -2,11 +2,11 @@ import cv2
 import numpy as np
 import sys
 import robomaster
-from robomaster import robot, camera
+from robomaster import robot
+import time
 
 # ======================================================================
-# คลาส ObjectDetector (ใช้ Template Matching)
-# *** ส่วนนี้ไม่ต้องแก้ไขใดๆ ทำงานได้ทั้งกับเว็บแคมและ Robomaster ***
+# คลาส ObjectDetector (อัปเดตให้รองรับ 4 สี)
 # ======================================================================
 class ObjectDetector:
     def __init__(self, template_paths):
@@ -24,116 +24,187 @@ class ObjectDetector:
             if template_img is None:
                 print(f"⚠️ คำเตือน: ไม่พบไฟล์ template ที่: {path}")
                 continue
-            contours, _ = cv2.findContours(template_img, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            blurred = cv2.GaussianBlur(template_img, (5, 5), 0)
+            _, thresh = cv2.threshold(blurred, 127, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
             if contours:
                 template_contour = max(contours, key=cv2.contourArea)
                 processed_templates[shape_name] = template_contour
+        
         return processed_templates
 
     def detect(self, frame):
-        # ไม่มีการ flip ภาพที่นี่ เพราะเราจะรับภาพจากหุ่นยนต์มาตรงๆ
-        output = frame.copy()
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        detected_objects = []
 
-        # ช่วงสี (เหมือนเดิม)
-        lower_green = np.array([40, 50, 50])
-        upper_green = np.array([90, 255, 255])
-        lower_blue = np.array([95, 80, 80])
-        upper_blue = np.array([130, 255, 255])
+        # --- UPDATED: เพิ่มช่วงสี แดง และ เหลือง ---
+        color_ranges = {
+            'Red': [(np.array([0, 120, 70]), np.array([10, 255, 255])), (np.array([170, 120, 70]), np.array([180, 255, 255]))],
+            'Yellow': [(np.array([22, 93, 0]), np.array([45, 255, 255]))],
+            'Green': [(np.array([40, 50, 50]), np.array([90, 255, 255]))],
+            'Blue': [(np.array([95, 80, 80]), np.array([130, 255, 255]))]
+        }
 
-        mask_green = cv2.inRange(hsv, lower_green, upper_green)
-        mask_blue = cv2.inRange(hsv, lower_blue, upper_blue)
-        combined_mask = cv2.bitwise_or(mask_green, mask_blue)
+        # สร้าง Masks สำหรับแต่ละสี
+        masks = {}
+        for color_name, ranges in color_ranges.items():
+            mask_parts = [cv2.inRange(hsv, lower, upper) for lower, upper in ranges]
+            masks[color_name] = cv2.bitwise_or(mask_parts[0], mask_parts[1]) if len(mask_parts) > 1 else mask_parts[0]
 
-        contours, _ = cv2.findContours(combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        # รวม Mask ทั้งหมดเข้าด้วยกัน
+        combined_mask = masks['Red']
+        for color_name in ['Yellow', 'Green', 'Blue']:
+            combined_mask = cv2.bitwise_or(combined_mask, masks[color_name])
+
+        # กำจัด Noise
+        kernel = np.ones((7, 7), np.uint8)
+        opened_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
+        cleaned_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel)
+        
+        contours, _ = cv2.findContours(cleaned_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 1000:
+            if area < 2500:
                 continue
 
             best_match_score = float('inf')
             best_match_shape = "Unknown"
-
             for shape_name, template_cnt in self.templates.items():
                 score = cv2.matchShapes(cnt, template_cnt, cv2.CONTOURS_MATCH_I1, 0.0)
                 if score < best_match_score:
                     best_match_score = score
                     best_match_shape = shape_name
 
-            match_threshold = 0.4
-            if best_match_score < match_threshold:
+            shape = "Unknown"
+            if best_match_score < 0.4:
                 shape = best_match_shape
-            else:
-                shape = "Unknown"
+
+            peri = cv2.arcLength(cnt, True)
+            if peri > 0:
+                circularity = (4 * np.pi * area) / (peri ** 2)
+                if circularity > 0.82:
+                    shape = "Circle" 
 
             if shape != "Unknown":
-                mask = np.zeros(frame.shape[:2], dtype="uint8")
-                cv2.drawContours(mask, [cnt], -1, 255, -1)
+                # --- UPDATED: ตรรกะการระบุสีสำหรับ 4 สี ---
+                contour_mask = np.zeros(frame.shape[:2], dtype="uint8")
+                cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
                 
-                if cv2.mean(mask_green, mask=mask)[0] > 1:
-                    color = "Green"
-                else:
-                    color = "Blue"
-
-                x, y, w, h = cv2.boundingRect(cnt)
-                cv2.drawContours(output, [cnt], -1, (0, 255, 0), 3)
-                cv2.putText(output, f"{shape}, {color} (Score: {best_match_score:.2f})", 
-                            (x, y - 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-        return output
+                found_color = "Unknown"
+                for color_name, mask in masks.items():
+                    # ตรวจสอบว่า contour ที่เจอ มีส่วนที่ตรงกับ mask ของสีใดมากที่สุด
+                    if cv2.mean(mask, mask=contour_mask)[0] > 20: # ค่า threshold อาจปรับได้
+                        found_color = color_name
+                        break
+                
+                if found_color != "Unknown":
+                    detected_objects.append({
+                        "shape": shape,
+                        "color": found_color,
+                        "contour": cnt,
+                    })
+        return detected_objects
 
 # ======================================================================
-# Main (ปรับแก้สำหรับใช้กับกล้อง Robomaster)
+# ฟังก์ชันสำหรับรับ Input จากผู้ใช้ (อัปเดตตัวเลือก)
+# ======================================================================
+def get_target_choice():
+    # --- UPDATED: เพิ่มตัวเลือกรูปทรงและสี ---
+    VALID_SHAPES = ["Circle", "Square", "Rectangle_H", "Rectangle_V"]
+    VALID_COLORS = ["Red", "Yellow", "Green", "Blue"]
+
+    print("\n--- 🎯 กำหนดลักษณะของเป้าหมาย ---")
+    
+    while True:
+        prompt = f"เลือกรูปทรง ({'/'.join(VALID_SHAPES)}): "
+        shape = input(prompt).strip().title()
+        if shape in VALID_SHAPES:
+            break
+        print("⚠️ รูปทรงไม่ถูกต้อง, กรุณาลองใหม่")
+
+    while True:
+        prompt = f"เลือกสี ({'/'.join(VALID_COLORS)}): "
+        color = input(prompt).strip().title()
+        if color in VALID_COLORS:
+            break
+        print("⚠️ สีไม่ถูกต้อง, กรุณาลองใหม่")
+
+    print(f"✅ เป้าหมายคือ: {shape} สี {color}. เริ่มการค้นหา!")
+    return shape, color
+
+# ======================================================================
+# Main (อัปเดต Path ของ Template)
 # ======================================================================
 if __name__ == '__main__':
-    # กำหนด path ของไฟล์ template (เหมือนเดิม)
-    template_files = {
-        "Circle": "./Assignment/image_processing/templ/circle.jpg",
-        "Square": "./Assignment/image_processing/templ/rectangle.jpg",
-        "Triangle": "./Assignment/image_processing/templ/triangle.jpg"
-    }
+    target_shape, target_color = get_target_choice()
 
-    # สร้าง instance ของ detector และส่ง path ของ templates เข้าไป
+    # --- UPDATED: เพิ่ม Path สำหรับเทมเพลตใหม่ ---
+    template_files = {
+        "Circle": "./Assignment/image_processing/template/circle1.png",
+        "Square": "./Assignment/image_processing/template/square.png",
+        "Rectangle_H": "./Assignment/image_processing/template/rec_h.png",
+        "Rectangle_V": "./Assignment/image_processing/template/rec_v.png",
+    }
     detector = ObjectDetector(template_paths=template_files)
 
-    ep_robot = None
+    ep_robot = robot.Robot()
+    
     try:
-        # --- ส่วนที่ 1: การเชื่อมต่อกับหุ่นยนต์ ---
         print("\n🤖 กำลังเชื่อมต่อกับหุ่นยนต์ Robomaster...")
-        ep_robot = robot.Robot()
-        ep_robot.initialize(conn_type="ap") # หรือ "sta" หากเชื่อมต่อผ่าน router
+        ep_robot.initialize(conn_type="ap") 
+        print("✅ เชื่อมต่อสำเร็จ!")
 
-        ep_camera = ep_robot.camera
-        ep_camera.start_video_stream(display=False, resolution=camera.STREAM_720P)
-        print("✅ เปิดสตรีมวิดีโอจากกล้องหุ่นยนต์แล้ว กด 'q' เพื่อออกจากโปรแกรม")
-
-        # --- ส่วนที่ 2: ลูปการทำงานหลัก ---
+        print("\n📷 กำลังเปิดกล้องของหุ่นยนต์...")
+        ep_robot.camera.start_video_stream(display=False, resolution="720p")
+        print("✅ เปิดกล้องสำเร็จ. กด 'q' บนหน้าต่างวิดีโอเพื่อออกจากโปรแกรม")
+        
         while True:
-            # อ่านเฟรมภาพจากกล้องหุ่นยนต์
-            frame = ep_camera.read_cv2_image()
+            frame = ep_robot.camera.read_cv2_image(timeout=2)
+            
             if frame is None:
-                # ถ้ายังไม่ได้รับเฟรม ให้รอสักครู่แล้ววนลูปใหม่
+                print("...กำลังรอรับภาพจากหุ่นยนต์...")
+                time.sleep(0.1)
                 continue
+            
+            output_frame = frame.copy()
+            detected_objects = detector.detect(frame)
 
-            # เรียกใช้ detector เพื่อประมวลผล (ส่วนนี้เหมือนเดิม)
-            processed_frame = detector.detect(frame)
+            for obj in detected_objects:
+                is_target = (obj["shape"] == target_shape and obj["color"] == target_color)
+                x, y, _, _ = cv2.boundingRect(obj["contour"])
 
-            # แสดงผลลัพธ์
-            cv2.imshow('Live Robomaster Feed - Press "q" to exit', processed_frame)
+                # กำหนดสีของกรอบและป้ายชื่อ
+                box_color = (0, 0, 255) if is_target else (0, 255, 0)
+                thickness = 4 if is_target else 2
+                
+                cv2.drawContours(output_frame, [obj["contour"]], -1, box_color, thickness)
+                
+                if is_target:
+                    label = "!!! TARGET FOUND !!!"
+                    cv2.putText(output_frame, label, (x, y - 15), 
+                                cv2.FONT_HERSHEY_TRIPLEX, 0.7, box_color, 2)
+                else:
+                    label = f"{obj['shape']}, {obj['color']}"
+                    cv2.putText(output_frame, label, (x, y - 15), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+            cv2.imshow('Robomaster Camera Feed - Press "q" to exit', output_frame)
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                print("...กำลังปิดโปรแกรม")
+                print("ได้รับคำสั่งให้ออก...")
                 break
                 
     except Exception as e:
         print(f"❌ เกิดข้อผิดพลาดร้ายแรง: {e}")
         
     finally:
-        # --- ส่วนที่ 3: การปิดการเชื่อมต่อ ---
+        print("\n🔌 กำลังปิดการเชื่อมต่อ...")
+        if ep_robot._sdk_connection is not None:
+             ep_robot.camera.stop_video_stream()
+             ep_robot.close()
         cv2.destroyAllWindows()
-        if ep_robot is not None:
-            ep_camera.stop_video_stream()
-            ep_robot.close()
-            print("🔌 ปิดการเชื่อมต่อกับหุ่นยนต์เรียบร้อย")
+        print("✅ ปิดการเชื่อมต่อเรียบร้อย")
