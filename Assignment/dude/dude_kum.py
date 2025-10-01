@@ -4,7 +4,7 @@ import time
 import robomaster
 from robomaster import robot
 import statistics
-import traceback # เพิ่มเพื่อการดีบัก
+import traceback
 
 # =============================================================================
 # ===== CONFIGURATION =========================================================
@@ -12,10 +12,13 @@ import traceback # เพิ่มเพื่อการดีบัก
 BLOCK_DISTANCE_M = 0.6
 LEFT_SENSOR_ADAPTOR_ID = 1
 LEFT_SENSOR_PORT = 1
-LEFT_TARGET_CM = 18.0
+LEFT_TARGET_CM = 13.5
 RIGHT_SENSOR_ADAPTOR_ID = 2
 RIGHT_SENSOR_PORT = 1
 RIGHT_TARGET_CM = 13.0
+
+# ⚙️ ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
+TOF_ADJUST_SPEED = 0.1  # ✅ เปลี่ยนค่าตรงนี้ได้เองถ้ารู้สึกเร็วเกิน
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -29,6 +32,19 @@ def normalize_angle(angle):
     while angle <= -180: angle += 360
     return angle
 
+# ---------------- ToF calibration ----------------
+TOF_CALIBRATION_SLOPE = 0.0894
+TOF_CALIBRATION_Y_INTERCEPT = 3.8409
+
+def calibrate_tof_value(raw_tof_value):
+    """แปลงค่า raw ToF (mm) ให้เป็น cm"""
+    try:
+        if raw_tof_value is None:
+            return float('inf')
+        return (TOF_CALIBRATION_SLOPE * raw_tof_value) + TOF_CALIBRATION_Y_INTERCEPT
+    except Exception:
+        return float('inf')
+# -------------------------------------------------
 
 # =============================================================================
 # ===== ROBOT MASTER CONTROLLER CLASS =========================================
@@ -39,7 +55,6 @@ class RobotMasterController:
         self.chassis = ep_robot.chassis
         self.sensor_adaptor = ep_robot.sensor_adaptor
         
-        # --- State Variables ---
         self.current_yaw = 0.0
         self.current_x = 0.0
         self.master_target_yaw = 0.0
@@ -51,16 +66,34 @@ class RobotMasterController:
         self.master_target_yaw = self.current_yaw
         print(f"Controller initialized. Master Yaw set to: {self.master_target_yaw:.2f}°")
 
+        # ✅ Subscribe ToF sensor
+        self.sensor = getattr(ep_robot, 'sensor', None)
+        self.tof_latest = None
+        if self.sensor:
+            try:
+                self.sensor.sub_distance(freq=10, callback=self._tof_callback)
+                time.sleep(0.05)
+                print("✅ Subscribed to ToF sensor.")
+            except Exception as e:
+                print(f"⚠️ ToF subscribe failed: {e}")
+        else:
+            print("⚠️ ep_robot.sensor not available; ToF will be disabled.")
+
     def _attitude_callback(self, attitude_info): self.current_yaw = attitude_info[0]
     def _position_callback(self, position_info): self.current_x = position_info[0]
 
+    def _tof_callback(self, sub_info):
+        try:
+            raw_tof1 = sub_info[0]
+            self.tof_latest = calibrate_tof_value(raw_tof1)
+        except Exception:
+            pass
+
     def set_master_heading(self):
-        """กำหนดทิศทางหลักสำหรับการทำงานในบล็อกถัดไป"""
         self.master_target_yaw = self.current_yaw
         print(f"\n--- New Master Heading Locked: {self.master_target_yaw:.2f}° ---")
 
     def _calculate_yaw_correction_speed(self):
-        """คำนวณความเร็วการหมุนเพื่อ 'ประคอง' ทิศทาง (สำหรับ drive_speed)"""
         KP_YAW, MAX_YAW_SPEED, DEADBAND = 1.8, 25, 0.5
         yaw_error = normalize_angle(self.master_target_yaw - self.current_yaw)
         if abs(yaw_error) < DEADBAND: return 0.0
@@ -68,7 +101,6 @@ class RobotMasterController:
         return max(min(speed, MAX_YAW_SPEED), -MAX_YAW_SPEED)
 
     def hold_still(self, duration):
-        """ฟังก์ชัน 'รอแบบประคองตำแหน่ง' เพื่อแก้ปัญหาหุ่นไถล"""
         print(f"Active Hold for {duration}s...")
         start_time = time.time()
         while time.time() - start_time < duration:
@@ -77,13 +109,7 @@ class RobotMasterController:
             time.sleep(0.05)
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
 
-    # =============================================================================
-    # ===== ปรับปรุงที่นี่: ให้มีการล็อคแกน Yaw ขณะตรวจสอบกำแพง =====
-    # =============================================================================
     def check_for_wall(self, sensor_id, port, side_name):
-        """
-        ตรวจสอบว่ามีกำแพงหรือไม่ โดยมีการรักษามุม Yaw (ล็อคแกน) ไปด้วยขณะตรวจสอบ
-        """
         print(f"\n[{side_name}] Performing wall detection check (with active Yaw lock)...")
         CHECK_DURATION_S = 1
         MAX_STD_DEV_THRESHOLD = 0.8
@@ -91,23 +117,16 @@ class RobotMasterController:
         readings = []
         start_time = time.time()
 
-        # --- ลูปใหม่: ตรวจสอบเซ็นเซอร์พร้อมกับล็อคแกน ---
         while time.time() - start_time < CHECK_DURATION_S:
-            # 1. คำนวณและสั่งให้หุ่นยนต์รักษามุม Yaw
             yaw_correction_speed = self._calculate_yaw_correction_speed()
             self.chassis.drive_speed(x=0, y=0, z=yaw_correction_speed, timeout=0.1)
 
-            # 2. อ่านค่าจากเซ็นเซอร์
             adc = self.sensor_adaptor.get_adc(id=sensor_id, port=port)
             readings.append(convert_adc_to_cm(adc))
-
-            # 3. หน่วงเวลาเล็กน้อย
             time.sleep(0.05)
         
-        # 4. หยุดการเคลื่อนที่ให้สนิทหลังจากการตรวจสอบเสร็จสิ้น
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
 
-        # --- ส่วนการวิเคราะห์ข้อมูล (เหมือนเดิม) ---
         if len(readings) < 5:
             print(f"[{side_name}] Wall Check Error: Not enough sensor data collected.")
             return False
@@ -117,18 +136,16 @@ class RobotMasterController:
         print(f"[{side_name}] Wall Check Stats -> Avg Dist: {avg_distance:.2f} cm, Std Dev: {std_dev:.2f}")
 
         if std_dev > MAX_STD_DEV_THRESHOLD:
-            print(f"[{side_name}] Wall NOT Detected: Unstable readings (Std Dev > {MAX_STD_DEV_THRESHOLD}).")
+            print(f"[{side_name}] Wall NOT Detected: Unstable readings.")
             return False
         if avg_distance > MAX_AVG_DISTANCE_THRESHOLD:
-            print(f"[{side_name}] Wall NOT Detected: Too far (Avg Dist > {MAX_AVG_DISTANCE_THRESHOLD} cm).")
+            print(f"[{side_name}] Wall NOT Detected: Too far.")
             return False
 
         print(f"[{side_name}] Wall detected. Ready for adjustment.")
         return True
 
-
     def align_to_master_heading(self, yaw_tolerance=1.5):
-        """ปรับมุม Yaw ความแม่นยำสูง"""
         print(f"\n--- Aligning Robot to Master Heading: {self.master_target_yaw:.2f}° ---")
         angle_to_correct = -normalize_angle(self.master_target_yaw - self.current_yaw)
         if abs(angle_to_correct) > yaw_tolerance:
@@ -146,12 +163,11 @@ class RobotMasterController:
         if abs(final_error_after_tune) <= yaw_tolerance:
             print(f"✅ Alignment Success! Final Yaw: {self.current_yaw:.2f}°")
         else:
-            print(f"🔥🔥 ALIGNMENT FAILED. Final Yaw: {self.current_yaw:.2f}° (Error: {final_error_after_tune:.2f}°)")
+            print(f"🔥 ALIGNMENT FAILED. Final Yaw: {self.current_yaw:.2f}° (Error: {final_error_after_tune:.2f}°)")
         return True
 
     def adjust_position(self, sensor_id, sensor_port, target_distance_cm, side_name, direction_multiplier):
         print(f"\n--- Adjusting {side_name} Side (Yaw locked at {self.master_target_yaw:.2f}°) ---")
-        
         TOLERANCE_CM, MAX_EXEC_TIME, KP_SLIDE, MAX_SLIDE_SPEED = 0.5, 10, 0.035, 0.15
         start_time = time.time()
         
@@ -167,7 +183,7 @@ class RobotMasterController:
             yaw_correction = self._calculate_yaw_correction_speed()
             self.chassis.drive_speed(x=0, y=slide_speed, z=yaw_correction)
             
-            print(f"Adjusting {side_name}... DistErr: {dist_error:5.2f}cm | YawErr: {normalize_angle(self.master_target_yaw - self.current_yaw):5.2f}°", end='\r')
+            print(f"Adjusting {side_name}... DistErr: {dist_error:5.2f}cm", end='\r')
             time.sleep(0.02)
         else:
             print(f"\n[{side_name}] Movement timed out!")
@@ -176,9 +192,8 @@ class RobotMasterController:
         return True
 
     def move_forward_with_pid(self, target_distance):
-        print(f"\n--- Moving Forward ({target_distance}m) (Yaw locked at {self.master_target_yaw:.2f}°) ---")
-        
-        PID_KP, PID_KI, PID_KD = 1.9, 0.25, 10
+        print(f"\n--- Moving Forward ({target_distance}m) ---")
+        PID_KP, PID_KI, PID_KD = 1.5, 0.25, 10
         RAMP_UP_TIME, MOVE_TIMEOUT = 0.8, 7.0
         
         prev_error, integral = 0, 0
@@ -203,20 +218,70 @@ class RobotMasterController:
             yaw_correction = self._calculate_yaw_correction_speed()
             
             self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=0.1)
-            print(f"Moving... Dist: {relative_pos:.3f}/{target_distance:.2f} m | YawErr: {normalize_angle(self.master_target_yaw - self.current_yaw):5.2f}°", end='\r')
+            print(f"Moving... Dist: {relative_pos:.3f}/{target_distance:.2f} m", end='\r')
         
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         print(f"\nMoved a total distance of {abs(self.current_x - start_position):.3f}m")
         print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
 
+    # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
+    def center_in_node_with_tof(self, target_cm=20, tol_cm=0.5, max_adjust_time=6.0):
+        if self.tof_latest is None:
+            print("[ToF] ❌ ไม่มีข้อมูล ToF -> ข้ามการจัดตำแหน่ง")
+            return
+        tof = self.tof_latest
+        print(f"[ToF] Front distance: {tof:.2f} cm")
+
+        if tof >= 50:
+            print("[ToF] >=50 cm -> ไม่อยู่ในโหนด ข้าม")
+            return
+        if tof > 45:
+            print("[ToF] >45 cm -> อยู่ระหว่างโหนด ข้าม")
+            return
+
+        direction = 0
+        if tof > target_cm + tol_cm:
+            print("[ToF] หุ่นอยู่ห่างจากกำแพงเกินไป -> เดินหน้า")
+            direction = abs(TOF_ADJUST_SPEED)
+        elif tof < 22:
+            print("[ToF] หุ่นเข้าใกล้กำแพงเกินไป -> ถอยหลัง")
+            direction = -abs(TOF_ADJUST_SPEED)
+        else:
+            print("[ToF] อยู่ในช่วง 22-45 cm -> เดินหน้าเข้าไป")
+            direction = abs(TOF_ADJUST_SPEED)
+
+        start = time.time()
+        while time.time() - start < max_adjust_time:
+            yaw_corr = self._calculate_yaw_correction_speed()
+            self.chassis.drive_speed(x=direction, y=0, z=yaw_corr, timeout=0.08)
+            time.sleep(0.12)
+            self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+            time.sleep(0.06)
+            if self.tof_latest is None:
+                continue
+            curr = self.tof_latest
+            print(f"[ToF] Adjusting... {curr:.2f} cm", end="\r")
+            if abs(curr - target_cm) <= tol_cm:
+                print(f"\n[ToF] ✅ อยู่ที่ {curr:.2f} cm แล้ว (กลางโหนด)")
+                break
+            if (direction > 0 and curr < target_cm - tol_cm) or (direction < 0 and curr > target_cm + tol_cm):
+                direction = -direction
+                print("\n[ToF] 🔄 Reverse direction to fine-tune.")
+
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+
     def cleanup(self):
         print("Closing controller...")
         self.chassis.unsub_attitude()
         self.chassis.unsub_position()
-
+        try:
+            if getattr(self, 'sensor', None):
+                self.sensor.unsub_distance()
+        except:
+            pass
 
 # =============================================================================
-# ===== MAIN EXECUTION (ไม่เปลี่ยนแปลง) =======================================
+# ===== MAIN EXECUTION ========================================================
 # =============================================================================
 def main():
     ep_robot, controller = None, None
@@ -228,7 +293,7 @@ def main():
         
         while True:
             try:
-                num_blocks_str = input("🤖 อยากให้หุ่นเดินไปกี่บล็อค (0.6m/บล็อค) | พิมพ์ 'exit' เพื่อออก: ")
+                num_blocks_str = input("🤖 เดินไปกี่บล็อก (0.6m/บล็อก) | พิมพ์ 'exit' เพื่อออก: ")
                 if num_blocks_str.lower().strip() == 'exit': return
                 num_blocks_to_move = int(num_blocks_str)
                 if num_blocks_to_move > 0: break
@@ -246,23 +311,16 @@ def main():
             controller.hold_still(0.15)
             
             print("\n--- Stage 2: Wall Detection & Side Alignment ---")
-            left_wall_present = controller.check_for_wall(
-                LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left"
-            )
-            right_wall_present = controller.check_for_wall(
-                RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right"
-            )
+            left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
+            right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
 
             if left_wall_present:
-                controller.adjust_position(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, 
-                                        LEFT_TARGET_CM, "Left", direction_multiplier=1)
+                controller.adjust_position(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, LEFT_TARGET_CM, "Left", 1)
+                controller.hold_still(0.15)
+            if right_wall_present:
+                controller.adjust_position(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, RIGHT_TARGET_CM, "Right", -1)
                 controller.hold_still(0.15)
 
-            if right_wall_present:
-                controller.adjust_position(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, 
-                                        RIGHT_TARGET_CM, "Right", direction_multiplier=-1)
-                controller.hold_still(0.15)
-            
             if not left_wall_present and not right_wall_present:
                 print("\n⚠️  WARNING: No walls detected. Skipping side alignment.")
                 controller.hold_still(0.15)
@@ -270,7 +328,11 @@ def main():
             controller.align_to_master_heading()
             controller.hold_still(0.15)
 
+            # ✅ เคลื่อนที่แล้วปรับให้อยู่กลางโหนดด้วย ToF
             controller.move_forward_with_pid(BLOCK_DISTANCE_M)
+            controller.hold_still(0.15)
+            controller.center_in_node_with_tof()
+
             print(f"\n--- ✅ Block {i + 1} complete. ---")
             controller.hold_still(0.15)
 
