@@ -6,7 +6,7 @@ from robomaster import robot
 import time
 
 # ======================================================================
-# คลาส ObjectDetector (อัปเดตให้รองรับ 4 สี)
+# คลาส ObjectDetector (กลับมาใช้ Template Matching + แก้ปัญหา Rectangle)
 # ======================================================================
 class ObjectDetector:
     def __init__(self, template_paths):
@@ -39,7 +39,7 @@ class ObjectDetector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         detected_objects = []
 
-        # --- UPDATED: เพิ่มช่วงสี แดง และ เหลือง ---
+        # ช่วงสี (Red, Yellow, Green, Blue)
         color_ranges = {
             'Red': [(np.array([0, 120, 70]), np.array([10, 255, 255])), (np.array([170, 120, 70]), np.array([180, 255, 255]))],
             'Yellow': [(np.array([22, 93, 0]), np.array([45, 255, 255]))],
@@ -53,12 +53,10 @@ class ObjectDetector:
             mask_parts = [cv2.inRange(hsv, lower, upper) for lower, upper in ranges]
             masks[color_name] = cv2.bitwise_or(mask_parts[0], mask_parts[1]) if len(mask_parts) > 1 else mask_parts[0]
 
-        # รวม Mask ทั้งหมดเข้าด้วยกัน
         combined_mask = masks['Red']
         for color_name in ['Yellow', 'Green', 'Blue']:
             combined_mask = cv2.bitwise_or(combined_mask, masks[color_name])
 
-        # กำจัด Noise
         kernel = np.ones((7, 7), np.uint8)
         opened_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
         cleaned_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel)
@@ -70,6 +68,9 @@ class ObjectDetector:
             if area < 2500:
                 continue
 
+            # --- UPDATED: โซลูชันแบบผสม (Hybrid) ---
+
+            # 1. ใช้ Template Matching เพื่อหารูปทรงที่ใกล้เคียงที่สุดก่อน
             best_match_score = float('inf')
             best_match_shape = "Unknown"
             for shape_name, template_cnt in self.templates.items():
@@ -77,26 +78,39 @@ class ObjectDetector:
                 if score < best_match_score:
                     best_match_score = score
                     best_match_shape = shape_name
-
+            
             shape = "Unknown"
+            # ถ้าคะแนน match ดีพอ ให้ยึดรูปทรงนั้นเป็นหลัก
             if best_match_score < 0.4:
                 shape = best_match_shape
 
+            # 2. ตรวจสอบและแก้ไข (Override) กรณีพิเศษ
+            # กรณีวงกลม: Circularity มีความน่าเชื่อถือสูงมาก
             peri = cv2.arcLength(cnt, True)
             if peri > 0:
                 circularity = (4 * np.pi * area) / (peri ** 2)
                 if circularity > 0.82:
-                    shape = "Circle" 
+                    shape = "Circle"
 
+            # กรณีสี่เหลี่ยม: ถ้า template บอกว่าเป็นสี่เหลี่ยมผืนผ้า ให้ใช้ Aspect Ratio ตัดสิน
+            if shape in ["Rectangle_H", "Rectangle_V", "Square"]:
+                rect = cv2.minAreaRect(cnt)
+                (x, y), (width, height), angle = rect
+                if width > 0 and height > 0:
+                    aspect_ratio = max(width, height) / min(width, height)
+                    if 0.9 <= aspect_ratio <= 1.15:
+                        shape = "Square" # แก้ไขให้เป็น Square ถ้าอัตราส่วนใกล้เคียง 1
+                    elif aspect_ratio > 1.2:
+                        shape = "Rectangle_H" if width < height else "Rectangle_V"
+            
+            # 3. ระบุสีและบันทึกผล
             if shape != "Unknown":
-                # --- UPDATED: ตรรกะการระบุสีสำหรับ 4 สี ---
                 contour_mask = np.zeros(frame.shape[:2], dtype="uint8")
                 cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
                 
                 found_color = "Unknown"
                 for color_name, mask in masks.items():
-                    # ตรวจสอบว่า contour ที่เจอ มีส่วนที่ตรงกับ mask ของสีใดมากที่สุด
-                    if cv2.mean(mask, mask=contour_mask)[0] > 20: # ค่า threshold อาจปรับได้
+                    if cv2.mean(mask, mask=contour_mask)[0] > 20:
                         found_color = color_name
                         break
                 
@@ -109,10 +123,9 @@ class ObjectDetector:
         return detected_objects
 
 # ======================================================================
-# ฟังก์ชันสำหรับรับ Input จากผู้ใช้ (อัปเดตตัวเลือก)
+# ฟังก์ชันสำหรับรับ Input จากผู้ใช้ (เหมือนเดิม)
 # ======================================================================
 def get_target_choice():
-    # --- UPDATED: เพิ่มตัวเลือกรูปทรงและสี ---
     VALID_SHAPES = ["Circle", "Square", "Rectangle_H", "Rectangle_V"]
     VALID_COLORS = ["Red", "Yellow", "Green", "Blue"]
 
@@ -136,12 +149,12 @@ def get_target_choice():
     return shape, color
 
 # ======================================================================
-# Main (อัปเดต Path ของ Template)
+# Main (กลับไประบุ Path ของ Template)
 # ======================================================================
 if __name__ == '__main__':
     target_shape, target_color = get_target_choice()
 
-    # --- UPDATED: เพิ่ม Path สำหรับเทมเพลตใหม่ ---
+    # --- UPDATED: กลับมาใช้ Path ของ Template ---
     template_files = {
         "Circle": "./Assignment/image_processing/template/circle1.png",
         "Square": "./Assignment/image_processing/template/square.png",
@@ -176,7 +189,6 @@ if __name__ == '__main__':
                 is_target = (obj["shape"] == target_shape and obj["color"] == target_color)
                 x, y, _, _ = cv2.boundingRect(obj["contour"])
 
-                # กำหนดสีของกรอบและป้ายชื่อ
                 box_color = (0, 0, 255) if is_target else (0, 255, 0)
                 thickness = 4 if is_target else 2
                 
