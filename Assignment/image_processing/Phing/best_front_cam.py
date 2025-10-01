@@ -126,9 +126,9 @@ if __name__ == '__main__':
     target_shape, target_color = get_target_choice()
 
     template_files = {
-        "Circle": "./Assignment/image_processing/templ/circle1.png",
-        "Square": "./Assignment/image_processing/templ/rectangle1.png",
-        "Triangle": "./Assignment/image_processing/templ/triangle1.png"
+        "Circle": "./Assignment/image_processing/template/circle1.png",
+        "Square": "./Assignment/image_processing/template/rectangle1.png",
+        "Triangle": "./Assignment/image_processing/template/triangle1.png"
     }
     detector = ObjectDetector(template_paths=template_files)
 
