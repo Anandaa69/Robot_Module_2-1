@@ -6,7 +6,7 @@ from robomaster import robot
 import time
 
 # ======================================================================
-# คลาส ObjectDetector (กลับมาใช้ Template Matching + แก้ปัญหา Rectangle)
+# คลาส ObjectDetector (รองรับ 4 สี + 4 shape, ไม่ save crop)
 # ======================================================================
 class ObjectDetector:
     def __init__(self, template_paths):
@@ -39,7 +39,6 @@ class ObjectDetector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         detected_objects = []
 
-        # ช่วงสี (Red, Yellow, Green, Blue)
         color_ranges = {
             'Red': [(np.array([0, 120, 70]), np.array([10, 255, 255])), (np.array([170, 120, 70]), np.array([180, 255, 255]))],
             'Yellow': [(np.array([22, 93, 0]), np.array([45, 255, 255]))],
@@ -47,7 +46,6 @@ class ObjectDetector:
             'Blue': [(np.array([95, 80, 80]), np.array([130, 255, 255]))]
         }
 
-        # สร้าง Masks สำหรับแต่ละสี
         masks = {}
         for color_name, ranges in color_ranges.items():
             mask_parts = [cv2.inRange(hsv, lower, upper) for lower, upper in ranges]
@@ -68,9 +66,6 @@ class ObjectDetector:
             if area < 2500:
                 continue
 
-            # --- UPDATED: โซลูชันแบบผสม (Hybrid) ---
-
-            # 1. ใช้ Template Matching เพื่อหารูปทรงที่ใกล้เคียงที่สุดก่อน
             best_match_score = float('inf')
             best_match_shape = "Unknown"
             for shape_name, template_cnt in self.templates.items():
@@ -78,32 +73,17 @@ class ObjectDetector:
                 if score < best_match_score:
                     best_match_score = score
                     best_match_shape = shape_name
-            
+
             shape = "Unknown"
-            # ถ้าคะแนน match ดีพอ ให้ยึดรูปทรงนั้นเป็นหลัก
             if best_match_score < 0.4:
                 shape = best_match_shape
 
-            # 2. ตรวจสอบและแก้ไข (Override) กรณีพิเศษ
-            # กรณีวงกลม: Circularity มีความน่าเชื่อถือสูงมาก
             peri = cv2.arcLength(cnt, True)
             if peri > 0:
                 circularity = (4 * np.pi * area) / (peri ** 2)
                 if circularity > 0.82:
                     shape = "Circle"
 
-            # กรณีสี่เหลี่ยม: ถ้า template บอกว่าเป็นสี่เหลี่ยมผืนผ้า ให้ใช้ Aspect Ratio ตัดสิน
-            if shape in ["Rectangle_H", "Rectangle_V", "Square"]:
-                rect = cv2.minAreaRect(cnt)
-                (x, y), (width, height), angle = rect
-                if width > 0 and height > 0:
-                    aspect_ratio = max(width, height) / min(width, height)
-                    if 0.9 <= aspect_ratio <= 1.15:
-                        shape = "Square" # แก้ไขให้เป็น Square ถ้าอัตราส่วนใกล้เคียง 1
-                    elif aspect_ratio > 1.2:
-                        shape = "Rectangle_H" if width < height else "Rectangle_V"
-            
-            # 3. ระบุสีและบันทึกผล
             if shape != "Unknown":
                 contour_mask = np.zeros(frame.shape[:2], dtype="uint8")
                 cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
@@ -120,10 +100,11 @@ class ObjectDetector:
                         "color": found_color,
                         "contour": cnt,
                     })
+
         return detected_objects
 
 # ======================================================================
-# ฟังก์ชันสำหรับรับ Input จากผู้ใช้ (เหมือนเดิม)
+# ฟังก์ชันรับ Input
 # ======================================================================
 def get_target_choice():
     VALID_SHAPES = ["Circle", "Square", "Rectangle_H", "Rectangle_V"]
@@ -132,15 +113,13 @@ def get_target_choice():
     print("\n--- 🎯 กำหนดลักษณะของเป้าหมาย ---")
     
     while True:
-        prompt = f"เลือกรูปทรง ({'/'.join(VALID_SHAPES)}): "
-        shape = input(prompt).strip().title()
+        shape = input(f"เลือกรูปทรง ({'/'.join(VALID_SHAPES)}): ").strip().title()
         if shape in VALID_SHAPES:
             break
         print("⚠️ รูปทรงไม่ถูกต้อง, กรุณาลองใหม่")
 
     while True:
-        prompt = f"เลือกสี ({'/'.join(VALID_COLORS)}): "
-        color = input(prompt).strip().title()
+        color = input(f"เลือกสี ({'/'.join(VALID_COLORS)}): ").strip().title()
         if color in VALID_COLORS:
             break
         print("⚠️ สีไม่ถูกต้อง, กรุณาลองใหม่")
@@ -149,12 +128,11 @@ def get_target_choice():
     return shape, color
 
 # ======================================================================
-# Main (กลับไประบุ Path ของ Template)
+# Main
 # ======================================================================
 if __name__ == '__main__':
     target_shape, target_color = get_target_choice()
 
-    # --- UPDATED: กลับมาใช้ Path ของ Template ---
     template_files = {
         "Circle": "./Assignment/image_processing/template/circle1.png",
         "Square": "./Assignment/image_processing/template/square.png",
@@ -176,7 +154,6 @@ if __name__ == '__main__':
         
         while True:
             frame = ep_robot.camera.read_cv2_image(timeout=2)
-            
             if frame is None:
                 print("...กำลังรอรับภาพจากหุ่นยนต์...")
                 time.sleep(0.1)
@@ -187,31 +164,23 @@ if __name__ == '__main__':
 
             for obj in detected_objects:
                 is_target = (obj["shape"] == target_shape and obj["color"] == target_color)
-                x, y, _, _ = cv2.boundingRect(obj["contour"])
+                x, y, w, h = cv2.boundingRect(obj["contour"])
 
                 box_color = (0, 0, 255) if is_target else (0, 255, 0)
                 thickness = 4 if is_target else 2
-                
                 cv2.drawContours(output_frame, [obj["contour"]], -1, box_color, thickness)
                 
-                if is_target:
-                    label = "!!! TARGET FOUND !!!"
-                    cv2.putText(output_frame, label, (x, y - 15), 
-                                cv2.FONT_HERSHEY_TRIPLEX, 0.7, box_color, 2)
-                else:
-                    label = f"{obj['shape']}, {obj['color']}"
-                    cv2.putText(output_frame, label, (x, y - 15), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                label = "!!! TARGET FOUND !!!" if is_target else f"{obj['shape']}, {obj['color']}"
+                cv2.putText(output_frame, label, (x, y - 15), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
             cv2.imshow('Robomaster Camera Feed - Press "q" to exit', output_frame)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
+            if cv2.waitKey(1) & 0xFF == ord('q'):
                 print("ได้รับคำสั่งให้ออก...")
                 break
                 
     except Exception as e:
-        print(f"❌ เกิดข้อผิดพลาดร้ายแรง: {e}")
+        print(f"❌ เกิดข้อผิดพลาด: {e}")
         
     finally:
         print("\n🔌 กำลังปิดการเชื่อมต่อ...")
