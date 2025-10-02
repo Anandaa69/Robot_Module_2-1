@@ -14,15 +14,16 @@ import statistics
 # =============================================================================
 # ===== CONFIGURATION & PARAMETERS ============================================
 # =============================================================================
+SPEED_ROTATE = 480
 
 # --- Sharp Distance Sensor Configuration ---
 LEFT_SHARP_SENSOR_ID = 1
 LEFT_SHARP_SENSOR_PORT = 1
-LEFT_TARGET_CM = 15.0
+LEFT_TARGET_CM = 13.0
 
 RIGHT_SHARP_SENSOR_ID = 2
 RIGHT_SHARP_SENSOR_PORT = 1
-RIGHT_TARGET_CM = 15.0
+RIGHT_TARGET_CM = 13.0
 
 # --- IR Sensor Configuration ---
 LEFT_IR_SENSOR_ID = 1
@@ -32,7 +33,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 45.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.25      # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.15      # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -486,7 +487,7 @@ class EnvironmentScanner:
         # [CRITICAL] Set the global lock at the very beginning
         self.is_performing_full_scan = True
         try:
-            self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed(); time.sleep(0.2)
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.15)
             
             readings = {}
             readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
@@ -516,8 +517,8 @@ class EnvironmentScanner:
                     
                     try:
                         self.is_gimbal_centered = False
-                        self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw).wait_for_completed()
-                        time.sleep(0.5)
+                        self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        time.sleep(0.2)
                         
                         tof_confirm_dist_cm = self.side_tof_reading_cm
                         print(f"    -> ToF reading at {target_gimbal_yaw}° is {tof_confirm_dist_cm:.2f} cm.")
@@ -526,7 +527,7 @@ class EnvironmentScanner:
                         print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
                     
                     finally:
-                        self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
+                        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
                         time.sleep(0.2)
 
@@ -539,7 +540,7 @@ class EnvironmentScanner:
             self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
-        self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
+        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         time.sleep(0.2)
         return self.last_tof_distance_cm
 
@@ -602,8 +603,8 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # <<< NEW CODE ADDED >>>
             # Ensure the gimbal is facing forward before moving to the next grid.
             print(f"   -> [{path_name}] Ensuring gimbal is centered before moving...")
-            scanner.gimbal.recenter().wait_for_completed()
-            time.sleep(0.2)
+            scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            time.sleep(0.15)
             # <<< END OF NEW CODE >>>
             
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
