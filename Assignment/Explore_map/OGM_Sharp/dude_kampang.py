@@ -22,7 +22,7 @@ LEFT_TARGET_CM = 15.0
 
 RIGHT_SHARP_SENSOR_ID = 2
 RIGHT_SHARP_SENSOR_PORT = 1
-RIGHT_TARGET_CM = 13.0
+RIGHT_TARGET_CM = 15.0
 
 # --- IR Sensor Configuration ---
 LEFT_IR_SENSOR_ID = 1
@@ -33,6 +33,11 @@ RIGHT_IR_SENSOR_PORT = 2
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 45.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
 SHARP_STDEV_THRESHOLD = 0.25      # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+
+# --- ToF Centering Configuration (from dude_kum.py) ---
+TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
+TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
+TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
 CURRENT_POSITION = (4, 0)  # (แถว, คอลัมน์)
@@ -69,6 +74,19 @@ def convert_adc_to_cm(adc_value):
     # This formula is specific to the GP2Y0A21YK0F sensor.
     # You may need to re-calibrate for your specific sensor.
     return 30263 * (adc_value ** -1.352)
+
+def calibrate_tof_value(raw_tof_value):
+    """
+    NEW: Converts raw ToF value (mm) to a calibrated distance in cm.
+    From dude_kum.py.
+    """
+    try:
+        if raw_tof_value is None or raw_tof_value <= 0:
+            return float('inf')
+        # The formula is: calibrated_cm = (slope * raw_mm) + y_intercept
+        return (TOF_CALIBRATION_SLOPE * raw_tof_value) + TOF_CALIBRATION_Y_INTERCEPT
+    except Exception:
+        return float('inf')
 
 # =============================================================================
 # ===== OCCUPANCY GRID MAP & VISUALIZATION (from map_suay.py) =================
@@ -295,36 +313,80 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.5)
 
     def adjust_position_to_wall(self, sensor_adaptor, attitude_handler, side, sensor_config, target_distance_cm, direction_multiplier):
-        """
-        เวอร์ชันแก้ไข: อ่านค่า ADC โดยตรงเพื่อการตอบสนองที่รวดเร็ว (เหมือน std.py)
-        """
         print(f"\n--- Adjusting {side} Side (Yaw locked at {CURRENT_TARGET_YAW:.2f}°) ---")
-        
         print(f"   -> Config: ID={sensor_config['sharp_id']}, Port={sensor_config['sharp_port']}, Target={target_distance_cm}cm")
-
-        TOLERANCE_CM, MAX_EXEC_TIME, KP_SLIDE, MAX_SLIDE_SPEED = 0.8, 8, 0.045, 0.18 # เพิ่ม KP และ Speed เล็กน้อย
+        TOLERANCE_CM, MAX_EXEC_TIME, KP_SLIDE, MAX_SLIDE_SPEED = 0.8, 8, 0.045, 0.18
         start_time = time.time()
-        
         while time.time() - start_time < MAX_EXEC_TIME:
             adc_val = sensor_adaptor.get_adc(id=sensor_config["sharp_id"], port=sensor_config["sharp_port"])
             current_dist = convert_adc_to_cm(adc_val)
-
             dist_error = target_distance_cm - current_dist
-            
             if abs(dist_error) <= TOLERANCE_CM:
                 print(f"\n[{side}] Target distance reached! Final distance: {current_dist:.2f} cm")
                 break
-
             slide_speed = max(min(direction_multiplier * KP_SLIDE * dist_error, MAX_SLIDE_SPEED), -MAX_SLIDE_SPEED)
             yaw_correction = self._calculate_yaw_correction(attitude_handler, CURRENT_TARGET_YAW)
-            
             self.chassis.drive_speed(x=0, y=slide_speed, z=yaw_correction)
-            
             print(f"Adjusting {side}... Current: {current_dist:5.2f}cm, Target: {target_distance_cm:4.1f}cm, Error: {dist_error:5.2f}cm, Speed: {slide_speed:5.3f}", end='\r')
             time.sleep(0.02)
         else:
              print(f"\n[{side}] Movement timed out!")
-        
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+        time.sleep(0.2)
+
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=19, tol_cm=1.0, max_adjust_time=6.0):
+        """
+        REVISED: Now respects the global activity lock from the scanner.
+        It will not run if a side-scan operation is in progress.
+        """
+        # [CRITICAL] Guard Clause to respect the global lock
+        if scanner.is_performing_full_scan:
+            print("[ToF Centering] SKIPPED: A critical side-scan is in progress.")
+            return
+
+        print("\n--- Stage: Centering in Node with ToF ---")
+        time.sleep(0.2)
+        tof_dist = scanner.last_tof_distance_cm
+        if tof_dist is None or math.isinf(tof_dist):
+            print("[ToF] ❌ No valid ToF data available. Skipping centering.")
+            return
+        print(f"[ToF] Initial front distance: {tof_dist:.2f} cm")
+        if tof_dist >= 50:
+            print("[ToF] Distance >= 50cm, likely in an open space. Skipping centering.")
+            return
+        direction = 0
+        if tof_dist > target_cm + tol_cm:
+            print("[ToF] Too far from front wall. Moving forward...")
+            direction = abs(TOF_ADJUST_SPEED)
+        elif tof_dist < 22:
+            print("[ToF] Too close to front wall. Moving backward...")
+            direction = -abs(TOF_ADJUST_SPEED)
+        else:
+             print("[ToF] In range (22cm - target), but not centered. Moving forward...")
+             direction = abs(TOF_ADJUST_SPEED)
+        if direction == 0:
+             print(f"[ToF] Already centered within tolerance ({tof_dist:.2f} cm). Skipping.")
+             return
+        start_time = time.time()
+        while time.time() - start_time < max_adjust_time:
+            yaw_correction = self._calculate_yaw_correction(attitude_handler, CURRENT_TARGET_YAW)
+            self.chassis.drive_speed(x=direction, y=0, z=yaw_correction, timeout=0.1)
+            time.sleep(0.12)
+            self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+            time.sleep(0.08)
+            current_tof = scanner.last_tof_distance_cm
+            if current_tof is None or math.isinf(current_tof):
+                continue
+            print(f"[ToF] Adjusting... Current Distance: {current_tof:.2f} cm", end="\r")
+            if abs(current_tof - target_cm) <= tol_cm:
+                print(f"\n[ToF] ✅ Centering complete. Final distance: {current_tof:.2f} cm")
+                break
+            if (direction > 0 and current_tof < target_cm - tol_cm) or \
+               (direction < 0 and current_tof > target_cm + tol_cm):
+                direction *= -1
+                print("\n[ToF] 🔄 Overshot target. Reversing direction for fine-tuning.")
+        else:
+            print(f"\n[ToF] ⚠️ Centering timed out. Final distance: {scanner.last_tof_distance_cm:.2f} cm")
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.2)
 
@@ -354,98 +416,117 @@ class MovementController:
         except Exception: pass
 
 class EnvironmentScanner:
-    """ NEW EnvironmentScanner using ToF (front) and Sharp Sensors (sides) """
+    """ 
+    REVISED: Added a global activity lock 'is_performing_full_scan' to prevent
+    any other function from interfering during the complex side-scanning process.
+    """
     def __init__(self, sensor_adaptor, tof_sensor, gimbal, chassis):
         self.sensor_adaptor, self.tof_sensor, self.gimbal, self.chassis = sensor_adaptor, tof_sensor, gimbal, chassis
-        self.tof_wall_threshold_cm = 50.0; self.last_tof_distance_mm = 0
-        self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
+        self.tof_wall_threshold_cm = 50.0
+        
+        # --- State Management Variables ---
+        self.last_tof_distance_cm = float('inf')  # Stores the FRONT distance
+        self.side_tof_reading_cm = float('inf')   # [NEW] Temporary storage for side readings
+        self.is_gimbal_centered = True            # [NEW] State flag to control the callback
+        
+        # --- [NEW] Global Activity Lock ---
+        self.is_performing_full_scan = False
+
+        self.tof_sensor.sub_distance(freq=10, callback=self._tof_data_handler)
         
         self.side_sensors = {
-            "Left":  {
-                "sharp_id": LEFT_SHARP_SENSOR_ID, "sharp_port": LEFT_SHARP_SENSOR_PORT,
-                "ir_id": LEFT_IR_SENSOR_ID, "ir_port": LEFT_IR_SENSOR_PORT
-            },
-            "Right": {
-                "sharp_id": RIGHT_SHARP_SENSOR_ID, "sharp_port": RIGHT_SHARP_SENSOR_PORT,
-                "ir_id": RIGHT_IR_SENSOR_ID, "ir_port": RIGHT_IR_SENSOR_PORT
-            }
+            "Left":  { "sharp_id": 1, "sharp_port": 1, "ir_id": 1, "ir_port": 2 },
+            "Right": { "sharp_id": 2, "sharp_port": 1, "ir_id": 2, "ir_port": 2 }
         }
 
-    def _tof_data_handler(self, sub_info): self.last_tof_distance_mm = sub_info[0]
+    def _tof_data_handler(self, sub_info):
+        """ 
+        MODIFIED: This callback now respects the 'is_gimbal_centered' flag.
+        It only updates the main front distance variable if the gimbal is facing forward.
+        Otherwise, it updates a separate variable for side readings.
+        """
+        calibrated_cm = calibrate_tof_value(sub_info[0])
+        if self.is_gimbal_centered:
+            self.last_tof_distance_cm = calibrated_cm
+        else:
+            self.side_tof_reading_cm = calibrated_cm
 
     def _get_stable_reading_cm(self, side, duration=0.7):
-        """Reads a Sharp sensor for a duration to get a stable value."""
         sensor_info = self.side_sensors.get(side)
         if not sensor_info: return None, None
-        
         readings = []
         start_time = time.time()
         while time.time() - start_time < duration:
             adc = self.sensor_adaptor.get_adc(id=sensor_info["sharp_id"], port=sensor_info["sharp_port"])
             readings.append(convert_adc_to_cm(adc))
             time.sleep(0.05)
-        
         if len(readings) < 5: return None, None
-
-        avg_distance = statistics.mean(readings)
-        std_dev = statistics.stdev(readings)
-        return avg_distance, std_dev
+        return statistics.mean(readings), statistics.stdev(readings)
 
     def get_sensor_readings(self):
         """
-        Performs a full scan: Front (ToF) and Sides (Sharp + IR).
-        Returns a dictionary indicating if a wall is present.
+        REVISED: Now uses a global lock 'is_performing_full_scan' to ensure
+        this entire operation is atomic and uninterruptible.
         """
-        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.2)
-        self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed(); time.sleep(0.2)
-        
-        readings = {}
-        # Front ToF check
-        tof_distance_cm = self.last_tof_distance_mm / 10.0
-        readings['front'] = (tof_distance_cm < self.tof_wall_threshold_cm and self.last_tof_distance_mm > 0)
-        print(f"[SCAN] Front (ToF): {tof_distance_cm:.1f}cm -> {'OCCUPIED' if readings['front'] else 'FREE'}")
-        
-        # Side Sharp + IR sensor checks
-        for side in ["Left", "Right"]:
-            avg_dist, std_dev = self._get_stable_reading_cm(side)
+        # [CRITICAL] Set the global lock at the very beginning
+        self.is_performing_full_scan = True
+        try:
+            self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed(); time.sleep(0.2)
             
-            if avg_dist is None:
-                print(f"[{side.upper()}] Wall Check Error: Not enough sensor data.")
-                readings[side.lower()] = False
-                continue
+            readings = {}
+            readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
+            print(f"[SCAN] Front (ToF): {self.last_tof_distance_cm:.1f}cm -> {'OCCUPIED' if readings['front'] else 'FREE'}")
             
-            # 1. ตรวจสอบจาก Sharp sensor
-            is_sharp_detecting_wall = (avg_dist < SHARP_WALL_THRESHOLD_CM and std_dev < SHARP_STDEV_THRESHOLD)
-            
-            # 2. อ่านค่าจาก IR sensor
-            sensor_config = self.side_sensors[side]
-            ir_value = self.sensor_adaptor.get_io(id=sensor_config["ir_id"], port=sensor_config["ir_port"])
-            is_ir_detecting_wall = (ir_value == 0) # 0 คือเจอ, 1 คือไม่เจอ
+            for side in ["Left", "Right"]:
+                avg_dist, std_dev = self._get_stable_reading_cm(side)
+                if avg_dist is None:
+                    print(f"[{side.upper()}] Wall Check Error: Not enough sensor data.")
+                    readings[side.lower()] = False
+                    continue
+                
+                is_sharp_detecting_wall = (avg_dist < SHARP_WALL_THRESHOLD_CM and std_dev < SHARP_STDEV_THRESHOLD)
+                ir_value = self.sensor_adaptor.get_io(id=self.side_sensors[side]["ir_id"], port=self.side_sensors[side]["ir_port"])
+                is_ir_detecting_wall = (ir_value == 0)
 
-            # 3. [แก้ไข] ตรรกะการตัดสินใจใหม่:
-            #    - ถ้า Sharp เจอกำแพง -> เชื่อ Sharp ทันที (is_wall = True)
-            #    - ถ้า Sharp ไม่เจอ -> ให้ IR เป็นตัวตัดสินสุดท้าย
-            #    ซึ่งสามารถสรุปเป็นเงื่อนไข OR ได้
-            is_wall = is_sharp_detecting_wall or is_ir_detecting_wall
-            readings[side.lower()] = is_wall
-            
-            # ปรับปรุง Log เพื่อให้เห็นค่าจากทั้ง 2 sensors และอธิบายผลลัพธ์
-            print(f"[SCAN] {side} (Sharp) -> Avg Dist: {avg_dist:.2f} cm, Std Dev: {std_dev:.2f} -> Sharp says: {'WALL' if is_sharp_detecting_wall else 'FREE'}")
-            print(f"    -> {side} (IR)   -> Value: {ir_value} -> IR says: {'WALL' if is_ir_detecting_wall else 'FREE'}")
+                print(f"\n[SCAN] {side} Side Analysis:")
+                print(f"    -> Sharp -> Suggests: {'WALL' if is_sharp_detecting_wall else 'FREE'}")
+                print(f"    -> IR    -> Suggests: {'WALL' if is_ir_detecting_wall else 'FREE'}")
 
-            if is_sharp_detecting_wall:
-                print("    -> Final Result: WALL DETECTED (Based on Sharp sensor)")
-            elif is_ir_detecting_wall:
-                print("    -> Final Result: WALL DETECTED (Sharp was clear, but IR override detected an object)")
-            else:
-                print("    -> Final Result: NO WALL (Both sensors agree the path is clear)")
+                if is_sharp_detecting_wall == is_ir_detecting_wall:
+                    is_wall = is_sharp_detecting_wall
+                    print(f"    -> Decision: Sensors agree. Result is {'WALL' if is_wall else 'FREE'}.")
+                else:
+                    print("    -> Ambiguity detected! Confirming with ToF...")
+                    target_gimbal_yaw = -90 if side == "Left" else 90
+                    
+                    try:
+                        self.is_gimbal_centered = False
+                        self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw).wait_for_completed()
+                        time.sleep(0.5)
+                        
+                        tof_confirm_dist_cm = self.side_tof_reading_cm
+                        print(f"    -> ToF reading at {target_gimbal_yaw}° is {tof_confirm_dist_cm:.2f} cm.")
+                        
+                        is_wall = (tof_confirm_dist_cm < self.tof_wall_threshold_cm)
+                        print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
+                    
+                    finally:
+                        self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
+                        self.is_gimbal_centered = True
+                        time.sleep(0.2)
+
+                readings[side.lower()] = is_wall
+                print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
             
-        return readings
+            return readings
+        finally:
+            # [CRITICAL] Release the global lock when the function is completely done
+            self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
         self.gimbal.moveto(pitch=0, yaw=0).wait_for_completed()
         time.sleep(0.2)
-        return self.last_tof_distance_mm / 10.0 if self.last_tof_distance_mm > 0 else 999.0
+        return self.last_tof_distance_cm
 
     def cleanup(self):
         try: self.tof_sensor.unsub_distance()
@@ -488,53 +569,54 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                 shortest_path = path
     return shortest_path
 
-def execute_path(path, movement_controller, attitude_handler, visualizer, occupancy_map, path_name="Backtrack"):
+def execute_path(path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Backtrack"):
     global CURRENT_POSITION
     print(f"🎯 Executing {path_name} Path: {path}")
     dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
     for i in range(len(path) - 1):
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
+        
         if i + 1 < len(path):
             next_r, next_c = path[i+1]
             dr, dc = next_r - current_r, next_c - current_c
             target_direction = dir_vectors_map[(dr, dc)]
+            
             movement_controller.rotate_to_direction(target_direction, attitude_handler)
+            
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+            
+            movement_controller.center_in_node_with_tof(scanner, attitude_handler)
+
             CURRENT_POSITION = (next_r, next_c)
-    visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
+            visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
+            
+            print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
+            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+
     print(f"✅ {path_name} complete.")
 
 def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer):
-    """
-    NEW function to check for walls, update the map, and physically align the robot.
-    Replaces the old 'perform_centering_nudge'.
-    """
     print("\n--- Stage: Wall Detection & Side Alignment ---")
     r, c = CURRENT_POSITION
     dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
     
-    # Get a stable reading for both sides
     side_walls_present = scanner.get_sensor_readings()
 
-    # --- LEFT WALL ---
     left_dir_abs = (CURRENT_DIRECTION - 1 + 4) % 4
     occupancy_map.update_wall(r, c, dir_map_abs_char[left_dir_abs], side_walls_present['left'], 'sharp')
     visualizer.update_plot(occupancy_map, CURRENT_POSITION)
     if side_walls_present['left']:
-        # Call the updated adjustment function
         movement_controller.adjust_position_to_wall(
             scanner.sensor_adaptor, attitude_handler, "Left", 
             scanner.side_sensors["Left"], LEFT_TARGET_CM, direction_multiplier=1
         )
     
-    # --- RIGHT WALL ---
     right_dir_abs = (CURRENT_DIRECTION + 1) % 4
     occupancy_map.update_wall(r, c, dir_map_abs_char[right_dir_abs], side_walls_present['right'], 'sharp')
     visualizer.update_plot(occupancy_map, CURRENT_POSITION)
     if side_walls_present['right']:
-        # Call the updated adjustment function
         movement_controller.adjust_position_to_wall(
             scanner.sensor_adaptor, attitude_handler, "Right", 
             scanner.side_sensors["Right"], RIGHT_TARGET_CM, direction_multiplier=-1
@@ -543,7 +625,6 @@ def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_ha
     if not side_walls_present['left'] and not side_walls_present['right']:
         print("\n⚠️  WARNING: No side walls detected. Skipping alignment.")
     
-    # Final check to ensure robot is perfectly straight
     attitude_handler.correct_yaw_to_target(movement_controller.chassis, CURRENT_TARGET_YAW)
     time.sleep(0.3)
 
@@ -556,21 +637,20 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         r, c = CURRENT_POSITION
         print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
         
-        # 1. Perform side wall detection, mapping, and physical alignment
+        print("   -> Resetting Yaw to ensure perfect alignment before new step...")
+        attitude_handler.correct_yaw_to_target(movement_controller.chassis, CURRENT_TARGET_YAW)
+        
         perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
 
-        # 2. Perform official scan for front wall and map it
         print("--- Performing Scan for Mapping (Front ToF Only) ---")
         is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
         dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
         occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
         
-        # 3. Mark current node as visited and free
         occupancy_map.update_node(r, c, False, 'tof')
         visited_cells.add((r, c))
         visualizer.update_plot(occupancy_map, CURRENT_POSITION)
         
-        # 4. Decide on the next move
         priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
         moved = False
         dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
@@ -585,7 +665,6 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 print("    Confirming path forward with ToF...")
                 is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
                 
-                # Update map with this new information before final decision
                 occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
                 print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
                 visualizer.update_plot(occupancy_map, CURRENT_POSITION)
@@ -593,6 +672,9 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+
+                    movement_controller.center_in_node_with_tof(scanner, attitude_handler)
+
                     CURRENT_POSITION = (target_r, target_c)
                     moved = True
                     break
@@ -604,7 +686,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
             backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
 
             if backtrack_path and len(backtrack_path) > 1:
-                execute_path(backtrack_path, movement_controller, attitude_handler, visualizer, occupancy_map)
+                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
                 print("Backtrack to new area complete. Resuming exploration.")
                 continue
             else:
@@ -646,7 +728,7 @@ if __name__ == '__main__':
             path_to_target = find_path_bfs(occupancy_map, CURRENT_POSITION, TARGET_DESTINATION)
             if path_to_target and len(path_to_target) > 1:
                 print(f"✅ Path found to target: {path_to_target}")
-                execute_path(path_to_target, movement_controller, attitude_handler, visualizer, occupancy_map, path_name="Final Navigation")
+                execute_path(path_to_target, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Final Navigation")
                 print(f"🎉🎉 Robot has arrived at the target destination: {TARGET_DESTINATION}!")
             else:
                 print(f"⚠️ Could not find a path from {CURRENT_POSITION} to {TARGET_DESTINATION}.")

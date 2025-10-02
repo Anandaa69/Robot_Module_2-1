@@ -193,7 +193,7 @@ class RobotMasterController:
 
     def move_forward_with_pid(self, target_distance):
         print(f"\n--- Moving Forward ({target_distance}m) ---")
-        PID_KP, PID_KI, PID_KD = 1.9, 0.25, 10
+        PID_KP, PID_KI, PID_KD = 1.5, 0.25, 10
         RAMP_UP_TIME, MOVE_TIMEOUT = 0.8, 7.0
         
         prev_error, integral = 0, 0
@@ -224,9 +224,8 @@ class RobotMasterController:
         print(f"\nMoved a total distance of {abs(self.current_x - start_position):.3f}m")
         print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
 
-
     # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
-    def center_in_node_with_tof(self, target_cm=19, tol_cm=0.5, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, target_cm=20, tol_cm=0.5, max_adjust_time=6.0):
         if self.tof_latest is None:
             print("[ToF] ❌ ไม่มีข้อมูล ToF -> ข้ามการจัดตำแหน่ง")
             return
@@ -236,7 +235,7 @@ class RobotMasterController:
         if tof >= 50:
             print("[ToF] >=50 cm -> ไม่อยู่ในโหนด ข้าม")
             return
-        if tof > 50:
+        if tof > 45:
             print("[ToF] >45 cm -> อยู่ระหว่างโหนด ข้าม")
             return
 
@@ -311,8 +310,7 @@ def main():
             controller.set_master_heading()
             controller.hold_still(0.15)
             
-
-            print("\n--- Stage 2: Wall Detection & Side Alignment ---")
+            print("\n--- Stage 2: Wall Detection & Side Alignment (Pre-Move) ---")
             left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
             right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
 
@@ -330,13 +328,40 @@ def main():
             controller.align_to_master_heading()
             controller.hold_still(0.15)
 
-            # ✅ เคลื่อนที่แล้วปรับให้อยู่กลางโหนดด้วย ToF
+            # Stage 3: Movement
             controller.move_forward_with_pid(BLOCK_DISTANCE_M)
             controller.hold_still(0.15)
+        
+            # ===================================================
+            # 🟢 Stage 4: Post-Move Side Alignment (แก้ไขการเยื้อง)
+            # ===================================================
+            print("\n--- Stage 4: Post-Move Side Alignment ---")
+            left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
+            right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
+
+            if left_wall_present:
+                # ใช้ Direction Multiplier = 1 สำหรับเลื่อนไปทางขวาเมื่อกำแพงซ้ายใกล้ไป
+                controller.adjust_position(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, LEFT_TARGET_CM, "Left", 1)
+                controller.hold_still(0.15)
+            if right_wall_present:
+                # ใช้ Direction Multiplier = -1 สำหรับเลื่อนไปทางซ้ายเมื่อกำแพงขวาใกล้ไป
+                controller.adjust_position(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, RIGHT_TARGET_CM, "Right", -1)
+                controller.hold_still(0.15)
+
+            if not left_wall_present and not right_wall_present:
+                print("\n⚠️  WARNING: No walls detected post-move. Skipping side alignment.")
+                controller.hold_still(0.15)
+                
+            # จัดตำแหน่งทิศทางอีกครั้งหลังการจัดตำแหน่งด้านข้าง
+            controller.align_to_master_heading()
+            controller.hold_still(0.15)
+            
+            # Stage 5: ToF Centering (แก้ไขการเยื้อง)
             controller.center_in_node_with_tof()
 
             print(f"\n--- ✅ Block {i + 1} complete. ---")
             controller.hold_still(0.15)
+            # ⬆️ จบลูป for ตรงนี้
 
         print("\n🎉🎉🎉 SEQUENCE FINISHED! 🎉🎉🎉")
 
