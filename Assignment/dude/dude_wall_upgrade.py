@@ -12,10 +12,13 @@ import traceback
 BLOCK_DISTANCE_M = 0.6
 LEFT_SENSOR_ADAPTOR_ID = 1
 LEFT_SENSOR_PORT = 1
+LEFT_TARGET_CM = 13.5
 RIGHT_SENSOR_ADAPTOR_ID = 2
 RIGHT_SENSOR_PORT = 1
+RIGHT_TARGET_CM = 13.0
 
-TARGET_WALL_DISTANCE_CM = 15.0   # ✅ ระยะห่างจากกำแพงที่ต้องการ (ซ้าย/ขวา)
+# ⚙️ ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
+TOF_ADJUST_SPEED = 0.1  # ✅ ปรับค่าได้เอง
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -86,6 +89,10 @@ class RobotMasterController:
         except Exception:
             pass
 
+    def set_master_heading(self):
+        self.master_target_yaw = self.current_yaw
+        print(f"\n--- New Master Heading Locked: {self.master_target_yaw:.2f}° ---")
+
     def _calculate_yaw_correction_speed(self):
         KP_YAW, MAX_YAW_SPEED, DEADBAND = 1.8, 25, 0.5
         yaw_error = normalize_angle(self.master_target_yaw - self.current_yaw)
@@ -102,56 +109,123 @@ class RobotMasterController:
             time.sleep(0.05)
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
 
-    # ✅ ฟังก์ชันใหม่: เดินไปข้างหน้า + รักษาระยะจากผนัง
-    def move_forward_with_wall_following(self, target_distance_m=0.6, target_cm=15.0):
-        print(f"\n--- Moving Forward with Wall Following ({target_distance_m} m, {target_cm} cm from wall) ---")
-        KP_SIDE = 0.035       # ค่าขยายการแก้ด้านข้าง
-        KP_FORWARD = 0.3      # ความเร็วเดินหน้า
-        MAX_SPEED_X = 0.4     # จำกัดความเร็วแกน x
-        MAX_SPEED_Y = 0.2     # จำกัดความเร็วแกน y
-
-        start_position = self.current_x
+    def check_for_wall(self, sensor_id, port, side_name):
+        print(f"\n[{side_name}] Performing wall detection check (with active Yaw lock)...")
+        CHECK_DURATION_S = 1
+        MAX_STD_DEV_THRESHOLD = 0.8
+        MAX_AVG_DISTANCE_THRESHOLD = 50
+        readings = []
         start_time = time.time()
+
+        while time.time() - start_time < CHECK_DURATION_S:
+            yaw_correction_speed = self._calculate_yaw_correction_speed()
+            self.chassis.drive_speed(x=0, y=0, z=yaw_correction_speed, timeout=0.1)
+
+            adc = self.sensor_adaptor.get_adc(id=sensor_id, port=port)
+            readings.append(convert_adc_to_cm(adc))
+            time.sleep(0.05)
+        
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+
+        if len(readings) < 5:
+            print(f"[{side_name}] Wall Check Error: Not enough sensor data collected.")
+            return False
+
+        avg_distance = statistics.mean(readings)
+        std_dev = statistics.stdev(readings)
+        print(f"[{side_name}] Wall Check Stats -> Avg Dist: {avg_distance:.2f} cm, Std Dev: {std_dev:.2f}")
+
+        if std_dev > MAX_STD_DEV_THRESHOLD:
+            print(f"[{side_name}] Wall NOT Detected: Unstable readings.")
+            return False
+        if avg_distance > MAX_AVG_DISTANCE_THRESHOLD:
+            print(f"[{side_name}] Wall NOT Detected: Too far.")
+            return False
+
+        print(f"[{side_name}] Wall detected. Ready for adjustment.")
+        return True
+
+    def align_to_master_heading(self, yaw_tolerance=1.5):
+        print(f"\n--- Aligning Robot to Master Heading: {self.master_target_yaw:.2f}° ---")
+        angle_to_correct = -normalize_angle(self.master_target_yaw - self.current_yaw)
+        if abs(angle_to_correct) > yaw_tolerance:
+            print(f"🔧 Coarse adjustment by {angle_to_correct:.2f}°...")
+            self.chassis.move(x=0, y=0, z=angle_to_correct, z_speed=60).wait_for_completed(timeout=3)
+            self.hold_still(0.3)
+        
+        final_error = normalize_angle(self.master_target_yaw - self.current_yaw)
+        if abs(final_error) > yaw_tolerance:
+            print(f"⚠️ Fine-tuning by {-final_error:.2f}°...")
+            self.chassis.move(x=0, y=0, z=-final_error, z_speed=40).wait_for_completed(timeout=2)
+            self.hold_still(0.3)
+
+        final_error_after_tune = normalize_angle(self.master_target_yaw - self.current_yaw)
+        if abs(final_error_after_tune) <= yaw_tolerance:
+            print(f"✅ Alignment Success! Final Yaw: {self.current_yaw:.2f}°")
+        else:
+            print(f"🔥 ALIGNMENT FAILED. Final Yaw: {self.current_yaw:.2f}° (Error: {final_error_after_tune:.2f}°)")
+        return True
+
+    # ✅ ฟังก์ชันใหม่: เคลื่อนที่ไปข้างหน้าพร้อมรักษาระยะจากกำแพง real-time
+    def move_forward_with_wall_follow(self, target_distance,
+                                    left_id, left_port, left_target,
+                                    right_id, right_port, right_target,
+                                    tol_cm=2.0):
+        print(f"\n--- Moving Forward with Wall Following ({target_distance}m) ---")
         MOVE_TIMEOUT = 10.0
+        BASE_SPEED = 0.25   # ความเร็วเดินหน้าคงที่
+        MAX_SLIDE = 0.1     # ความเร็วแกน y สูงสุด
+        KP_WALL = 0.02      # ค่าคุมการแก้ด้านข้าง
+
+        start_time = time.time()
+        start_position = self.current_x
+        last_valid_target = (left_target + right_target) / 2
 
         while time.time() - start_time < MOVE_TIMEOUT:
             relative_pos = abs(self.current_x - start_position)
-            if relative_pos >= target_distance_m:
-                print(f"✅ Reached {target_distance_m} m")
+            if relative_pos >= target_distance - 0.02:
                 break
 
-            # อ่านค่าเซนเซอร์ซ้าย/ขวา
-            left_dist = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=LEFT_SENSOR_ADAPTOR_ID, port=LEFT_SENSOR_PORT))
-            right_dist = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=RIGHT_SENSOR_ADAPTOR_ID, port=RIGHT_SENSOR_PORT))
+            # ========= อ่านค่าจากเซนเซอร์ =========
+            left_val = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=left_id, port=left_port))
+            right_val = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=right_id, port=right_port))
 
-            has_left = left_dist < 50
-            has_right = right_dist < 50
+            active_sides = []
+            if left_val < 50:
+                active_sides.append(left_val)
+            if right_val < 50:
+                active_sides.append(right_val)
 
-            side_error = 0.0
-            if has_left and has_right:
-                side_error = (left_dist - right_dist) / 2.0
-            elif has_left:
-                side_error = target_cm - left_dist
-            elif has_right:
-                side_error = right_dist - target_cm
+            if active_sides:
+                current_target = sum(active_sides) / len(active_sides)
+                last_valid_target = current_target
             else:
-                side_error = 0.0
+                current_target = last_valid_target
 
-            # คำนวณความเร็ว
-            x_speed = min(MAX_SPEED_X, KP_FORWARD)
-            y_speed = max(min(KP_SIDE * side_error, MAX_SPEED_Y), -MAX_SPEED_Y)
+            # ========= คำนวณ error =========
+            dist_error = 0
+            if left_val < 50 and right_val < 50:
+                dist_error = ((left_val + right_val) / 2) - current_target
+            elif left_val < 50:
+                dist_error = left_val - current_target
+            elif right_val < 50:
+                dist_error = right_val - current_target
+
+            # ========= คำนวณการแก้ด้านข้าง =========
+            slide_speed = 0.0
+            if abs(dist_error) > tol_cm:
+                slide_speed = max(min(-KP_WALL * dist_error, MAX_SLIDE), -MAX_SLIDE)
+
+            # ========= เดินไปข้างหน้า + ปรับนิดหน่อย =========
             yaw_correction = self._calculate_yaw_correction_speed()
+            self.chassis.drive_speed(x=BASE_SPEED, y=slide_speed, z=yaw_correction, timeout=0.1)
 
-            self.chassis.drive_speed(x=x_speed, y=y_speed, z=yaw_correction, timeout=0.1)
+            print(f"Moving... {relative_pos:.2f}/{target_distance:.2f} m | "
+                f"L:{left_val:.1f} R:{right_val:.1f} CorrY:{slide_speed:.3f}", end="\r")
 
-            print(f"Dist: {relative_pos:.2f}/{target_distance_m:.2f} m | "
-                f"L:{left_dist:.1f} R:{right_dist:.1f} cm | "
-                f"Error:{side_error:.2f}", end="\r")
-
-            time.sleep(0.05)
-
+        # หยุดเมื่อถึงเป้าหมาย
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        print("\n--- Finished Wall Following Move ---")
+        print(f"\nMoved {abs(self.current_x - start_position):.3f}m (with wall following).")
 
     def cleanup(self):
         print("Closing controller...")
@@ -190,14 +264,31 @@ def main():
             print(f"===== PROCESSING BLOCK {i + 1} / {num_blocks_to_move} =====")
             print("="*60)
 
-            controller.master_target_yaw = controller.current_yaw
+            controller.set_master_heading()
+            controller.hold_still(0.15)
+            
+            print("\n--- Stage 2: Wall Detection & Side Alignment ---")
+            left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
+            right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
+
+            if not left_wall_present and not right_wall_present:
+                print("\n⚠️  WARNING: No walls detected. จะใช้ wall-following ด้วยค่าล่าสุดแทน")
+                controller.hold_still(0.15)
+
+            controller.align_to_master_heading()
             controller.hold_still(0.15)
 
-            # ✅ เคลื่อนที่พร้อมรักษาระยะ 15 cm
-            controller.move_forward_with_wall_following(BLOCK_DISTANCE_M, target_cm=TARGET_WALL_DISTANCE_CM)
-            controller.hold_still(0.2)
+            # ✅ เคลื่อนที่พร้อมรักษาระยะจากกำแพงแบบ real-time
+            controller.move_forward_with_wall_follow(
+                BLOCK_DISTANCE_M,
+                LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, LEFT_TARGET_CM,
+                RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, RIGHT_TARGET_CM
+            )
+            controller.hold_still(0.15)
+            
 
             print(f"\n--- ✅ Block {i + 1} complete. ---")
+            controller.hold_still(0.15)
 
         print("\n🎉🎉🎉 SEQUENCE FINISHED! 🎉🎉🎉")
 

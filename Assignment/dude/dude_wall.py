@@ -224,6 +224,7 @@ class RobotMasterController:
         print(f"\nMoved a total distance of {abs(self.current_x - start_position):.3f}m")
         print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
 
+
     # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
     def center_in_node_with_tof(self, target_cm=20, tol_cm=0.5, max_adjust_time=6.0):
         if self.tof_latest is None:
@@ -310,6 +311,7 @@ def main():
             controller.set_master_heading()
             controller.hold_still(0.15)
             
+
             print("\n--- Stage 2: Wall Detection & Side Alignment ---")
             left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
             right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
