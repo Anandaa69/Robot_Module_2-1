@@ -33,7 +33,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 45.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.15      # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.3     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -41,9 +41,9 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5, 0)  # (แถว, คอลัมน์)
+CURRENT_POSITION = (5, 3)  # (แถว, คอลัมน์)
 CURRENT_DIRECTION = 0      # 0:North, 1:East, 2:South, 3:West
-TARGET_DESTINATION = (5, 0)
+TARGET_DESTINATION = (5, 3)
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
@@ -263,19 +263,19 @@ class AttitudeHandler:
         while angle <= -180: angle += 360
         return angle
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
-        normalized_target = self.normalize_angle(target_yaw); time.sleep(0.2)
+        normalized_target = self.normalize_angle(target_yaw); time.sleep(0.1)
         robot_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
         print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {target_yaw:.1f}°. Rotating: {robot_rotation:.1f}°")
         if abs(robot_rotation) > self.yaw_tolerance:
             chassis.move(x=0, y=0, z=robot_rotation, z_speed=60).wait_for_completed(timeout=2)
-            time.sleep(0.2)
+            time.sleep(0.1)
         final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
         if final_error <= self.yaw_tolerance: print(f"✅ Yaw Correction Success: {self.current_yaw:.1f}°"); return True
         print(f"⚠️ First attempt incomplete. Current: {self.current_yaw:.1f}°. Fine-tuning...")
         remaining_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
         if abs(remaining_rotation) > 0.5 and abs(remaining_rotation) < 20:
             chassis.move(x=0, y=0, z=remaining_rotation, z_speed=40).wait_for_completed(timeout=2)
-            time.sleep(0.2)
+            time.sleep(0.1)
         final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
         if final_error <= self.yaw_tolerance: print(f"✅ Yaw Fine-tuning Success: {self.current_yaw:.1f}°"); return True
         else: print(f"🔥🔥 Yaw Correction FAILED. Final Yaw: {self.current_yaw:.1f}°"); return False
@@ -347,7 +347,7 @@ class MovementController:
         else:
              print(f"\n[{side}] Movement timed out!")
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=19, tol_cm=1.0, max_adjust_time=6.0):
         """
@@ -360,7 +360,7 @@ class MovementController:
             return
 
         print("\n--- Stage: Centering in Node with ToF ---")
-        time.sleep(0.2)
+        time.sleep(0.1)
         tof_dist = scanner.last_tof_distance_cm
         if tof_dist is None or math.isinf(tof_dist):
             print("[ToF] ❌ No valid ToF data available. Skipping centering.")
@@ -404,7 +404,7 @@ class MovementController:
         else:
             print(f"\n[ToF] ⚠️ Centering timed out. Final distance: {scanner.last_tof_distance_cm:.2f} cm")
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     def rotate_to_direction(self, target_direction, attitude_handler):
         global CURRENT_DIRECTION
@@ -467,7 +467,7 @@ class EnvironmentScanner:
         else:
             self.side_tof_reading_cm = calibrated_cm
 
-    def _get_stable_reading_cm(self, side, duration=0.7):
+    def _get_stable_reading_cm(self, side, duration=0.35):
         sensor_info = self.side_sensors.get(side)
         if not sensor_info: return None, None
         readings = []
@@ -518,7 +518,7 @@ class EnvironmentScanner:
                     try:
                         self.is_gimbal_centered = False
                         self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                        time.sleep(0.2)
+                        time.sleep(0.1)
                         
                         tof_confirm_dist_cm = self.side_tof_reading_cm
                         print(f"    -> ToF reading at {target_gimbal_yaw}° is {tof_confirm_dist_cm:.2f} cm.")
@@ -529,7 +529,7 @@ class EnvironmentScanner:
                     finally:
                         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
-                        time.sleep(0.2)
+                        time.sleep(0.1)
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -541,7 +541,7 @@ class EnvironmentScanner:
 
     def get_front_tof_cm(self):
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.1)
         return self.last_tof_distance_cm
 
     def cleanup(self):
@@ -649,7 +649,7 @@ def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_ha
         print("\n⚠️  WARNING: No side walls detected. Skipping alignment.")
     
     attitude_handler.correct_yaw_to_target(movement_controller.chassis, get_compensated_target_yaw()) # MODIFIED
-    time.sleep(0.3)
+    time.sleep(0.1)
 
 
 def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_map, visualizer, max_steps=40):
@@ -699,8 +699,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
                 print("    Ensuring gimbal is centered before ToF confirmation...")
-                scanner.gimbal.recenter().wait_for_completed()
-                time.sleep(0.2)
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
+                time.sleep(0.1)
                 # <<< END OF NEW CODE >>>
                 
                 print("    Confirming path forward with ToF...")
@@ -753,7 +753,7 @@ if __name__ == '__main__':
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
         
-        print(" GIMBAL: Centering gimbal..."); ep_gimbal.recenter().wait_for_completed()
+        print(" GIMBAL: Centering gimbal..."); ep_gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         
         scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor, ep_gimbal, ep_chassis)
         movement_controller = MovementController(ep_chassis)
