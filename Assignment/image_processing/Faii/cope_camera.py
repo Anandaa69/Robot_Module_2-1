@@ -4,24 +4,18 @@ import sys
 import robomaster
 from robomaster import robot
 import time
-import os
 
 # ======================================================================
-# คลาส ObjectDetector (รองรับ 4 สี + 4 shape + crop objects)
+# คลาส ObjectDetector (รองรับ 4 สี + 4 shape, ไม่ save crop)
 # ======================================================================
 class ObjectDetector:
-    def __init__(self, template_paths, save_crops=True, crop_folder="./cropped_objects"):
+    def __init__(self, template_paths):
         print("🖼️  กำลังโหลดและประมวลผลภาพ Templates...")
         self.templates = self._load_templates(template_paths)
         if not self.templates:
             print("❌ ไม่สามารถโหลดไฟล์ Template ได้, กรุณาตรวจสอบว่าไฟล์ภาพอยู่ในโฟลเดอร์ที่ถูกต้อง")
             sys.exit(1)
         print(f"✅ โหลด Templates สำเร็จ: {list(self.templates.keys())}")
-        
-        self.save_crops = save_crops
-        self.crop_folder = crop_folder
-        if save_crops and not os.path.exists(crop_folder):
-            os.makedirs(crop_folder)
 
     def _load_templates(self, template_paths):
         processed_templates = {}
@@ -45,7 +39,6 @@ class ObjectDetector:
         hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
         detected_objects = []
 
-        # --- ช่วงสี ---
         color_ranges = {
             'Red': [(np.array([0, 120, 70]), np.array([10, 255, 255])), (np.array([170, 120, 70]), np.array([180, 255, 255]))],
             'Yellow': [(np.array([22, 93, 0]), np.array([45, 255, 255]))],
@@ -62,7 +55,6 @@ class ObjectDetector:
         for color_name in ['Yellow', 'Green', 'Blue']:
             combined_mask = cv2.bitwise_or(combined_mask, masks[color_name])
 
-        # Noise removal
         kernel = np.ones((7, 7), np.uint8)
         opened_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
         cleaned_mask = cv2.morphologyEx(opened_mask, cv2.MORPH_CLOSE, kernel)
@@ -74,7 +66,6 @@ class ObjectDetector:
             if area < 2500:
                 continue
 
-            # Template Matching
             best_match_score = float('inf')
             best_match_shape = "Unknown"
             for shape_name, template_cnt in self.templates.items():
@@ -87,7 +78,6 @@ class ObjectDetector:
             if best_match_score < 0.4:
                 shape = best_match_shape
 
-            # Circularity check
             peri = cv2.arcLength(cnt, True)
             if peri > 0:
                 circularity = (4 * np.pi * area) / (peri ** 2)
@@ -95,7 +85,6 @@ class ObjectDetector:
                     shape = "Circle"
 
             if shape != "Unknown":
-                # Detect color
                 contour_mask = np.zeros(frame.shape[:2], dtype="uint8")
                 cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
                 
@@ -111,18 +100,6 @@ class ObjectDetector:
                         "color": found_color,
                         "contour": cnt,
                     })
-                    
-                    # Crop object
-                    x, y, w, h = cv2.boundingRect(cnt)
-                    cropped_obj = frame[y:y+h, x:x+w].copy()
-                    
-                    # Apply mask to crop (optional)
-                    masked_crop = cv2.bitwise_and(cropped_obj, cropped_obj, mask=contour_mask[y:y+h, x:x+w])
-                    
-                    if self.save_crops:
-                        filename = f"{shape}_{found_color}_{int(time.time()*1000)}.png"
-                        filepath = os.path.join(self.crop_folder, filename)
-                        cv2.imwrite(filepath, masked_crop)
 
         return detected_objects
 
@@ -162,7 +139,7 @@ if __name__ == '__main__':
         "Rectangle_H": "./Assignment/image_processing/template/rec_h.png",
         "Rectangle_V": "./Assignment/image_processing/template/rec_v.png",
     }
-    detector = ObjectDetector(template_paths=template_files, save_crops=True)
+    detector = ObjectDetector(template_paths=template_files)
 
     ep_robot = robot.Robot()
     
@@ -203,4 +180,12 @@ if __name__ == '__main__':
                 break
                 
     except Exception as e:
-        print(f"เสร็จ")
+        print(f"❌ เกิดข้อผิดพลาด: {e}")
+        
+    finally:
+        print("\n🔌 กำลังปิดการเชื่อมต่อ...")
+        if ep_robot._sdk_connection is not None:
+             ep_robot.camera.stop_video_stream()
+             ep_robot.close()
+        cv2.destroyAllWindows()
+        print("✅ ปิดการเชื่อมต่อเรียบร้อย")
