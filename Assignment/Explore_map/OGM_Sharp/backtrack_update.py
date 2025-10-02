@@ -22,7 +22,7 @@ LEFT_TARGET_CM = 15.0
 
 RIGHT_SHARP_SENSOR_ID = 2
 RIGHT_SHARP_SENSOR_PORT = 1
-RIGHT_TARGET_CM = 13.0
+RIGHT_TARGET_CM = 15.0
 
 # --- IR Sensor Configuration ---
 LEFT_IR_SENSOR_ID = 1
@@ -422,7 +422,7 @@ class EnvironmentScanner:
             ir_value = self.sensor_adaptor.get_io(id=sensor_config["ir_id"], port=sensor_config["ir_port"])
             is_ir_detecting_wall = (ir_value == 0) # 0 คือเจอ, 1 คือไม่เจอ
 
-            # 3. [แก้ไข] ตรรกะการตัดสินใจใหม่:
+            # 3. ตรรกะการตัดสินใจใหม่:
             #    - ถ้า Sharp เจอกำแพง -> เชื่อ Sharp ทันที (is_wall = True)
             #    - ถ้า Sharp ไม่เจอ -> ให้ IR เป็นตัวตัดสินสุดท้าย
             #    ซึ่งสามารถสรุปเป็นเงื่อนไข OR ได้
@@ -488,22 +488,34 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                 shortest_path = path
     return shortest_path
 
-def execute_path(path, movement_controller, attitude_handler, visualizer, occupancy_map, path_name="Backtrack"):
+def execute_path(path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Backtrack"):
     global CURRENT_POSITION
     print(f"🎯 Executing {path_name} Path: {path}")
     dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
     for i in range(len(path) - 1):
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
+        
+        # --- ส่วนของการเคลื่อนที่ (เหมือนเดิม) ---
         if i + 1 < len(path):
             next_r, next_c = path[i+1]
             dr, dc = next_r - current_r, next_c - current_c
             target_direction = dir_vectors_map[(dr, dc)]
+            
             movement_controller.rotate_to_direction(target_direction, attitude_handler)
+            
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+            
             CURRENT_POSITION = (next_r, next_c)
-    visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
+            visualizer.update_plot(occupancy_map, CURRENT_POSITION, path) # อัปเดตภาพหลังเดิน
+            
+            # --- [ส่วนที่เพิ่มเข้ามา] ---
+            # หลังจากเดินไปถึงช่องใหม่แล้ว ให้ทำการตรวจสอบกำแพงด้านข้างและปรับตำแหน่ง
+            print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
+            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+            # ---------------------------
+
     print(f"✅ {path_name} complete.")
 
 def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer):
@@ -556,6 +568,13 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         r, c = CURRENT_POSITION
         print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
         
+        # --- [ส่วนที่เพิ่มเข้ามา] ---
+        # เพื่อความแน่นอน: ทำการบังคับตั้งตรงทุกครั้งที่เริ่ม Step ใหม่
+        # เพื่อล้างค่า Error ของ Yaw ที่อาจเกิดขึ้นจากการหยุดนิ่งใน Step ที่แล้ว
+        print("   -> Resetting Yaw to ensure perfect alignment before new step...")
+        attitude_handler.correct_yaw_to_target(movement_controller.chassis, CURRENT_TARGET_YAW)
+        # ---------------------------
+
         # 1. Perform side wall detection, mapping, and physical alignment
         perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
 
@@ -604,7 +623,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
             backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
 
             if backtrack_path and len(backtrack_path) > 1:
-                execute_path(backtrack_path, movement_controller, attitude_handler, visualizer, occupancy_map)
+                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
                 print("Backtrack to new area complete. Resuming exploration.")
                 continue
             else:
@@ -646,7 +665,7 @@ if __name__ == '__main__':
             path_to_target = find_path_bfs(occupancy_map, CURRENT_POSITION, TARGET_DESTINATION)
             if path_to_target and len(path_to_target) > 1:
                 print(f"✅ Path found to target: {path_to_target}")
-                execute_path(path_to_target, movement_controller, attitude_handler, visualizer, occupancy_map, path_name="Final Navigation")
+                execute_path(path_to_target, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Final Navigation")
                 print(f"🎉🎉 Robot has arrived at the target destination: {TARGET_DESTINATION}!")
             else:
                 print(f"⚠️ Could not find a path from {CURRENT_POSITION} to {TARGET_DESTINATION}.")

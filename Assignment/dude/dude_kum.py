@@ -193,7 +193,7 @@ class RobotMasterController:
 
     def move_forward_with_pid(self, target_distance):
         print(f"\n--- Moving Forward ({target_distance}m) ---")
-        PID_KP, PID_KI, PID_KD = 1.5, 0.25, 10
+        PID_KP, PID_KI, PID_KD = 1.9, 0.25, 10
         RAMP_UP_TIME, MOVE_TIMEOUT = 0.8, 7.0
         
         prev_error, integral = 0, 0
@@ -225,7 +225,7 @@ class RobotMasterController:
         print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
 
     # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
-    def center_in_node_with_tof(self, target_cm=20, tol_cm=0.5, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, target_cm=19, tol_cm=0.5, max_adjust_time=6.0):
         if self.tof_latest is None:
             print("[ToF] ❌ ไม่มีข้อมูล ToF -> ข้ามการจัดตำแหน่ง")
             return
@@ -235,7 +235,7 @@ class RobotMasterController:
         if tof >= 50:
             print("[ToF] >=50 cm -> ไม่อยู่ในโหนด ข้าม")
             return
-        if tof > 45:
+        if tof > 50:
             print("[ToF] >45 cm -> อยู่ระหว่างโหนด ข้าม")
             return
 
