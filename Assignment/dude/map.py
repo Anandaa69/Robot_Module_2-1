@@ -5,6 +5,8 @@ import robomaster
 from robomaster import robot
 import statistics
 import traceback
+import json
+from datetime import datetime
 
 # =============================================================================
 # ===== CONFIGURATION =========================================================
@@ -18,7 +20,10 @@ RIGHT_SENSOR_PORT = 1
 RIGHT_TARGET_CM = 13.0
 
 # ⚙️ ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
-TOF_ADJUST_SPEED = 0.1  # ✅ เปลี่ยนค่าตรงนี้ได้เองถ้ารู้สึกเร็วเกิน
+TOF_ADJUST_SPEED = 0.1
+
+# 📁 ไฟล์สำหรับบันทึกแผนที่
+MAP_OUTPUT_FILE = "robot_map.json"
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -44,7 +49,54 @@ def calibrate_tof_value(raw_tof_value):
         return (TOF_CALIBRATION_SLOPE * raw_tof_value) + TOF_CALIBRATION_Y_INTERCEPT
     except Exception:
         return float('inf')
-# -------------------------------------------------
+
+# =============================================================================
+# ===== MAP LOGGER CLASS ======================================================
+# =============================================================================
+class MapLogger:
+    def __init__(self, filename=MAP_OUTPUT_FILE):
+        self.filename = filename
+        self.map_data = {
+            "metadata": {
+                "created_at": datetime.now().isoformat(),
+                "block_distance_m": BLOCK_DISTANCE_M
+            },
+            "nodes": []
+        }
+        self.current_node = 0
+        self.current_x = 0.0
+        self.current_y = 0.0
+        self.current_heading = 0.0
+    
+    def add_node(self, node_id, x, y, heading, left_wall, right_wall, front_wall=None, tof_distance=None):
+        """เพิ่มข้อมูลโหนด"""
+        node_data = {
+            "node_id": node_id,
+            "position": {
+                "x": round(x, 3),
+                "y": round(y, 3)
+            },
+            "heading": round(heading, 2),
+            "walls": {
+                "left": left_wall,
+                "right": right_wall,
+                "front": front_wall
+            },
+            "tof_distance_cm": round(tof_distance, 2) if tof_distance else None
+        }
+        self.map_data["nodes"].append(node_data)
+        print(f"📝 Logged Node {node_id}: Left={left_wall}, Right={right_wall}, Front={front_wall}")
+    
+    def save(self):
+        """บันทึกข้อมูลลงไฟล์"""
+        try:
+            with open(self.filename, 'w', encoding='utf-8') as f:
+                json.dump(self.map_data, f, indent=2, ensure_ascii=False)
+            print(f"\n💾 Map data saved to: {self.filename}")
+            return True
+        except Exception as e:
+            print(f"\n❌ Failed to save map: {e}")
+            return False
 
 # =============================================================================
 # ===== ROBOT MASTER CONTROLLER CLASS =========================================
@@ -57,6 +109,7 @@ class RobotMasterController:
         
         self.current_yaw = 0.0
         self.current_x = 0.0
+        self.current_y = 0.0
         self.master_target_yaw = 0.0
 
         print("Initializing Controller...")
@@ -79,8 +132,12 @@ class RobotMasterController:
         else:
             print("⚠️ ep_robot.sensor not available; ToF will be disabled.")
 
-    def _attitude_callback(self, attitude_info): self.current_yaw = attitude_info[0]
-    def _position_callback(self, position_info): self.current_x = position_info[0]
+    def _attitude_callback(self, attitude_info): 
+        self.current_yaw = attitude_info[0]
+    
+    def _position_callback(self, position_info): 
+        self.current_x = position_info[0]
+        self.current_y = position_info[1]
 
     def _tof_callback(self, sub_info):
         try:
@@ -224,8 +281,6 @@ class RobotMasterController:
         print(f"\nMoved a total distance of {abs(self.current_x - start_position):.3f}m")
         print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
 
-
-    # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
     def center_in_node_with_tof(self, target_cm=19, tol_cm=0.5, max_adjust_time=6.0):
         if self.tof_latest is None:
             print("[ToF] ❌ ไม่มีข้อมูล ToF -> ข้ามการจัดตำแหน่ง")
@@ -271,6 +326,13 @@ class RobotMasterController:
 
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
 
+    def check_front_wall(self):
+        """ตรวจสอบกำแพงด้านหน้าจาก ToF"""
+        if self.tof_latest is None:
+            return None
+        # ถ้าระยะน้อยกว่า 30 cm ถือว่ามีกำแพง
+        return self.tof_latest < 30
+
     def cleanup(self):
         print("Closing controller...")
         self.chassis.unsub_attitude()
@@ -286,6 +348,8 @@ class RobotMasterController:
 # =============================================================================
 def main():
     ep_robot, controller = None, None
+    map_logger = MapLogger()
+    
     try:
         ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_robot.gimbal.recenter(pitch_speed=100, yaw_speed=100).wait_for_completed()
@@ -310,7 +374,6 @@ def main():
 
             controller.set_master_heading()
             controller.hold_still(0.15)
-            
 
             print("\n--- Stage 2: Wall Detection & Side Alignment ---")
             left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
@@ -334,14 +397,35 @@ def main():
             controller.move_forward_with_pid(BLOCK_DISTANCE_M)
             controller.hold_still(0.15)
             controller.center_in_node_with_tof()
+            
+            # 📝 บันทึกข้อมูลโหนด
+            front_wall = controller.check_front_wall()
+            map_logger.add_node(
+                node_id=i,
+                x=controller.current_x,
+                y=controller.current_y,
+                heading=controller.current_yaw,
+                left_wall=left_wall_present,
+                right_wall=right_wall_present,
+                front_wall=front_wall,
+                tof_distance=controller.tof_latest
+            )
 
             print(f"\n--- ✅ Block {i + 1} complete. ---")
             controller.hold_still(0.15)
 
         print("\n🎉🎉🎉 SEQUENCE FINISHED! 🎉🎉🎉")
+        
+        # 💾 บันทึกแผนที่
+        map_logger.save()
 
-    except KeyboardInterrupt: print("\n\n⚠️ Program stopped by user.")
-    except Exception as e: print(f"\n❌ Error: {e}"); traceback.print_exc()
+    except KeyboardInterrupt: 
+        print("\n\n⚠️ Program stopped by user.")
+        map_logger.save()
+    except Exception as e: 
+        print(f"\n❌ Error: {e}")
+        traceback.print_exc()
+        map_logger.save()
     finally:
         print("\n🔌 Cleaning up...")
         if controller: controller.cleanup()

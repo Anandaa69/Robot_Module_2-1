@@ -41,9 +41,9 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (0, 0)  # (แถว, คอลัมน์)
-CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West
-TARGET_DESTINATION = (0, 0)
+CURRENT_POSITION = (0, 4)  # (แถว, คอลัมน์)
+CURRENT_DIRECTION = 2   # 0:North, 1:East, 2:South, 3:West
+TARGET_DESTINATION = (0, 4)
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
@@ -308,7 +308,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=1.8, Ki=0.25, Kd=12, setpoint=target_distance)
+        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -603,8 +603,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         if i + 1 < len(path):
             next_r, next_c = path[i+1]
-            dr, dc = next_r - current_c, next_c - current_c # <--- ผมสังเกตเห็นบั๊กเล็กๆ ตรงนี้ด้วยครับ ควรจะเป็น dr, dc = next_r - current_r, next_c - current_c
-            dr, dc = next_r - current_r, next_c - current_c # แก้ไขให้ถูกต้อง
+            dr, dc = next_r - current_r, next_c - current_c
             
             target_direction = dir_vectors_map[(dr, dc)]
             
@@ -764,14 +763,14 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
 # =============================================================================
 if __name__ == '__main__':
     ep_robot = None
-    occupancy_map = OccupancyGridMap(width=2, height=2)
+    occupancy_map = OccupancyGridMap(width=5, height=5)
     attitude_handler = AttitudeHandler()
     movement_controller = None
     scanner = None
     ep_chassis = None
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=2, target_dest=TARGET_DESTINATION)
+        visualizer = RealTimeVisualizer(grid_size=5, target_dest=TARGET_DESTINATION)
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor

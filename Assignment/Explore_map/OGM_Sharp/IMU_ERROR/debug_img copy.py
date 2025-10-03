@@ -345,7 +345,7 @@ class MovementController:
             print(f"Adjusting {side}... Current: {current_dist:5.2f}cm, Target: {target_distance_cm:4.1f}cm, Error: {dist_error:5.2f}cm, Speed: {slide_speed:5.3f}", end='\r')
             time.sleep(0.02)
         else:
-             print(f"\n[{side}] Movement timed out!")
+            print(f"\n[{side}] Movement timed out!")
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
@@ -377,11 +377,11 @@ class MovementController:
             print("[ToF] Too close to front wall. Moving backward...")
             direction = -abs(TOF_ADJUST_SPEED)
         else:
-             print("[ToF] In range (22cm - target), but not centered. Moving forward...")
-             direction = abs(TOF_ADJUST_SPEED)
+            print("[ToF] In range (22cm - target), but not centered. Moving forward...")
+            direction = abs(TOF_ADJUST_SPEED)
         if direction == 0:
-             print(f"[ToF] Already centered within tolerance ({tof_dist:.2f} cm). Skipping.")
-             return
+            print(f"[ToF] Already centered within tolerance ({tof_dist:.2f} cm). Skipping.")
+            return
         start_time = time.time()
         compensated_yaw = get_compensated_target_yaw() # MODIFIED
         while time.time() - start_time < max_adjust_time:
@@ -398,7 +398,7 @@ class MovementController:
                 print(f"\n[ToF] ✅ Centering complete. Final distance: {current_tof:.2f} cm")
                 break
             if (direction > 0 and current_tof < target_cm - tol_cm) or \
-               (direction < 0 and current_tof > target_cm + tol_cm):
+            (direction < 0 and current_tof > target_cm + tol_cm):
                 direction *= -1
                 print("\n[ToF] 🔄 Overshot target. Reversing direction for fine-tuning.")
         else:
