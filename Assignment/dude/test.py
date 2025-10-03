@@ -32,7 +32,7 @@ RIGHT_IR_SENSOR_ID = 2
 RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
-SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
+SHARP_WALL_THRESHOLD_CM = 45.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
 SHARP_STDEV_THRESHOLD = 0.3     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
@@ -308,7 +308,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=1.3, Ki=0.25, Kd=12, setpoint=target_distance)
+        pid = PID(Kp=1, Ki=0.25, Kd=12, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -438,7 +438,7 @@ class EnvironmentScanner:
     """
     def __init__(self, sensor_adaptor, tof_sensor, gimbal, chassis):
         self.sensor_adaptor, self.tof_sensor, self.gimbal, self.chassis = sensor_adaptor, tof_sensor, gimbal, chassis
-        self.tof_wall_threshold_cm = 60.0
+        self.tof_wall_threshold_cm = 50.0
         
         # --- State Management Variables ---
         self.last_tof_distance_cm = float('inf')  # Stores the FRONT distance
@@ -585,51 +585,28 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                 shortest_path = path
     return shortest_path
 
-# แก้ไขฟังก์ชัน execute_path
-
-# แก้ไขฟังก์ชัน execute_path
-
-# แก้ไขฟังก์ชัน execute_path
-
 def execute_path(path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Backtrack"):
     global CURRENT_POSITION
     print(f"🎯 Executing {path_name} Path: {path}")
     dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
-    dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
-
     for i in range(len(path) - 1):
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
         
         if i + 1 < len(path):
             next_r, next_c = path[i+1]
-            dr, dc = next_r - current_c, next_c - current_c # <--- ผมสังเกตเห็นบั๊กเล็กๆ ตรงนี้ด้วยครับ ควรจะเป็น dr, dc = next_r - current_r, next_c - current_c
-            dr, dc = next_r - current_r, next_c - current_c # แก้ไขให้ถูกต้อง
-            
+            dr, dc = next_r - current_r, next_c - current_c
             target_direction = dir_vectors_map[(dr, dc)]
             
             movement_controller.rotate_to_direction(target_direction, attitude_handler)
             
-            # --- ส่วนการตรวจสอบ ---
-            print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
+            # <<< NEW CODE ADDED >>>
+            # Ensure the gimbal is facing forward before moving to the next grid.
+            print(f"   -> [{path_name}] Ensuring gimbal is centered before moving...")
             scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
             time.sleep(0.15)
+            # <<< END OF NEW CODE >>>
             
-            # 1. อ่านค่าจากเซ็นเซอร์จริง
-            is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-            
-            # 2. อัปเดตแผนที่เป็นเรื่องรอง
-            occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
-            print(f"   -> [{path_name}] Real-time ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
-            visualizer.update_plot(occupancy_map, CURRENT_POSITION)
-
-            # 3. <<<<<<<<<<<<<<<<<<<< จุดแก้ไขสำคัญ >>>>>>>>>>>>>>>>>>>>
-            #    เปลี่ยนจากการเช็คแผนที่ มาเช็คผลจากเซ็นเซอร์โดยตรง!
-            if is_blocked:
-                print(f"   -> 🔥 [{path_name}] IMMEDIATE STOP. Real-time sensor detected an obstacle. Aborting path.")
-                break # หยุดการทำงานทันที
-            # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
             

@@ -18,7 +18,7 @@ RIGHT_SENSOR_PORT = 1
 RIGHT_TARGET_CM = 13.0
 
 # ⚙️ ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
-TOF_ADJUST_SPEED = 0.1  # ✅ เปลี่ยนค่าตรงนี้ได้เองถ้ารู้สึกเร็วเกิน
+TOF_ADJUST_SPEED = 0.1  # ✅ ปรับค่าได้เอง
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -166,109 +166,66 @@ class RobotMasterController:
             print(f"🔥 ALIGNMENT FAILED. Final Yaw: {self.current_yaw:.2f}° (Error: {final_error_after_tune:.2f}°)")
         return True
 
-    def adjust_position(self, sensor_id, sensor_port, target_distance_cm, side_name, direction_multiplier):
-        print(f"\n--- Adjusting {side_name} Side (Yaw locked at {self.master_target_yaw:.2f}°) ---")
-        TOLERANCE_CM, MAX_EXEC_TIME, KP_SLIDE, MAX_SLIDE_SPEED = 0.5, 10, 0.035, 0.15
+    # ✅ ฟังก์ชันใหม่: เคลื่อนที่ไปข้างหน้าพร้อมรักษาระยะจากกำแพง real-time
+    def move_forward_with_wall_follow(self, target_distance,
+                                    left_id, left_port, left_target,
+                                    right_id, right_port, right_target,
+                                    tol_cm=2.0):
+        print(f"\n--- Moving Forward with Wall Following ({target_distance}m) ---")
+        MOVE_TIMEOUT = 10.0
+        BASE_SPEED = 0.25   # ความเร็วเดินหน้าคงที่
+        MAX_SLIDE = 0.1     # ความเร็วแกน y สูงสุด
+        KP_WALL = 0.02      # ค่าคุมการแก้ด้านข้าง
+
         start_time = time.time()
-        
-        while time.time() - start_time < MAX_EXEC_TIME:
-            current_dist = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=sensor_id, port=sensor_port))
-            dist_error = target_distance_cm - current_dist
-            
-            if abs(dist_error) <= TOLERANCE_CM:
-                print(f"\n[{side_name}] Target distance reached!")
-                break
-
-            slide_speed = max(min(direction_multiplier * KP_SLIDE * dist_error, MAX_SLIDE_SPEED), -MAX_SLIDE_SPEED)
-            yaw_correction = self._calculate_yaw_correction_speed()
-            self.chassis.drive_speed(x=0, y=slide_speed, z=yaw_correction)
-            
-            print(f"Adjusting {side_name}... DistErr: {dist_error:5.2f}cm", end='\r')
-            time.sleep(0.02)
-        else:
-            print(f"\n[{side_name}] Movement timed out!")
-        
-        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        return True
-
-    def move_forward_with_pid(self, target_distance):
-        print(f"\n--- Moving Forward ({target_distance}m) ---")
-        PID_KP, PID_KI, PID_KD = 1.9, 0.25, 10
-        RAMP_UP_TIME, MOVE_TIMEOUT = 0.8, 7.0
-        
-        prev_error, integral = 0, 0
-        start_time, last_time = time.time(), time.time()
         start_position = self.current_x
-        
-        target_reached = False
+        last_valid_target = (left_target + right_target) / 2
+
         while time.time() - start_time < MOVE_TIMEOUT:
             relative_pos = abs(self.current_x - start_position)
             if relative_pos >= target_distance - 0.02:
-                target_reached = True; break
-
-            dt = time.time() - last_time; last_time = time.time()
-            error = target_distance - relative_pos
-            integral += error * dt
-            derivative = (error - prev_error) / dt if dt > 0 else 0
-            output = PID_KP * error + PID_KI * integral + PID_KD * derivative
-            prev_error = error
-
-            ramp = min(1.0, (time.time() - start_time) / RAMP_UP_TIME)
-            speed = max(-1, min(1, output)) * ramp
-            yaw_correction = self._calculate_yaw_correction_speed()
-            
-            self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=0.1)
-            print(f"Moving... Dist: {relative_pos:.3f}/{target_distance:.2f} m", end='\r')
-        
-        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        print(f"\nMoved a total distance of {abs(self.current_x - start_position):.3f}m")
-        print(f"✅ Target reached!" if target_reached else f"⚠️ Movement Timed Out.")
-
-    # ✅ ฟังก์ชันใหม่: ปรับตำแหน่งให้อยู่กลางโหนดด้วย ToF
-    def center_in_node_with_tof(self, target_cm=19, tol_cm=0.5, max_adjust_time=6.0):
-        if self.tof_latest is None:
-            print("[ToF] ❌ ไม่มีข้อมูล ToF -> ข้ามการจัดตำแหน่ง")
-            return
-        tof = self.tof_latest
-        print(f"[ToF] Front distance: {tof:.2f} cm")
-
-        if tof >= 50:
-            print("[ToF] >=50 cm -> ไม่อยู่ในโหนด ข้าม")
-            return
-        if tof > 50:
-            print("[ToF] >45 cm -> อยู่ระหว่างโหนด ข้าม")
-            return
-
-        direction = 0
-        if tof > target_cm + tol_cm:
-            print("[ToF] หุ่นอยู่ห่างจากกำแพงเกินไป -> เดินหน้า")
-            direction = abs(TOF_ADJUST_SPEED)
-        elif tof < 22:
-            print("[ToF] หุ่นเข้าใกล้กำแพงเกินไป -> ถอยหลัง")
-            direction = -abs(TOF_ADJUST_SPEED)
-        else:
-            print("[ToF] อยู่ในช่วง 22-45 cm -> เดินหน้าเข้าไป")
-            direction = abs(TOF_ADJUST_SPEED)
-
-        start = time.time()
-        while time.time() - start < max_adjust_time:
-            yaw_corr = self._calculate_yaw_correction_speed()
-            self.chassis.drive_speed(x=direction, y=0, z=yaw_corr, timeout=0.08)
-            time.sleep(0.12)
-            self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-            time.sleep(0.06)
-            if self.tof_latest is None:
-                continue
-            curr = self.tof_latest
-            print(f"[ToF] Adjusting... {curr:.2f} cm", end="\r")
-            if abs(curr - target_cm) <= tol_cm:
-                print(f"\n[ToF] ✅ อยู่ที่ {curr:.2f} cm แล้ว (กลางโหนด)")
                 break
-            if (direction > 0 and curr < target_cm - tol_cm) or (direction < 0 and curr > target_cm + tol_cm):
-                direction = -direction
-                print("\n[ToF] 🔄 Reverse direction to fine-tune.")
 
+            # ========= อ่านค่าจากเซนเซอร์ =========
+            left_val = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=left_id, port=left_port))
+            right_val = convert_adc_to_cm(self.sensor_adaptor.get_adc(id=right_id, port=right_port))
+
+            active_sides = []
+            if left_val < 50:
+                active_sides.append(left_val)
+            if right_val < 50:
+                active_sides.append(right_val)
+
+            if active_sides:
+                current_target = sum(active_sides) / len(active_sides)
+                last_valid_target = current_target
+            else:
+                current_target = last_valid_target
+
+            # ========= คำนวณ error =========
+            dist_error = 0
+            if left_val < 50 and right_val < 50:
+                dist_error = ((left_val + right_val) / 2) - current_target
+            elif left_val < 50:
+                dist_error = left_val - current_target
+            elif right_val < 50:
+                dist_error = right_val - current_target
+
+            # ========= คำนวณการแก้ด้านข้าง =========
+            slide_speed = 0.0
+            if abs(dist_error) > tol_cm:
+                slide_speed = max(min(-KP_WALL * dist_error, MAX_SLIDE), -MAX_SLIDE)
+
+            # ========= เดินไปข้างหน้า + ปรับนิดหน่อย =========
+            yaw_correction = self._calculate_yaw_correction_speed()
+            self.chassis.drive_speed(x=BASE_SPEED, y=slide_speed, z=yaw_correction, timeout=0.1)
+
+            print(f"Moving... {relative_pos:.2f}/{target_distance:.2f} m | "
+                f"L:{left_val:.1f} R:{right_val:.1f} CorrY:{slide_speed:.3f}", end="\r")
+
+        # หยุดเมื่อถึงเป้าหมาย
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+        print(f"\nMoved {abs(self.current_x - start_position):.3f}m (with wall following).")
 
     def cleanup(self):
         print("Closing controller...")
@@ -314,24 +271,21 @@ def main():
             left_wall_present = controller.check_for_wall(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, "Left")
             right_wall_present = controller.check_for_wall(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, "Right")
 
-            if left_wall_present:
-                controller.adjust_position(LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, LEFT_TARGET_CM, "Left", 1)
-                controller.hold_still(0.15)
-            if right_wall_present:
-                controller.adjust_position(RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, RIGHT_TARGET_CM, "Right", -1)
-                controller.hold_still(0.15)
-
             if not left_wall_present and not right_wall_present:
-                print("\n⚠️  WARNING: No walls detected. Skipping side alignment.")
+                print("\n⚠️  WARNING: No walls detected. จะใช้ wall-following ด้วยค่าล่าสุดแทน")
                 controller.hold_still(0.15)
 
             controller.align_to_master_heading()
             controller.hold_still(0.15)
 
-            # ✅ เคลื่อนที่แล้วปรับให้อยู่กลางโหนดด้วย ToF
-            controller.move_forward_with_pid(BLOCK_DISTANCE_M)
+            # ✅ เคลื่อนที่พร้อมรักษาระยะจากกำแพงแบบ real-time
+            controller.move_forward_with_wall_follow(
+                BLOCK_DISTANCE_M,
+                LEFT_SENSOR_ADAPTOR_ID, LEFT_SENSOR_PORT, LEFT_TARGET_CM,
+                RIGHT_SENSOR_ADAPTOR_ID, RIGHT_SENSOR_PORT, RIGHT_TARGET_CM
+            )
             controller.hold_still(0.15)
-            controller.center_in_node_with_tof()
+            
 
             print(f"\n--- ✅ Block {i + 1} complete. ---")
             controller.hold_still(0.15)
