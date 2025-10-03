@@ -4,11 +4,11 @@ import sys
 import robomaster
 from robomaster import robot
 import time
-from scipy.spatial import distance as dist # ใช้คำนวณระยะห่างระหว่างจุด
+from scipy.spatial import distance as dist
 from collections import OrderedDict
 
 # ======================================================================
-# คลาส ObjectDetector ที่อัปเกรดเป็น ObjectTracker
+# คลาส ObjectTracker
 # ======================================================================
 class ObjectTracker:
     def __init__(self, template_paths, max_disappeared=30):
@@ -18,13 +18,10 @@ class ObjectTracker:
             sys.exit("❌ ไม่สามารถโหลดไฟล์ Template ได้")
         print("✅ โหลด Templates สำเร็จ")
 
-        # --- ส่วนของ Object Tracking ---
         self.next_object_id = 0
-        # self.objects จะเก็บข้อมูลทั้งหมดของวัตถุที่กำลังติดตาม
-        # { objectID: {'centroid': (x,y), 'locked_shape': 'Square', 'locked_color': 'Red', ...} }
         self.objects = OrderedDict()
-        self.disappeared = OrderedDict() # นับจำนวนเฟรมที่วัตถุหายไป
-        self.max_disappeared = max_disappeared # จำนวนเฟรมสูงสุดที่ยอมให้วัตถุหายไปก่อนจะลืม
+        self.disappeared = OrderedDict()
+        self.max_disappeared = max_disappeared
 
     def _load_templates(self, template_paths):
         processed_templates = {}
@@ -39,9 +36,6 @@ class ObjectTracker:
         return processed_templates
 
     def _get_raw_detections(self, frame):
-        # ฟังก์ชันนี้จะทำการตรวจจับดิบๆ ในแต่ละเฟรม (เหมือนโค้ดเดิม)
-        # แต่จะคืนค่าเป็น list ของ (contour, shape, color)
-        # ... (โค้ดการประมวลผลภาพและตรวจจับสี/รูปทรง) ...
         blurred_frame = cv2.GaussianBlur(frame, (7, 7), 0)
         hsv = cv2.cvtColor(blurred_frame, cv2.COLOR_BGR2HSV)
         h, s, v = cv2.split(hsv)
@@ -71,22 +65,38 @@ class ObjectTracker:
         for cnt in contours:
             if cv2.contourArea(cnt) < 1500: continue
 
-            # ตรวจจับรูปทรง (เหมือนเดิม)
             shape = "Unknown"
+            
+            # คำนวณ matchShapes ก่อนเสมอ เพื่อใช้เป็นข้อมูลเบื้องต้น
             best_match_score, initial_shape = float('inf'), "Unknown"
             for shape_name, template_cnt in self.templates.items():
                 score = cv2.matchShapes(cnt, template_cnt, cv2.CONTOURS_MATCH_I1, 0.0)
-                if score < best_match_score: best_match_score, initial_shape = score, shape_name
+                if score < best_match_score:
+                    best_match_score, initial_shape = score, shape_name
             
-            peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, 0.03 * peri, True)
-            if len(approx) == 4:
-                _, (w, h), _ = cv2.minAreaRect(cnt)
-                aspect_ratio = max(w, h) / min(w, h) if min(w,h) > 0 else 0
-                shape = "Square" if 0.95 <= aspect_ratio <= 1.15 else ("Rectangle_H" if w > h else "Rectangle_V")
-            elif best_match_score < 0.55: shape = initial_shape
+            # 1. ตรวจสอบก่อนเลยว่าคล้าย 'Circle' มากๆ หรือไม่
+            # ถ้าค่า score น้อยมากๆ (เช่น < 0.2) และรูปร่างเบื้องต้นคือ Circle ให้สรุปทันที
+            # (ค่า 0.2 นี้สามารถปรับได้ตามความเหมาะสม)
+            if initial_shape == "Circle" and best_match_score < 0.2:
+                shape = "Circle"
+            
+            # 2. ถ้าไม่ใช่วงกลม ค่อยมาตรวจสอบว่าเป็นสี่เหลี่ยมหรือไม่
+            else:
+                peri = cv2.arcLength(cnt, True)
+                # ลด epsilon ลงเล็กน้อยเพื่อความแม่นยำ อาจจะช่วยป้องกันการตีความวงกลมผิด
+                approx = cv2.approxPolyDP(cnt, 0.025 * peri, True)
+                
+                if len(approx) == 4:
+                    x, y, w, h = cv2.boundingRect(cnt) 
+                    aspect_ratio = float(w) / h if h > 0 else 0
+                    if 0.95 <= aspect_ratio <= 1.15: shape = "Square"
+                    elif w > h: shape = "Rectangle_H"
+                    else: shape = "Rectangle_V"
+                # ถ้ายังไม่เข้าเงื่อนไขสี่เหลี่ยม แต่ matchShapes บอกว่าอาจจะเป็นอย่างอื่น
+                # ก็ยังสามารถใช้ผลจาก matchShapes เป็นตัวสำรองได้
+                elif best_match_score < 0.55:
+                     shape = initial_shape
 
-            # ตรวจจับสี (เหมือนเดิม)
             if shape != "Unknown":
                 contour_mask = np.zeros(frame.shape[:2], dtype="uint8")
                 cv2.drawContours(contour_mask, [cnt], -1, 255, -1)
@@ -102,15 +112,15 @@ class ObjectTracker:
     def update(self, frame):
         raw_detections = self._get_raw_detections(frame)
         
-        # คำนวณจุดศูนย์กลางของวัตถุที่เจอในเฟรมปัจจุบัน
         input_centroids = np.zeros((len(raw_detections), 2), dtype="int")
         for i, detection in enumerate(raw_detections):
             M = cv2.moments(detection['contour'])
+            # เพิ่มการตรวจสอบเพื่อป้องกันการหารด้วยศูนย์
+            if M["m00"] == 0: continue
             cX = int(M["m10"] / M["m00"])
             cY = int(M["m01"] / M["m00"])
             input_centroids[i] = (cX, cY)
 
-        # ถ้าไม่มีวัตถุที่กำลังติดตามอยู่เลย ให้ลงทะเบียนวัตถุใหม่ทั้งหมด
         if len(self.objects) == 0:
             for i in range(len(raw_detections)):
                 objectID = self.next_object_id
@@ -118,63 +128,60 @@ class ObjectTracker:
                     'centroid': input_centroids[i],
                     'locked_shape': raw_detections[i]['shape'],
                     'locked_color': raw_detections[i]['color'],
-                    'contour': raw_detections[i]['contour'] # เก็บ contour ปัจจุบันไว้วาด
+                    'contour': raw_detections[i]['contour']
                 }
                 print(f"✨ ลงทะเบียนวัตถุใหม่! ID {objectID}: {self.objects[objectID]['locked_color']} {self.objects[objectID]['locked_shape']}")
                 self.disappeared[objectID] = 0
                 self.next_object_id += 1
         else:
-            # จับคู่วัตถุเก่ากับวัตถุใหม่ที่ใกล้ที่สุด
             object_ids = list(self.objects.keys())
             previous_centroids = np.array([d['centroid'] for d in self.objects.values()])
-            D = dist.cdist(previous_centroids, input_centroids)
             
-            rows = D.min(axis=1).argsort()
-            cols = D.argmin(axis=1)[rows]
-
-            used_rows, used_cols = set(), set()
-            for (row, col) in zip(rows, cols):
-                if row in used_rows or col in used_cols: continue
+            # ตรวจสอบให้แน่ใจว่ามี centroid ให้เปรียบเทียบ
+            if len(input_centroids) > 0 and len(previous_centroids) > 0:
+                D = dist.cdist(previous_centroids, input_centroids)
                 
-                # จับคู่สำเร็จ อัปเดตข้อมูล
-                objectID = object_ids[row]
-                self.objects[objectID]['centroid'] = input_centroids[col]
-                self.objects[objectID]['contour'] = raw_detections[col]['contour']
-                self.disappeared[objectID] = 0
-                used_rows.add(row)
-                used_cols.add(col)
+                rows = D.min(axis=1).argsort()
+                cols = D.argmin(axis=1)[rows]
 
-            # ตรวจสอบวัตถุที่ไม่ได้ถูกจับคู่
-            unused_rows = set(range(previous_centroids.shape[0])).difference(used_rows)
-            unused_cols = set(range(input_centroids.shape[0])).difference(used_cols)
+                used_rows, used_cols = set(), set()
+                for (row, col) in zip(rows, cols):
+                    if row in used_rows or col in used_cols: continue
+                    
+                    objectID = object_ids[row]
+                    self.objects[objectID]['centroid'] = input_centroids[col]
+                    self.objects[objectID]['contour'] = raw_detections[col]['contour']
+                    self.disappeared[objectID] = 0
+                    used_rows.add(row)
+                    used_cols.add(col)
 
-            # ถ้าวัตถุเก่าหายไป
-            for row in unused_rows:
-                objectID = object_ids[row]
-                self.disappeared[objectID] += 1
-                if self.disappeared[objectID] > self.max_disappeared:
-                    print(f"❌ ลบวัตถุ ID {objectID} เนื่องจากหายไปนาน")
-                    del self.objects[objectID]
-                    del self.disappeared[objectID]
+                unused_rows = set(range(previous_centroids.shape[0])).difference(used_rows)
+                unused_cols = set(range(input_centroids.shape[0])).difference(used_cols)
 
-            # ถ้ามีวัตถุใหม่เกิดขึ้น
-            for col in unused_cols:
-                objectID = self.next_object_id
-                self.objects[objectID] = {
-                    'centroid': input_centroids[col],
-                    'locked_shape': raw_detections[col]['shape'],
-                    'locked_color': raw_detections[col]['color'],
-                    'contour': raw_detections[col]['contour']
-                }
-                print(f"✨ ลงทะเบียนวัตถุใหม่! ID {objectID}: {self.objects[objectID]['locked_color']} {self.objects[objectID]['locked_shape']}")
-                self.disappeared[objectID] = 0
-                self.next_object_id += 1
+                for row in unused_rows:
+                    objectID = object_ids[row]
+                    self.disappeared[objectID] += 1
+                    if self.disappeared[objectID] > self.max_disappeared:
+                        print(f"❌ ลบวัตถุ ID {objectID} เนื่องจากหายไปนาน")
+                        del self.objects[objectID]
+                        del self.disappeared[objectID]
 
-        # คืนค่าวัตถุที่ติดตามได้ทั้งหมด
-        return list(self.objects.values())
+                for col in unused_cols:
+                    objectID = self.next_object_id
+                    self.objects[objectID] = {
+                        'centroid': input_centroids[col],
+                        'locked_shape': raw_detections[col]['shape'],
+                        'locked_color': raw_detections[col]['color'],
+                        'contour': raw_detections[col]['contour']
+                    }
+                    print(f"✨ ลงทะเบียนวัตถุใหม่! ID {objectID}: {self.objects[objectID]['locked_color']} {self.objects[objectID]['locked_shape']}")
+                    self.disappeared[objectID] = 0
+                    self.next_object_id += 1
+        
+        return self.objects
 
 # ======================================================================
-# ฟังก์ชันสำหรับรับ Input จากผู้ใช้ (เหมือนเดิม)
+# ฟังก์ชันสำหรับรับ Input จากผู้ใช้
 # ======================================================================
 def get_target_choice():
     VALID_SHAPES = ["Circle", "Square", "Rectangle_H", "Rectangle_V"]
@@ -192,10 +199,9 @@ def get_target_choice():
     return shape, color
 
 # ======================================================================
-# Main (ปรับปรุงเล็กน้อยเพื่อเรียกใช้ Tracker)
+# Main
 # ======================================================================
 if __name__ == '__main__':
-    # เพิ่มการติดตั้ง scipy หากยังไม่มี
     try:
         import scipy
     except ImportError:
@@ -212,7 +218,7 @@ if __name__ == '__main__':
         "Rectangle_H": "./Assignment/image_processing/template/rec_h.png",
         "Rectangle_V": "./Assignment/image_processing/template/rec_v.png",
     }
-    # เปลี่ยนมาใช้ ObjectTracker
+    
     tracker = ObjectTracker(template_paths=template_files)
 
     ep_robot = robot.Robot()
@@ -231,20 +237,18 @@ if __name__ == '__main__':
             if frame is None: continue
             
             output_frame = frame.copy()
-            # เรียกใช้ tracker.update() แทน detector.detect()
             tracked_objects = tracker.update(frame)
 
-            for obj in tracked_objects:
-                # ใช้ค่าที่ล็อกไว้จาก tracker
-                is_target = (obj["locked_shape"] == target_shape and obj["locked_color"] == target_color)
+            for object_id, obj_data in tracked_objects.items():
+                is_target = (obj_data["locked_shape"] == target_shape and obj_data["locked_color"] == target_color)
                 
-                x, y, w, h = cv2.boundingRect(obj["contour"]) # ใช้ contour ปัจจุบันในการวาด
+                x, y, w, h = cv2.boundingRect(obj_data["contour"]) 
                 box_color = (0, 0, 255) if is_target else (0, 255, 0)
                 thickness = 4 if is_target else 2
                 
                 cv2.rectangle(output_frame, (x, y), (x+w, y+h), box_color, thickness)
                 
-                label = f"{obj['locked_shape']}, {obj['locked_color']}"
+                label = f"ID{object_id}: {obj_data['locked_shape']}, {obj_data['locked_color']}"
                 if is_target:
                     label = "!!! TARGET FOUND !!!"
                     cv2.putText(output_frame, label, (x, y - 15), cv2.FONT_HERSHEY_TRIPLEX, 0.7, box_color, 2)
