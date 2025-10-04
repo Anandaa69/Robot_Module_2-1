@@ -41,9 +41,9 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (0, 4)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION = 2   # 0:North, 1:East, 2:South, 3:West here
-TARGET_DESTINATION = (0, 4)#here
+CURRENT_POSITION = (3,2)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION = 0   # 0:North, 1:East, 2:South, 3:West here
+TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
@@ -71,6 +71,9 @@ LOG_ODDS_FREE = {
 # --- Decision Thresholds ---
 OCCUPANCY_THRESHOLD = 0.7
 FREE_THRESHOLD = 0.3
+
+# --- NEW: Timestamp Logging ---
+POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -101,6 +104,32 @@ def get_compensated_target_yaw():
     This function is now the single source of truth for the robot's target heading.
     """
     return CURRENT_TARGET_YAW + IMU_DRIFT_COMPENSATION_DEG
+
+def log_position_timestamp(position, direction, action="arrived"):
+    """
+    NEW: บันทึก timestamp และตำแหน่งของหุ่นยนต์
+    """
+    global POSITION_LOG
+    timestamp = time.time()
+    direction_names = ['North', 'East', 'South', 'West']
+    
+    # แก้ไขการสร้าง ISO timestamp
+    dt = time.gmtime(timestamp)
+    microseconds = int((timestamp % 1) * 1000000)
+    iso_timestamp = time.strftime("%Y-%m-%dT%H:%M:%S", dt) + f".{microseconds:06d}Z"
+    
+    log_entry = {
+        "timestamp": timestamp,
+        "iso_timestamp": iso_timestamp,
+        "position": list(position),
+        "direction": direction_names[direction],
+        "action": action,
+        "yaw_angle": CURRENT_TARGET_YAW,
+        "imu_compensation": IMU_DRIFT_COMPENSATION_DEG
+    }
+    
+    POSITION_LOG.append(log_entry)
+    print(f"📍 [{action}] Position: {position}, Direction: {direction_names[direction]}, Time: {log_entry['iso_timestamp']}")
 
 # =============================================================================
 # ===== OCCUPANCY GRID MAP & VISUALIZATION (from map_suay.py) =================
@@ -596,6 +625,9 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
     print(f"🎯 Executing {path_name} Path: {path}")
     dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
     dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
+    
+    # บันทึกตำแหน่งเริ่มต้นของ path execution
+    log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_start")
 
     for i in range(len(path) - 1):
         visualizer.update_plot(occupancy_map, path[i], path)
@@ -635,6 +667,8 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             movement_controller.center_in_node_with_tof(scanner, attitude_handler)
 
             CURRENT_POSITION = (next_r, next_c)
+            # บันทึกตำแหน่งใหม่ใน path execution
+            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
             
             print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
@@ -678,9 +712,15 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
     global CURRENT_POSITION, CURRENT_DIRECTION, IMU_DRIFT_COMPENSATION_DEG
     visited_cells = set()
     
+    # บันทึกตำแหน่งเริ่มต้น
+    log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "exploration_start")
+    
     for step in range(max_steps):
         r, c = CURRENT_POSITION
         print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
+        
+        # บันทึกตำแหน่งในแต่ละ step
+        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
         
         print("   -> Resetting Yaw to ensure perfect alignment before new step...")
         attitude_handler.correct_yaw_to_target(movement_controller.chassis, get_compensated_target_yaw()) # MODIFIED
@@ -739,6 +779,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                     movement_controller.center_in_node_with_tof(scanner, attitude_handler)
 
                     CURRENT_POSITION = (target_r, target_c)
+                    # บันทึกตำแหน่งใหม่หลังจากเคลื่อนที่
+                    log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
                     moved = True
                     break
                 else:
@@ -763,14 +805,14 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
 # =============================================================================
 if __name__ == '__main__':
     ep_robot = None
-    occupancy_map = OccupancyGridMap(width=6, height=6)#here
+    occupancy_map = OccupancyGridMap(width=4, height=4)#here
     attitude_handler = AttitudeHandler()
     movement_controller = None
     scanner = None
     ep_chassis = None
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=6, target_dest=TARGET_DESTINATION)#here
+        visualizer = RealTimeVisualizer(grid_size=4, target_dest=TARGET_DESTINATION)#here
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
@@ -796,49 +838,83 @@ if __name__ == '__main__':
             else:
                 print(f"⚠️ Could not find a path from {CURRENT_POSITION} to {TARGET_DESTINATION}.")
         
-    except KeyboardInterrupt: print("\n⚠️ User interrupted exploration.")
-    except Exception as e: print(f"\n⚌ An error occurred: {e}"); traceback.print_exc()
+    except KeyboardInterrupt: 
+        print("\n⚠️ User interrupted exploration.")
+        print("💾 Saving data before exit...")
+    except Exception as e: 
+        print(f"\n⚌ An error occurred: {e}")
+        traceback.print_exc()
+        print("💾 Saving data before exit...")
     finally:
+        # บันทึกข้อมูลแม้จะมีการ interrupt
+        try:
+            print("💾 Saving map and timestamp data...")
+            
+            # บันทึกแผนที่
+            final_map_data = {
+                'nodes': []
+            }
+            for r in range(occupancy_map.height):
+                for c in range(occupancy_map.width):
+                    cell = occupancy_map.grid[r][c]
+                    cell_data = {
+                        "coordinate": {
+                            "row": r,
+                            "col": c
+                        },
+                        "probability": round(cell.get_node_probability(), 3),
+                        "is_occupied": cell.is_node_occupied(),
+                        "walls": {
+                            "north": cell.walls['N'].is_occupied(),
+                            "south": cell.walls['S'].is_occupied(),
+                            "east": cell.walls['E'].is_occupied(),
+                            "west": cell.walls['W'].is_occupied()
+                        },
+                        "wall_probabilities": {
+                            "north": round(cell.walls['N'].get_probability(), 3),
+                            "south": round(cell.walls['S'].get_probability(), 3),
+                            "east": round(cell.walls['E'].get_probability(), 3),
+                            "west": round(cell.walls['W'].get_probability(), 3)
+                        }
+                    }
+                    final_map_data["nodes"].append(cell_data)
+
+            with open("Mapping_Top.json", "w") as f:
+                json.dump(final_map_data, f, indent=2)
+            print("✅ Final Hybrid Belief Map (with walls) saved to Mapping_Top.json")
+            
+            # บันทึกข้อมูล timestamp และตำแหน่ง
+            timestamp_data = {
+                "session_info": {
+                    "start_time": POSITION_LOG[0]["iso_timestamp"] if POSITION_LOG else "N/A",
+                    "end_time": POSITION_LOG[-1]["iso_timestamp"] if POSITION_LOG else "N/A",
+                    "total_positions_logged": len(POSITION_LOG),
+                    "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
+                    "target_destination": list(TARGET_DESTINATION),
+                    "interrupted": True  # บอกว่าเซสชันถูก interrupt
+                },
+                "position_log": POSITION_LOG
+            }
+            
+            with open("Robot_Position_Timestamps.json", "w") as f:
+                json.dump(timestamp_data, f, indent=2)
+            print("✅ Robot position timestamps saved to Robot_Position_Timestamps.json")
+            
+        except Exception as save_error:
+            print(f"❌ Error saving data: {save_error}")
+        
+        # ทำความสะอาดการเชื่อมต่อ
         if ep_robot:
             print("🔌 Cleaning up and closing connection...")
-            if scanner: scanner.cleanup()
-            if attitude_handler and attitude_handler.is_monitoring: attitude_handler.stop_monitoring(ep_chassis)
-            if movement_controller: movement_controller.cleanup()
-            ep_robot.close()
-            print("🔌 Connection closed.")
+            try:
+                if scanner: scanner.cleanup()
+                if attitude_handler and attitude_handler.is_monitoring: attitude_handler.stop_monitoring(ep_chassis)
+                if movement_controller: movement_controller.cleanup()
+                ep_robot.close()
+                print("🔌 Connection closed.")
+            except Exception as cleanup_error:
+                print(f"⚠️ Error during cleanup: {cleanup_error}")
         
-        final_map_data = {
-            'nodes': []
-        }
-        for r in range(occupancy_map.height):
-            for c in range(occupancy_map.width):
-                cell = occupancy_map.grid[r][c]
-                cell_data = {
-                    "coordinate": {
-                        "row": r,
-                        "col": c
-                    },
-                    "probability": round(cell.get_node_probability(), 3),
-                    "is_occupied": cell.is_node_occupied(),
-                    "walls": {
-                        "north": cell.walls['N'].is_occupied(),
-                        "south": cell.walls['S'].is_occupied(),
-                        "east": cell.walls['E'].is_occupied(),
-                        "west": cell.walls['W'].is_occupied()
-                    },
-                    "wall_probabilities": {
-                        "north": round(cell.walls['N'].get_probability(), 3),
-                        "south": round(cell.walls['S'].get_probability(), 3),
-                        "east": round(cell.walls['E'].get_probability(), 3),
-                        "west": round(cell.walls['W'].get_probability(), 3)
-                    }
-                }
-                final_map_data["nodes"].append(cell_data)
-
-        with open("Mapping_Top.json", "w") as f:
-            json.dump(final_map_data, f, indent=2)
-
-        print("✅ Final Hybrid Belief Map (with walls) saved to Mapping_Top.json")
         print("... You can close the plot window now ...")
         plt.ioff()
         plt.show()
