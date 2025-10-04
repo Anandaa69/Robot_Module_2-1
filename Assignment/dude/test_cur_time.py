@@ -41,7 +41,7 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (3,2)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,2)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION = 0   # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -805,14 +805,14 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
 # =============================================================================
 if __name__ == '__main__':
     ep_robot = None
-    occupancy_map = OccupancyGridMap(width=4, height=4)#here
+    occupancy_map = OccupancyGridMap(width=5, height=5)#here
     attitude_handler = AttitudeHandler()
     movement_controller = None
     scanner = None
     ep_chassis = None
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=4, target_dest=TARGET_DESTINATION)#here
+        visualizer = RealTimeVisualizer(grid_size=5, target_dest=TARGET_DESTINATION)#here
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor

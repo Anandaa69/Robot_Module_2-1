@@ -1,15 +1,57 @@
-# detect_and_track_GPT_merged.py
+# detect_GPT_BEST + PID gimbal track (+3° pitch bias) + auto-ROI shift + fire-on-lock
+# ตรรกะตรวจจับ/โชว์จอ ยังคงรูปแบบไฟล์เดิมทั้งหมด
+# ปรับเพิ่ม: กิมบอล, PID, ยิง, ROI dynamics, Reconnect ครบ
+
 import cv2
 import numpy as np
 import time
 import math
 import threading
 import queue
-from robomaster import robot, camera as r_camera, blaster
+from collections import deque
 
-# =====================================================
-# GPU Acceleration Check
-# =====================================================
+from robomaster import robot, camera as r_camera, blaster as r_blaster
+
+# =========================
+# CONFIG (ปรับได้ตามเครื่อง)
+# =========================
+TARGET_SHAPE = "Circle"
+TARGET_COLOR = "Red"
+
+# PID ที่ "ไม่หลอน" (เริ่มค่าปลอดภัย)
+PID_KP = -0.25   # สเกลกับ error (pixels)
+PID_KI = -0.01  # เริ่ม 0 กันหลอนสะสม
+PID_KD = -0.03   # derivative (ใช้บน error ที่ผ่าน LPF)
+DERIV_LPF_ALPHA = 0.25  # 0..1  (ต่ำ = หน่วงมาก ลด noise)
+
+MAX_YAW_SPEED  = 220    # deg/s ตาม SDK จะ map ให้เองใน drive_speed
+MAX_PITCH_SPEED= 180
+I_CLAMP = 2000.0        # ลิมิตค่า integral เพื่อตัด windup
+
+PIX_ERR_DEADZONE = 6     # พิกเซล ถือว่าเล็งแล้ว (แก้ได้)
+LOCK_TOL_X = 8           # เกณฑ์ยิง
+LOCK_TOL_Y = 8
+LOCK_STABLE_COUNT = 6    # เฟรมติดกันที่เข้าเกณฑ์ก่อนยิง
+
+# กล้อง 1280x720 จากโค้ดเดิม; สมมุติ vFOV 54° (แก้ได้ถ้าทราบจริง)
+FRAME_W, FRAME_H = 960, 540
+VERTICAL_FOV_DEG = 54.0
+PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
+
+# ต้องการเล็งเชิดขึ้น +3°
+PITCH_BIAS_DEG = 2.0
+PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V  # บวกที่ error_y (เล็งสูงขึ้น)
+
+# ROI เริ่มต้นตามไฟล์เดิม
+ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
+
+# สัมประสิทธิ์เลื่อน ROI ตาม pitch (พิกเซล/องศา)
+ROI_SHIFT_PER_DEG = 6.0  # pitch ลง 1° -> ROI_Y ขยับขึ้น ~6 px (ปรับได้)
+ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
+
+# ================
+# GPU check (เดิม)
+# ================
 USE_GPU = False
 try:
     if cv2.cuda.getCudaEnabledDeviceCount() > 0:
@@ -20,67 +62,26 @@ try:
 except Exception:
     print("⚠️ Skip CUDA check, CPU path")
 
-# =====================================================
-# PID Controller Class (เพิ่มใหม่)
-# =====================================================
-class PIDController:
-    """
-    คลาสสำหรับควบคุม PID ที่แยกส่วนของ Yaw และ Pitch
-    """
-    def __init__(self, Kp, Ki, Kd, integral_limit=200):
-        self.Kp, self.Ki, self.Kd = Kp, Ki, Kd
-        self.p_error = 0.0
-        self.acc_error = 0.0
-        self.integral_limit = integral_limit
-        self.last_time = time.time()
-
-    def update(self, error):
-        current_time = time.time()
-        dt = current_time - self.last_time
-        if dt <= 0.001: # ป้องกันการหารด้วยศูนย์และค่า dt ที่น้อยเกินไป
-            return 0
-
-        # Proportional
-        P_out = self.Kp * error
-
-        # Integral
-        self.acc_error += error * dt
-        self.acc_error = np.clip(self.acc_error, -self.integral_limit, self.integral_limit)
-        I_out = self.Ki * self.acc_error
-
-        # Derivative
-        derivative = (error - self.p_error) / dt
-        D_out = self.Kd * derivative
-
-        # Update state
-        self.p_error = error
-        self.last_time = current_time
-
-        return P_out + I_out + D_out
-
-    def reset(self):
-        self.p_error = 0.0
-        self.acc_error = 0.0
-        self.last_time = time.time()
-
-# =====================================================
-# Shared resources
-# =====================================================
+# ======================
+# Shared & Thread flags
+# ======================
 frame_queue = queue.Queue(maxsize=1)
-# ขยาย output เพื่อรองรับข้อมูล PID และการยิง
-processed_output = {
-    "details": [],
-    "speed_x": 0.0,
-    "speed_y": 0.0,
-    "target_locked": False,
-    "target_error": (0, 0)
-}
+processed_output = {"details": []}  # [{id,color,shape,zone,is_target,box}]
 output_lock = threading.Lock()
 stop_event = threading.Event()
 
-# =====================================================
-# AWB / Night enhance (จาก detect_GPT_BEST)
-# =====================================================
+# มุมกิมบอล (pitch, yaw, pitch_g, yaw_g) ล่าสุด
+gimbal_angle_lock = threading.Lock()
+gimbal_angles = (0.0, 0.0, 0.0, 0.0)
+
+def sub_angle_cb(angle_info):
+    global gimbal_angles
+    with gimbal_angle_lock:
+        gimbal_angles = tuple(angle_info)  # (pitch, yaw, pitch_ground, yaw_ground)
+
+# ===================
+# AWB / Night (เดิม)
+# ===================
 def apply_awb(bgr):
     if hasattr(cv2, "xphoto") and hasattr(cv2.xphoto, "createLearningBasedWB"):
         wb = cv2.xphoto.createLearningBasedWB()
@@ -94,9 +95,9 @@ def apply_awb(bgr):
 def night_enhance_pipeline_cpu(bgr):
     return apply_awb(bgr)
 
-# =====================================================
-# Tracker/Detector (จาก detect_GPT_BEST)
-# =====================================================
+# ==============================
+# Detector (ตรรกะเดิมทั้งหมด)
+# ==============================
 class ObjectTracker:
     def __init__(self, use_gpu=False):
         self.use_gpu = use_gpu
@@ -110,7 +111,7 @@ class ObjectTracker:
         mag2 = (dx2*dx2 + dy2*dy2)**0.5
         if mag1*mag2 == 0:
             return 0
-        return math.degrees(math.acos(max(-1, min(1, dot/(mag1*mag2)))))
+        return math.degrees(math.acos(max(-1, min(1, dot/(mag1*mag2)))) )
 
     def get_raw_detections(self, frame):
         enhanced = cv2.GaussianBlur(night_enhance_pipeline_cpu(frame), (5,5), 0)
@@ -160,26 +161,26 @@ class ObjectTracker:
             shape = "Uncertain"
             peri = cv2.arcLength(cnt, True)
             circ = (4*math.pi*area)/(peri*peri) if peri>0 else 0
-            if circ > 0.84:
+            if circ > 0.82:
                 shape = "Circle"
             else:
                 approx = cv2.approxPolyDP(cnt, 0.04*peri, True)
-                if len(approx)==4 and solidity>0.9:
+                if len(approx)==4 and solidity>0.88:
                     pts=[tuple(p[0]) for p in approx]
                     angs=[self._get_angle(pts[(i-1)%4], pts[(i+1)%4], p) for i,p in enumerate(pts)]
-                    if all(75<=a<=105 for a in angs):
+                    if all(70<=a<=110 for a in angs):
                         _,(rw,rh),_ = cv2.minAreaRect(cnt)
                         if min(rw,rh)>0:
                             ar2 = max(rw,rh)/min(rw,rh)
-                            if 0.90<=ar2<=1.10: shape="Square"
+                            if 0.88<=ar2<=1.12: shape="Square"
                             elif w>h: shape="Rectangle_H"
                             else: shape="Rectangle_V"
             out.append({"contour":cnt,"shape":shape,"color":found,"box":(x,y,w,h)})
         return out
 
-# =====================================================
-# Connection Manager (จาก detect_GPT_BEST)
-# =====================================================
+# ======================================
+# Connection manager + (เพิ่ม get gimbal)
+# ======================================
 class RMConnection:
     def __init__(self):
         self._lock = threading.Lock()
@@ -192,21 +193,30 @@ class RMConnection:
             print("🤖 Connecting to RoboMaster...")
             rb = robot.Robot()
             rb.initialize(conn_type="ap")
-            # เพิ่มการ init gimbal และ blaster
-            rb.gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
-            rb.blaster.set_led(brightness=255, effect=blaster.LED_ON)
-            time.sleep(0.5)
-            rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_720P)
+            rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
+            # subscribe angles
+            try:
+                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
+            except Exception as e:
+                print("Gimbal sub_angle error:", e)
             self._robot = rb
             self.connected.set()
-            print("✅ RoboMaster connected, gimbal recentered & camera streaming")
+            print("✅ RoboMaster connected & camera streaming")
+
+            # recenter gimbal on start
+            try:
+                rb.gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
+            except Exception as e:
+                print("Recenter error:", e)
 
     def _safe_close(self):
         if self._robot is not None:
             try:
-                try: self._robot.gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-                except Exception: pass
                 try: self._robot.camera.stop_video_stream()
+                except Exception: pass
+                try:
+                    try: self._robot.gimbal.unsub_angle()
+                    except Exception: pass
                 except Exception: pass
                 try: self._robot.close()
                 except Exception: pass
@@ -219,11 +229,17 @@ class RMConnection:
         with self._lock:
             self._safe_close()
 
-    def get_robot_components(self):
+    def get_camera(self):
         with self._lock:
-            if self._robot is None:
-                return None, None, None
-            return self._robot.camera, self._robot.gimbal, self._robot.blaster
+            return None if self._robot is None else self._robot.camera
+
+    def get_gimbal(self):
+        with self._lock:
+            return None if self._robot is None else self._robot.gimbal
+
+    def get_blaster(self):
+        with self._lock:
+            return None if self._robot is None else self._robot.blaster
 
     def close(self):
         with self._lock:
@@ -243,20 +259,18 @@ def reconnector_thread(manager: RMConnection):
                 continue
         time.sleep(0.2)
 
-# =====================================================
-# Threads
-# =====================================================
+# =========================
+# Threads: capture, detect
+# =========================
 def capture_thread_func(manager: RMConnection, q: queue.Queue):
     print("🚀 Capture thread started")
     fail = 0
     while not stop_event.is_set():
         if not manager.connected.is_set():
-            time.sleep(0.1)
-            continue
-        cam, _, _ = manager.get_robot_components()
+            time.sleep(0.1); continue
+        cam = manager.get_camera()
         if cam is None:
-            time.sleep(0.1)
-            continue
+            time.sleep(0.1); continue
         try:
             frame = cam.read_cv2_image(timeout=1.0)
             if frame is not None:
@@ -283,42 +297,30 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
-                           target_shape, target_color, roi_coords,
-                           pid_yaw: PIDController, pid_pitch: PIDController,
+                           target_shape, target_color,
+                           roi_state,  # dict: {x,y,w,h} (อัปเดต y แบบ dynamic)
                            is_detecting_func):
-    """
-    รวมการตรวจจับจาก detect_GPT_BEST และการคำนวณ PID
-    """
     global processed_output
     print("🧠 Processing thread started.")
-    ROI_X, ROI_Y, ROI_W, ROI_H = roi_coords
-
-    # ค่าประมาณสำหรับกล้อง 720p (FOV~96° H, 54° V)
-    # 1280x720 resolution
-    FRAME_WIDTH, FRAME_HEIGHT = 1280, 720
-    PIXELS_PER_DEGREE_Y = FRAME_HEIGHT / 54.0
-    # คำนวณ pixel offset สำหรับการเงย 3 องศา
-    PITCH_OFFSET_PIXELS = 3.0 * PIXELS_PER_DEGREE_Y
-
-    # จุดกึ่งกลางของภาพทั้งหมด (ไม่ใช่ ROI)
-    CENTER_X = FRAME_WIDTH / 2
-    CENTER_Y = FRAME_HEIGHT / 2 - PITCH_OFFSET_PIXELS # ปรับเป้าให้สูงขึ้น
 
     while not stop_event.is_set():
         if not is_detecting_func():
-            # ถ้าไม่ได้อยู่ในโหมดตรวจจับ ให้ reset PID และตั้งค่า speed เป็น 0
-            pid_yaw.reset()
-            pid_pitch.reset()
-            with output_lock:
-                processed_output["speed_x"] = 0.0
-                processed_output["speed_y"] = 0.0
-                processed_output["target_locked"] = False
-            time.sleep(0.1)
-            continue
-
+            time.sleep(0.05); continue
         try:
             frame_to_process = q.get(timeout=1.0)
-            roi_frame = frame_to_process[ROI_Y:ROI_Y+ROI_H, ROI_X:ROI_X+ROI_W]
+
+            # เลื่อน ROI ตาม pitch ปัจจุบัน
+            with gimbal_angle_lock:
+                pitch_deg = gimbal_angles[0]  # + ขึ้น, - ลง (ตาม SDK)
+            # ถ้าก้มลง (pitch < 0) => ขยับ ROI_Y ขึ้น
+            roi_y_dynamic = int(ROI_Y0 - (max(0.0, -pitch_deg) * ROI_SHIFT_PER_DEG))
+            roi_y_dynamic = max(ROI_Y_MIN, min(ROI_Y_MAX, roi_y_dynamic))
+
+            ROI_X, ROI_W = roi_state["x"], roi_state["w"]
+            ROI_H = roi_state["h"]
+            roi_state["y"] = roi_y_dynamic
+
+            roi_frame = frame_to_process[roi_y_dynamic:roi_y_dynamic+ROI_H, ROI_X:ROI_X+ROI_W]
             detections = tracker.get_raw_detections(roi_frame)
 
             detailed_results = []
@@ -326,8 +328,6 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             divider2 = int(ROI_W*0.66)
 
             object_id_counter = 1
-            target_found = None
-
             for d in detections:
                 shape, color, (x,y,w,h) = d['shape'], d['color'], d['box']
                 endx = x+w
@@ -336,197 +336,274 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
                 elif x >= divider2: zone = "Right"
                 is_target = (shape == target_shape and color == target_color)
 
-                # เก็บข้อมูลเป้าหมายแรกที่เจอ
-                if is_target and target_found is None:
-                    target_found = d
-
                 detailed_results.append({
-                    "id": object_id_counter, "color": color, "shape": shape,
-                    "zone": zone, "is_target": is_target, "box": (x,y,w,h)
+                    "id": object_id_counter,
+                    "color": color,
+                    "shape": shape,
+                    "zone": zone,
+                    "is_target": is_target,
+                    "box": (x,y,w,h)
                 })
                 object_id_counter += 1
 
-            # --- ส่วนคำนวณ PID ---
-            speed_x, speed_y = 0.0, 0.0
-            is_locked = False
-            target_err = (0, 0)
-
-            if target_found:
-                x, y, w, h = target_found['box']
-                # แปลงพิกัด box ของ ROI กลับเป็นพิกัดของเฟรมเต็ม
-                abs_x, abs_y = x + ROI_X, y + ROI_Y
-                target_center_x = abs_x + w / 2
-                target_center_y = abs_y + h / 2
-
-                # คำนวณ error (เป้าหมาย - ตำแหน่งจริง)
-                err_x = CENTER_X - target_center_x
-                err_y = CENTER_Y - target_center_y
-                target_err = (err_x, err_y)
-
-                speed_x = pid_yaw.update(err_x)
-                speed_y = pid_pitch.update(err_y)
-
-                # ตรวจสอบว่า lock เป้าได้หรือไม่ (error อยู่ในเกณฑ์ที่ยอมรับ)
-                if abs(err_x) < 15 and abs(err_y) < 15:
-                    is_locked = True
-            else:
-                # ถ้าไม่เจอเป้าหมาย ให้ reset PID
-                pid_yaw.reset()
-                pid_pitch.reset()
-
             with output_lock:
-                processed_output = {
-                    "details": detailed_results,
-                    "speed_x": speed_x,
-                    "speed_y": speed_y,
-                    "target_locked": is_locked,
-                    "target_error": target_err
-                }
+                processed_output = {"details": detailed_results}
 
         except queue.Empty:
             continue
         except Exception as e:
             print(f"CRITICAL: Processing error: {e}")
-            time.sleep(0.05)
+            time.sleep(0.02)
 
     print("🛑 Processing thread stopped.")
 
-# =====================================================
-# Main
-# =====================================================
+# ==========================================
+# Control thread (PID drive + fire on lock)
+# ==========================================
+def control_thread_func(manager: RMConnection, roi_state, is_detecting_func):
+    print("🎯 Control thread started.")
+    # PID states
+    prev_time = None
+    err_x_prev_f = 0.0
+    err_y_prev_f = 0.0
+    integ_x = 0.0
+    integ_y = 0.0
+
+    lock_queue = deque(maxlen=LOCK_STABLE_COUNT)
+
+    while not stop_event.is_set():
+        if not (is_detecting_func() and manager.connected.is_set()):
+            time.sleep(0.02); continue
+
+        # หา target ล่าสุด (เลือกกล่องที่ใหญ่สุดในหมวด is_target)
+        with output_lock:
+            dets = list(processed_output["details"])
+
+        target_box = None
+        max_area = -1
+        for det in dets:
+            if det.get("is_target", False):
+                x,y,w,h = det["box"]
+                area = w*h
+                if area > max_area:
+                    max_area = area
+                    target_box = (x,y,w,h)
+
+        gimbal = manager.get_gimbal()
+        blaster = manager.get_blaster()
+        if (gimbal is None) or (blaster is None):
+            time.sleep(0.02); continue
+
+        # เปิดเฉพาะเมื่อมีเป้า
+        if target_box is not None:
+            x,y,w,h = target_box
+
+            # center เป้าภายใน ROI
+            cx_roi = x + w/2.0
+            cy_roi = y + h/2.0
+
+            # แปลงเป็นพิกเซลในทั้งเฟรม
+            ROI_X, ROI_Y, ROI_W, ROI_H = roi_state["x"], roi_state["y"], roi_state["w"], roi_state["h"]
+            cx = ROI_X + cx_roi
+            cy = ROI_Y + cy_roi
+
+            # ศูนย์ภาพ
+            center_x = FRAME_W/2.0
+            center_y = FRAME_H/2.0
+
+            # Error (ภาพ → กิมบอล): yaw ใช้ x, pitch ใช้ y
+            # เพิ่ม PITCH_BIAS_PIX เพื่อเล็งสูงขึ้น ~ +3°
+            err_x = (center_x - cx)
+            err_y = (center_y - cy) + PITCH_BIAS_PIX
+
+            # deadzone ลด jitter
+            if abs(err_x) < PIX_ERR_DEADZONE: err_x = 0.0
+            if abs(err_y) < PIX_ERR_DEADZONE: err_y = 0.0
+
+            # dt
+            now = time.time()
+            if prev_time is None:
+                prev_time = now
+                err_x_prev_f = err_x
+                err_y_prev_f = err_y
+                time.sleep(0.005)
+                continue
+            dt = max(1e-3, now - prev_time)
+            prev_time = now
+
+            # Low-pass derivative (บน error)
+            err_x_f = err_x_prev_f + DERIV_LPF_ALPHA*(err_x - err_x_prev_f)
+            err_y_f = err_y_prev_f + DERIV_LPF_ALPHA*(err_y - err_y_prev_f)
+            dx = (err_x_f - err_x_prev_f)/dt
+            dy = (err_y_f - err_y_prev_f)/dt
+            err_x_prev_f = err_x_f
+            err_y_prev_f = err_y_f
+
+            # anti-windup
+            integ_x = np.clip(integ_x + err_x*dt, -I_CLAMP, I_CLAMP)
+            integ_y = np.clip(integ_y + err_y*dt, -I_CLAMP, I_CLAMP)
+
+            # PID → ความเร็วกิมบอล
+            u_x = PID_KP*err_x + PID_KI*integ_x + PID_KD*dx   # map → yaw_speed
+            u_y = PID_KP*err_y + PID_KI*integ_y + PID_KD*dy   # map → pitch_speed
+
+            # clamp
+            u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
+            u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
+
+            try:
+                # หมายเหตุ: pitch_speed ใน SDK แกนกลับกับภาพ (บนลงลบ/บวกแล้วแต่ SDK)
+                # จากโค้ดเดิมใช้ ep_gimbal.drive_speed(pitch=-speed_y, yaw=+speed_x)
+                gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
+            except Exception as e:
+                print("drive_speed error:", e)
+
+            # ตรวจ lock เพื่อยิง
+            locked = (abs(err_x) <= LOCK_TOL_X) and (abs(err_y) <= LOCK_TOL_Y)
+            lock_queue.append(1 if locked else 0)
+
+            if len(lock_queue) == LOCK_STABLE_COUNT and sum(lock_queue) == LOCK_STABLE_COUNT:
+                try:
+                    blaster.fire(fire_type=r_blaster.WATER_FIRE)
+                    # กันยิงรัว: เว้นเล็กน้อยและรีเซ็ตคิว lock
+                    time.sleep(0.1)
+                    lock_queue.clear()
+                except Exception as e:
+                    print("fire error:", e)
+        else:
+            # ไม่มีเป้า → ค่อยๆหยุด
+            try:
+                gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+            except Exception:
+                pass
+            lock_queue.clear()
+            # ลด integral ให้หายหลอน
+            integ_x *= 0.98
+            integ_y *= 0.98
+
+        time.sleep(0.005)
+
+    print("🛑 Control thread stopped.")
+
+# =========
+# Main UI
+# =========
 if __name__ == "__main__":
-    target_shape, target_color = "Circle", "Red"
-    print(f"🎯 Target set to: {target_color} {target_shape}")
+    print(f"🎯 Target set to: {TARGET_COLOR} {TARGET_SHAPE}")
 
     tracker = ObjectTracker(use_gpu=USE_GPU)
-    
-    # --- ตั้งค่า PID ---
-    # Kp: การตอบสนองต่อ error ปัจจุบัน (ยิ่งเยอะยิ่งเร็ว แต่อาจแกว่ง)
-    # Ki: การแก้ error สะสม (ช่วยให้เข้าเป้านิ่ง แต่ถ้าเยอะไปจะ overshoot)
-    # Kd: การต้านการเปลี่ยนแปลงที่รวดเร็ว (ช่วยลดการแกว่ง)
-    pid_yaw_controller = PIDController(Kp=-0.3, Ki=-0.005, Kd=-0.05)
-    pid_pitch_controller = PIDController(Kp=-0.3, Ki=-0.005, Kd=-0.05)
 
-
-    # ROI (ปรับเป็นของ 720p ถ้าจำเป็น, ค่าเดิมน่าจะพอใช้ได้)
-    ROI_Y, ROI_H, ROI_X, ROI_W = 264, 270, 10, 1260 # ขยาย ROI width ให้เต็ม
+    # ROI state (dynamic Y)
+    roi_state = {"x": ROI_X0, "y": ROI_Y0, "w": ROI_W0, "h": ROI_H0}
 
     manager = RMConnection()
     reconn = threading.Thread(target=reconnector_thread, args=(manager,), daemon=True)
     reconn.start()
 
-    is_detecting_flag = {"v": False}
+    is_detecting_flag = {"v": True}  # เริ่มตรวจจับ ON เลย
     def is_detecting(): return is_detecting_flag["v"]
 
-    cap_t = threading.Thread(target=capture_thread_func, args=(manager, frame_queue), daemon=True)
-    proc_t = threading.Thread(
-        target=processing_thread_func,
-        args=(tracker, frame_queue, target_shape, target_color,
-              (ROI_X, ROI_Y, ROI_W, ROI_H), pid_yaw_controller, pid_pitch_controller, is_detecting),
-        daemon=True
-    )
-    cap_t.start(); proc_t.start()
+    cap_t  = threading.Thread(target=capture_thread_func, args=(manager, frame_queue), daemon=True)
+    proc_t = threading.Thread(target=processing_thread_func,
+                              args=(tracker, frame_queue, TARGET_SHAPE, TARGET_COLOR, roi_state, is_detecting),
+                              daemon=True)
+    ctrl_t = threading.Thread(target=control_thread_func, args=(manager, roi_state, is_detecting), daemon=True)
 
-    print("\n--- Real-time Scanner & Tracker (Merged) ---")
-    print("s: toggle detection/tracking, r: force reconnect, q: quit")
+    cap_t.start(); proc_t.start(); ctrl_t.start()
+
+    print("\n--- Real-time Scanner + PID Track (+3°) (Auto-Reconnect, Full Display) ---")
+    print("s: toggle detection, r: force reconnect, q: quit")
 
     display_frame = None
-    last_fire_time = 0
-    FIRE_COOLDOWN = 1.5 # วินาที
-
     try:
         while not stop_event.is_set():
-            # --- รับข้อมูลจาก Threads ---
-            with output_lock:
-                details = processed_output["details"]
-                s_x = processed_output["speed_x"]
-                s_y = processed_output["speed_y"]
-                is_locked = processed_output["target_locked"]
-                target_error = processed_output["target_error"]
-
-            # --- ควบคุม Gimbal และ Blaster ---
-            cam, gimbal, blaster = manager.get_robot_components()
-            if gimbal:
-                # ส่งคำสั่งควบคุม gimbal (pitch_speed เป็นลบเพราะแกนกลับด้าน)
-                gimbal.drive_speed(pitch_speed=-s_y, yaw_speed=s_x)
-
-                # ตรรกะการยิง
-                if is_locked and blaster and (time.time() - last_fire_time > FIRE_COOLDOWN):
-                    print(f"🔥 Target locked! Firing! Error: {target_error}")
-                    blaster.fire(fire_type=blaster.INFRARED_FIRE, times=1)
-                    last_fire_time = time.time()
-
-            # --- ส่วนแสดงผล (เหมือนเดิม) ---
             try:
-                display_frame = frame_queue.get(timeout=0.5)
+                display_frame = frame_queue.get(timeout=1.0)
             except queue.Empty:
                 if display_frame is None:
                     print("Waiting for first frame...")
-                time.sleep(0.1)
+                time.sleep(0.2)
                 continue
 
+            # วาด ROI และเส้นแบ่งซ้าย/กลาง/ขวา (ยึดสไตล์เดิม)
+            ROI_X, ROI_Y, ROI_W, ROI_H = roi_state["x"], roi_state["y"], roi_state["w"], roi_state["h"]
             cv2.rectangle(display_frame, (ROI_X, ROI_Y), (ROI_X+ROI_W, ROI_Y+ROI_H), (255,0,0), 2)
 
             if is_detecting():
-                status_text = "TRACKING" if any(d['is_target'] for d in details) else "DETECTING"
-                status_color = (0, 165, 255) if status_text == "TRACKING" else (0, 255, 0)
-                if is_locked:
-                    status_text = "LOCKED"
-                    status_color = (0, 0, 255)
+                cv2.putText(display_frame, "MODE: DETECTING", (20,40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
+                with output_lock:
+                    details = processed_output["details"]
 
-                cv2.putText(display_frame, f"MODE: {status_text}", (20,40),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, status_color, 2)
-                
-                with output_lock: details = processed_output["details"]
-                d1_abs = ROI_X + int(ROI_W*0.33); d2_abs = ROI_X + int(ROI_W*0.66)
+                d1_abs = ROI_X + int(ROI_W*0.33)
+                d2_abs = ROI_X + int(ROI_W*0.66)
                 cv2.line(display_frame, (d1_abs, ROI_Y), (d1_abs, ROI_Y+ROI_H), (255,255,0), 1)
                 cv2.line(display_frame, (d2_abs, ROI_Y), (d2_abs, ROI_Y+ROI_H), (255,255,0), 1)
 
+                # กล่องวัตถุ: สี/ความหนาแบบเดิม (แดง=target, เหลือง=Uncertain, เขียว=อื่น)
                 for det in details:
                     x,y,w,h = det['box']
                     abs_x, abs_y = x + ROI_X, y + ROI_Y
-                    box_color = (0,0,255) if det['is_target'] else ((0,255,255) if det['shape'] == 'Uncertain' else (0,255,0))
+                    if det['is_target']:
+                        box_color = (0,0,255)
+                    elif det['shape'] == 'Uncertain':
+                        box_color = (0,255,255)
+                    else:
+                        box_color = (0,255,0)
                     thickness = 4 if det['is_target'] else 2
                     cv2.rectangle(display_frame, (abs_x,abs_y), (abs_x+w, abs_y+h), box_color, thickness)
-                    cv2.putText(display_frame, str(det['id']), (abs_x+5, abs_y+25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
-                
+                    cv2.putText(display_frame, str(det['id']), (abs_x+5, abs_y+25),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, box_color, 2)
+
+                # รายการซ้ายบน
                 if details:
                     y_pos = 70
                     for obj in details:
                         target_str = " (TARGET!)" if obj['is_target'] else ""
                         line = f"ID {obj['id']}: {obj['color']} {obj['shape']}{target_str}"
+                        # shadow
                         cv2.putText(display_frame, line, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,0), 4)
                         cv2.putText(display_frame, line, (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 1)
                         y_pos += 25
+
+                # วาด crosshair กลางภาพ และเส้น bias +3° (แนวนอน)
+                cy_bias = int(FRAME_H/2 - PITCH_BIAS_PIX)
+                cv2.line(display_frame, (FRAME_W//2 - 20, FRAME_H//2), (FRAME_W//2 + 20, FRAME_H//2), (255,255,255), 1)
+                cv2.line(display_frame, (FRAME_W//2, FRAME_H//2 - 20), (FRAME_W//2, FRAME_H//2 + 20), (255,255,255), 1)
+                cv2.line(display_frame, (0, cy_bias), (FRAME_W, cy_bias), (0, 128, 255), 1)  # เส้นเป้า +3°
+
             else:
-                cv2.putText(display_frame, "MODE: VIEWING", (20,40), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
+                cv2.putText(display_frame, "MODE: VIEWING", (20,40),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,255), 2)
 
+            # สถานะ SDK
             st = "CONNECTED" if manager.connected.is_set() else "RECONNECTING..."
-            y_offset = 70 if not (is_detecting() and details) else y_pos
-            cv2.putText(display_frame, f"SDK: {st}", (20, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+            cv2.putText(display_frame, f"SDK: {st}", (20, 70 if not is_detecting() else 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
 
-            cv2.imshow("Robomaster Real-time Scan & Track", display_frame)
+            cv2.imshow("Robomaster Real-time Scan + PID Track (+3°)", display_frame)
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'): break
+            if key == ord('q'):
+                break
             elif key == ord('s'):
                 is_detecting_flag["v"] = not is_detecting_flag["v"]
-                print(f"Detection/Tracking {'ON' if is_detecting_flag['v'] else 'OFF'}")
+                print(f"Detection {'ON' if is_detecting_flag['v'] else 'OFF'}")
             elif key == ord('r'):
                 print("Manual reconnect requested")
                 manager.drop_and_reconnect()
                 try:
                     while True: frame_queue.get_nowait()
-                except queue.Empty: pass
+                except queue.Empty:
+                    pass
 
     except Exception as e:
         print(f"❌ Main loop error: {e}")
     finally:
         print("\n🔌 Shutting down...")
         stop_event.set()
-        if manager.connected.is_set():
-            _, gimbal, _ = manager.get_robot_components()
-            if gimbal: gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-        try: cv2.destroyAllWindows()
-        except Exception: pass
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
         manager.close()
         print("✅ Cleanup complete")

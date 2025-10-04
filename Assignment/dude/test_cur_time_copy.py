@@ -42,7 +42,7 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (2,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (3,2)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION = 0   # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -78,7 +78,7 @@ POSITION_LOG = []  # เก็บข้อมูลตำแหน่งแล�
 
 # --- NEW: Resume Function Variables ---
 RESUME_MODE = False  # ตัวแปรบอกว่าเป็นโหมด resume หรือไม่
-DATA_FOLDER = r"D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude"  # โฟลเดอร์สำหรับเก็บไฟล์ JSON
+DATA_FOLDER = r"F:\Coder\Year2-1\Robot_Module\Assignment\dude\James_path"  # โฟลเดอร์สำหรับเก็บไฟล์ JSON
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -935,23 +935,23 @@ if __name__ == '__main__':
                 occupancy_map = create_occupancy_map_from_json()
                 if occupancy_map is None:
                     print("❌ Failed to load occupancy map. Starting fresh session.")
-                    occupancy_map = OccupancyGridMap(width=3, height=3)
+                    occupancy_map = OccupancyGridMap(width=4, height=4)
                     RESUME_MODE = False
             else:
                 print("❌ Failed to load resume data. Starting fresh session.")
-                occupancy_map = OccupancyGridMap(width=3, height=3)
+                occupancy_map = OccupancyGridMap(width=4, height=4)
                 RESUME_MODE = False
         else:
             print("🆕 Starting fresh session...")
-            occupancy_map = OccupancyGridMap(width=3, height=3)
+            occupancy_map = OccupancyGridMap(width=4, height=4)
             RESUME_MODE = False
     else:
         print("🆕 No previous session found. Starting fresh session...")
-        occupancy_map = OccupancyGridMap(width=3, height=3)
+        occupancy_map = OccupancyGridMap(width=4, height=4)
         RESUME_MODE = False
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=3, target_dest=TARGET_DESTINATION)#here
+        visualizer = RealTimeVisualizer(grid_size=4, target_dest=TARGET_DESTINATION)#here
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
