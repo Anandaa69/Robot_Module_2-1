@@ -41,9 +41,9 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (0, 4)  # (แถว, คอลัมน์)
-CURRENT_DIRECTION = 2   # 0:North, 1:East, 2:South, 3:West
-TARGET_DESTINATION = (0, 4)
+CURRENT_POSITION = (4, 0)  # (แถว, คอลัมน์)
+CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West
+TARGET_DESTINATION = (4, 0)
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
