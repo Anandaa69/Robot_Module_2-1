@@ -1,6 +1,6 @@
 # -*-coding:utf-8-*-
 # Integrated Object Detection + Map Exploration System
-# Merged from fire_target.py and test_cur_time_copy.py
+# Complete merge of fire_target.py and test_cur_time_copy.py
 
 import time
 import robomaster
