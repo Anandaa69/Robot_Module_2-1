@@ -1,17 +1,13 @@
 # -*- coding: utf-8 -*-
 """
-detect_map_merged.py
+detect_map_merged_s1_safe.py  (RoboMaster S1 safe version)
 
 รวม:
-- ระบบตรวจจับวัตถุ + เธรดกล้อง/ประมวลผลจาก fire_target.py (คง logic เดิม)
-- ระบบเดินสำรวจ/OGM แมพ/ToF/ชดเชย yaw จาก test_cur_time_copy.py (คง logic เดิมที่จำเป็น)
-- เพิ่ม flow: เปิดโหมด s (detect) 1 วินาที ณ แต่ละสเต็ป, กรอง zone ตาม ToF หน้า 60ซม.,
-  เซฟผลตรวจลง "บล็อคถัดไป" ทั้ง overlay บนแผนที่ และบันทึก JSON
-
-ข้อสังเกต:
-- ผมเพิ่ม get_chassis()/get_tof()/get_sensor_adapter() ให้กับ RMConnection เพื่อเรียกฮาร์ดแวร์จากที่เดียว
-- โครงเธรด detect ของ fire_target ถูกยกทั้งชุด (capture+processing) และสามารถเปิด/ปิดด้วย flag is_detecting_flag (โหมด s)
-- การวาดแผนที่ต่อยอดจาก RealTimeVisualizer: เพิ่มการแปะ "สัญลักษณ์ออปเจกต์" ในช่องบล็อคถัดไป แยกซ้าย/หน้า/ขวา
+- ระบบตรวจจับ (threads, ROI, detect) จาก fire_target.py
+- ระบบเดินสำรวจ/OGM/วาดแผนที่ จาก test_cur_time_copy.py
+- โหมดสแกน "s" เปิด detect 1 วิ/สเต็ป แล้วบันทึกวัตถุลง "บล็อคถัดไป" + JSON
+- ปรับให้เข้ากับ S1: getter อุปกรณ์ทั้งหมดใช้ getattr ปลอดภัย (ไม่มีก็ได้ None)
+  -> ถ้าไม่พบเซ็นเซอร์ระยะ (ToF/IR) จะถือว่า front = inf (ไม่บล็อค) ตาม fallback
 """
 
 import cv2
@@ -23,15 +19,12 @@ import threading
 import queue
 from collections import deque
 import os
-import statistics
 
 from robomaster import robot, camera as r_camera, blaster as r_blaster
 
 # =========================
 # ====== fire_target ======
-# (นำแกนหลักมาจากไฟล์เดิม: tracker, capture/processing threads, PID constants, ROI dynamics)
 # =========================
-# --- CONFIG detect ---
 TARGET_SHAPE = "Circle"
 TARGET_COLOR = "Red"
 
@@ -53,8 +46,6 @@ FRAME_W, FRAME_H = 960, 540
 VERTICAL_FOV_DEG = 54.0
 PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
 
-# NOTE: ใน flow นี้เรา "ไม่ใช้ยิง" ระหว่างสำรวจ จึงไม่ใช้ pitch bias/ควบคุมยิง
-# (เก็บไว้หากภายหลังต้องการ re-use)
 PITCH_BIAS_DEG = 2.0
 PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 
@@ -62,7 +53,6 @@ ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
 ROI_SHIFT_PER_DEG = 6.0
 ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
 
-# --- Shared/thread states (from fire_target) ---
 frame_queue = queue.Queue(maxsize=1)
 processed_output = {"details": []}  # [{id,color,shape,zone,is_target,box}]
 output_lock = threading.Lock()
@@ -76,7 +66,6 @@ def sub_angle_cb(angle_info):
     with gimbal_angle_lock:
         gimbal_angles = tuple(angle_info)
 
-# --- White balance (เดิม) ---
 def apply_awb(bgr):
     if hasattr(cv2, "xphoto") and hasattr(cv2.xphoto, "createLearningBasedWB"):
         wb = cv2.xphoto.createLearningBasedWB()
@@ -170,7 +159,7 @@ class ObjectTracker:
         return out
 
 class RMConnection:
-    """ยกจาก fire_target + เพิ่ม access อุปกรณ์ที่ฝั่งสำรวจต้องใช้"""
+    """Safe getters for S1: ถ้าไม่มีอุปกรณ์ คืน None (ไม่ throw)"""
     def __init__(self):
         self._lock = threading.Lock()
         self._robot = None
@@ -190,6 +179,15 @@ class RMConnection:
             self._robot = rb
             self.connected.set()
             print("✅ RoboMaster connected & camera streaming")
+
+            # show optional modules (for debugging what S1 exposes)
+            optional = ["tof", "sensor_adapter", "ir_distance_sensor", "vision", "armor", "led"]
+            available = [name for name in optional if hasattr(rb, name)]
+            if available:
+                print("ℹ️ Optional modules detected:", ", ".join(available))
+            else:
+                print("ℹ️ No optional distance/adapter modules detected (fallbacks will be used).")
+
             try:
                 rb.gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
             except Exception as e:
@@ -215,28 +213,32 @@ class RMConnection:
         with self._lock:
             self._safe_close()
 
+    # --- safe getters ---
     def get_camera(self):
         with self._lock:
-            return None if self._robot is None else self._robot.camera
+            return getattr(self._robot, "camera", None) if self._robot else None
     def get_gimbal(self):
         with self._lock:
-            return None if self._robot is None else self._robot.gimbal
+            return getattr(self._robot, "gimbal", None) if self._robot else None
     def get_blaster(self):
         with self._lock:
-            return None if self._robot is None else self._robot.blaster
-    # ---- เพิ่มสำหรับฝั่งสำรวจ ----
+            return getattr(self._robot, "blaster", None) if self._robot else None
     def get_chassis(self):
         with self._lock:
-            return None if self._robot is None else self._robot.chassis
-    # แทนที่เมธอดเดิม
+            return getattr(self._robot, "chassis", None) if self._robot else None
     def get_tof(self):
         with self._lock:
-            # ถ้าไม่มี .tof ใน Robot ให้ได้ None แทนการ throw AttributeError
-            return getattr(self._robot, "tof", None)
+            return getattr(self._robot, "tof", None) if self._robot else None
     def get_sensor_adapter(self):
         with self._lock:
-            # สำหรับ Sharp/IR (ADC/IO)
-            return None if self._robot is None else self._robot.sensor_adapter
+            return getattr(self._robot, "sensor_adapter", None) if self._robot else None
+    def get_ir_distance_sensor(self):
+        with self._lock:
+            return getattr(self._robot, "ir_distance_sensor", None) if self._robot else None
+
+    def get_attr(self, name: str):
+        with self._lock:
+            return getattr(self._robot, name, None) if self._robot else None
 
     def close(self):
         with self._lock:
@@ -294,15 +296,13 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
                            target_shape, target_color,
                            roi_state,
                            is_detecting_func):
-    """ยกตรรกะจาก fire_target: อ่านเฟรม -> crop ROI ตาม pitch -> detect -> อัปเดต processed_output"""
     global processed_output
     print("🧠 Processing thread started.")
     while not stop_event.is_set():
         if not is_detecting_func():
-            time.sleep(0.02);  # โหมด s off: ไม่ประมวลผล
-            # แต่เรายังเปิดกล้องตลอด (เฟรมในคิวไหลอยู่)
+            time.sleep(0.02)
             try:
-                q.get_nowait()
+                q.get_nowait()  # ทิ้งเฟรมเก่าเพื่อไม่ให้คิวตัน
             except queue.Empty:
                 pass
             continue
@@ -351,18 +351,13 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             print(f"CRITICAL: Processing error: {e}")
             time.sleep(0.02)
     print("🛑 Processing thread stopped.")
-# (อ้างอิงโครงจาก fire_target.py)  # :contentReference[oaicite:2]{index=2}
 
 # =========================
 # ====== สำรวจ/OGM ========
-# (ยกเฉพาะส่วนที่จำเป็นจาก test_cur_time_copy สำหรับเดินทีละบล็อค, จัดศูนย์, วัดผนัง, สร้างแผนที่)
 # =========================
 SPEED_ROTATE = 480
-SHARP_WALL_THRESHOLD_CM = 60.0
-SHARP_STDEV_THRESHOLD = 0.3
-TOF_ADJUST_SPEED = 0.1
-TOF_CALIBRATION_SLOPE = 0.0894
-TOF_CALIBRATION_Y_INTERCEPT = 3.8409
+OCCUPANCY_THRESHOLD = 0.7
+FREE_THRESHOLD = 0.3
 
 CURRENT_POSITION = (3,2)  # (row,col)
 CURRENT_DIRECTION = 0     # 0:N,1:E,2:S,3:W
@@ -371,30 +366,12 @@ ROBOT_FACE = 1
 
 IMU_DRIFT_COMPENSATION_DEG = 0.0
 
-PROB_OCC_GIVEN_OCC = {'tof': 0.95, 'sharp': 0.90}
-PROB_OCC_GIVEN_FREE = {'tof': 0.05, 'sharp': 0.10}
-LOG_ODDS_OCC = {
-    'tof': math.log(PROB_OCC_GIVEN_OCC['tof'] / (1 - PROB_OCC_GIVEN_OCC['tof'])),
-    'sharp': math.log(PROB_OCC_GIVEN_OCC['sharp'] / (1 - PROB_OCC_GIVEN_OCC['sharp']))
-}
-LOG_ODDS_FREE = {
-    'tof': math.log(PROB_OCC_GIVEN_FREE['tof'] / (1 - PROB_OCC_GIVEN_FREE['tof'])),
-    'sharp': math.log(PROB_OCC_GIVEN_FREE['sharp'] / (1 - PROB_OCC_GIVEN_FREE['sharp']))
-}
-OCCUPANCY_THRESHOLD = 0.7
-FREE_THRESHOLD = 0.3
-
-def calibrate_tof_value(raw_mm):
-    if raw_mm is None or raw_mm <= 0:
-        return float('inf')
-    return (TOF_CALIBRATION_SLOPE * raw_mm) + TOF_CALIBRATION_Y_INTERCEPT
-
 def get_compensated_target_yaw():
     return CURRENT_TARGET_YAW + IMU_DRIFT_COMPENSATION_DEG
 
 class WallBelief:
     def __init__(self): self.log_odds = 0.0
-    def update(self, occ, sensor): self.log_odds = max(min(self.log_odds + (LOG_ODDS_OCC[sensor] if occ else LOG_ODDS_FREE[sensor]), 10), -10)
+    def update(self, occ, _sensor): self.log_odds = max(min(self.log_odds + (1.5 if occ else -1.5), 10), -10)
     def get_probability(self): return 1.0 - 1.0 / (1.0 + math.exp(self.log_odds))
     def is_occupied(self): return self.get_probability() > OCCUPANCY_THRESHOLD
 
@@ -402,9 +379,7 @@ class OGMCell:
     def __init__(self):
         self.log_odds_occupied = 0.0
         self.walls = {'N': None, 'E': None, 'S': None, 'W': None}
-        # เพิ่มที่เก็บ “ไอคอนออปเจกต์ในเซลล์” แยกตำแหน่ง Left/Center/Right
-        self.objects = {"Left": [], "Center": [], "Right": []}  # รายการ dict ของวัตถุในช่อง
-
+        self.objects = {"Left": [], "Center": [], "Right": []}
     def get_node_probability(self): return 1.0 - 1.0 / (1.0 + math.exp(self.log_odds_occupied))
     def is_node_occupied(self): return self.get_node_probability() > OCCUPANCY_THRESHOLD
 
@@ -424,26 +399,6 @@ class OccupancyGridMap:
                     if c>0: self.grid[r][c-1].walls['E'] = wall
                 if self.grid[r][c].walls['S'] is None: self.grid[r][c].walls['S'] = WallBelief()
                 if self.grid[r][c].walls['E'] is None: self.grid[r][c].walls['E'] = WallBelief()
-    def update_wall(self, r,c,dir_char,occ, sensor): 
-        if 0<=r<self.height and 0<=c<self.width:
-            w = self.grid[r][c].walls.get(dir_char); 
-            if w: w.update(occ, sensor)
-    def update_node(self, r,c,occ, sensor='tof'):
-        if 0<=r<self.height and 0<=c<self.width:
-            self.grid[r][c].log_odds_occupied += (LOG_ODDS_OCC[sensor] if occ else LOG_ODDS_FREE[sensor])
-    def is_path_clear(self, r1,c1, r2,c2):
-        dr, dc = r2-r1, c2-c1
-        if abs(dr)+abs(dc)!=1: return False
-        if dr==-1: wall_char='N'
-        elif dr==1: wall_char='S'
-        elif dc==1: wall_char='E'
-        else: wall_char='W'
-        w = self.grid[r1][c1].walls.get(wall_char)
-        if w and w.is_occupied(): return False
-        if 0<=r2<self.height and 0<=c2<self.width:
-            if self.grid[r2][c2].is_node_occupied(): return False
-        else: return False
-        return True
 
 import matplotlib.pyplot as plt
 class RealTimeVisualizer:
@@ -451,19 +406,19 @@ class RealTimeVisualizer:
         plt.ion()
         self.grid_size = grid_size
         self.fig, self.ax = plt.subplots(figsize=(8,7))
-        self.colors = {"robot":"#0000FF", "target":"#FFD700", "wall":"#000000"}
+        self.colors = {"robot":"#0000FF", "wall":"#000000"}
     def update_plot(self, occupancy_map, robot_pos, path=None):
         self.ax.clear()
         self.ax.set_title("Real-time Hybrid Belief Map (Nodes & Walls + Objects)")
         self.ax.set_xticks([]); self.ax.set_yticks([])
         self.ax.set_xlim(-0.5, self.grid_size-0.5); self.ax.set_ylim(self.grid_size-0.5, -0.5)
-        # วาด node prob
+        # nodes
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 prob = occupancy_map.grid[r][c].get_node_probability()
                 color = '#8B0000' if prob>OCCUPANCY_THRESHOLD else ('#D3D3D3' if prob<FREE_THRESHOLD else '#90EE90')
                 self.ax.add_patch(plt.Rectangle((c-0.5, r-0.5), 1,1, facecolor=color, edgecolor='k', lw=0.5))
-        # วาด wall
+        # walls
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 cell = occupancy_map.grid[r][c]
@@ -471,11 +426,10 @@ class RealTimeVisualizer:
                 if cell.walls['W'].is_occupied(): self.ax.plot([c-0.5, c-0.5],[r-0.5,r+0.5], color=self.colors['wall'], lw=4)
                 if r==self.grid_size-1 and cell.walls['S'].is_occupied(): self.ax.plot([c-0.5, c+0.5],[r+0.5,r+0.5], color=self.colors['wall'], lw=4)
                 if c==self.grid_size-1 and cell.walls['E'].is_occupied(): self.ax.plot([c+0.5, c+0.5],[r-0.5,r+0.5], color=self.colors['wall'], lw=4)
-        # วางไอคอน objects ในเซลล์: จุด 3 ตำแหน่ง Left/Center/Right
+        # objects (Left/Center/Right)
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 objs = occupancy_map.grid[r][c].objects
-                # กำหนดตำแหน่งย่อยในช่อง (offset)
                 base_x, base_y = c, r
                 if objs["Left"]:
                     self.ax.scatter([base_x-0.25],[base_y], s=40, marker='s')
@@ -483,23 +437,29 @@ class RealTimeVisualizer:
                     self.ax.scatter([base_x],[base_y-0.25], s=40, marker='o')
                 if objs["Right"]:
                     self.ax.scatter([base_x+0.25],[base_y], s=40, marker='^')
-        # วางตำแหน่งหุ่น
+        # robot
         if robot_pos:
             rr, cc = robot_pos
             self.ax.add_patch(plt.Rectangle((cc-0.5, rr-0.5),1,1, facecolor=self.colors['robot'], edgecolor='k', lw=2, alpha=0.6))
         self.fig.tight_layout()
         self.fig.canvas.draw(); self.fig.canvas.flush_events(); plt.pause(0.01)
 
-# ===== Movement/Attitude/Scanner (ย่อส่วนจาก test_cur_time_copy) =====
+# ===== Movement/Attitude (ย่อ) =====
 class AttitudeHandler:
     def __init__(self):
         self.current_yaw, self.yaw_tolerance, self.is_monitoring = 0.0, 3.0, False
     def attitude_handler(self, attitude_info):
         if self.is_monitoring: self.current_yaw = attitude_info[0]
     def start_monitoring(self, chassis):
-        self.is_monitoring = True; chassis.sub_attitude(freq=20, callback=self.attitude_handler)
+        if chassis is None: return
+        self.is_monitoring = True
+        try:
+            chassis.sub_attitude(freq=20, callback=self.attitude_handler)
+        except Exception as e:
+            print("sub_attitude error:", e)
     def stop_monitoring(self, chassis):
         self.is_monitoring = False
+        if chassis is None: return
         try: chassis.unsub_attitude()
         except Exception: pass
     def normalize_angle(self, a):
@@ -507,10 +467,14 @@ class AttitudeHandler:
         while a<=-180: a+=360
         return a
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
+        if chassis is None: return
         normalized = self.normalize_angle(target_yaw); time.sleep(0.1)
         robot_rot = -self.normalize_angle(normalized - self.current_yaw)
         if abs(robot_rot) > self.yaw_tolerance:
-            chassis.move(x=0,y=0,z=robot_rot,z_speed=60).wait_for_completed(timeout=2)
+            try:
+                chassis.move(x=0,y=0,z=robot_rot,z_speed=60).wait_for_completed(timeout=2)
+            except Exception as e:
+                print("chassis.move rotate error:", e)
             time.sleep(0.1)
 
 class PID_1D:
@@ -528,7 +492,11 @@ class MovementController:
     def __init__(self, chassis):
         self.chassis = chassis
         self.current_x_pos, self.current_y_pos = 0.0, 0.0
-        self.chassis.sub_position(freq=20, callback=self.position_handler)
+        if self.chassis is not None:
+            try:
+                self.chassis.sub_position(freq=20, callback=self.position_handler)
+            except Exception as e:
+                print("sub_position error:", e)
     def position_handler(self, pos_info):
         self.current_x_pos, self.current_y_pos = pos_info[0], pos_info[1]
     def _yaw_correction(self, att, target_yaw):
@@ -537,6 +505,8 @@ class MovementController:
         spd = KP_YAW * yaw_error
         return max(min(spd, MAX_YAW_SPEED), -MAX_YAW_SPEED)
     def move_forward_one_grid(self, axis, att):
+        if self.chassis is None: 
+            print("⚠️ No chassis; skip move"); return
         att.correct_yaw_to_target(self.chassis, get_compensated_target_yaw())
         target_dist = 0.6
         pid = PID_1D(1.8, 0.25, 12, setpoint=target_dist)
@@ -553,31 +523,92 @@ class MovementController:
             ramp = min(1.0, 0.1 + ((now-start)/1.0)*0.9)
             speed = max(-1.0, min(1.0, out*ramp))
             yaw_corr = self._yaw_correction(att, get_compensated_target_yaw())
-            self.chassis.drive_speed(x=speed,y=0,z=yaw_corr,timeout=1)
-        self.chassis.drive_wheels(w1=0,w2=0,w3=0,w4=0); time.sleep(0.2)
+            try:
+                self.chassis.drive_speed(x=speed,y=0,z=yaw_corr,timeout=1)
+            except Exception as e:
+                print("drive_speed error:", e)
+                break
+        try:
+            self.chassis.drive_wheels(w1=0,w2=0,w3=0,w4=0)
+        except Exception: pass
+        time.sleep(0.2)
 
 class EnvironmentScanner:
-    """ใช้ ToF หน้าตรง + Sharp/IR ข้าง (ย่อส่วน)"""
-    def __init__(self, sensor_adaptor, tof_sensor, gimbal):
-        self.sensor_adaptor, self.tof_sensor, self.gimbal = sensor_adaptor, tof_sensor, gimbal
-        self.tof_wall_threshold_cm = 60.0
+    """
+    ปลอดภัยต่อ S1: ถ้าไม่มีเซ็นเซอร์ระยะ จะคืน inf (ถือว่าไม่บล็อค)
+    """
+    def __init__(self, tof_sensor, ir_sensor, gimbal):
+        self.tof_sensor = tof_sensor
+        self.ir_sensor = ir_sensor
+        self.gimbal = gimbal
         self.last_front_cm = float('inf')
         self.is_gimbal_forward = True
-        if self.tof_sensor is not None:
-            self.tof_sensor.sub_distance(freq=10, callback=self._tof_cb)
-    def _tof_cb(self, sub_info):
-        cm = calibrate_tof_value(sub_info[0])
+
+        # พยายาม subscribe แบบปลอดภัย (ถ้า SDK รองรับ)
+        try:
+            if self.tof_sensor and hasattr(self.tof_sensor, "sub_distance"):
+                self.tof_sensor.sub_distance(freq=10, callback=self._tof_cb)
+                print("ℹ️ Subscribed ToF distance.")
+        except Exception as e:
+            print("ToF subscribe not available:", e)
+        try:
+            if self.ir_sensor and hasattr(self.ir_sensor, "sub_distance"):
+                self.ir_sensor.sub_distance(freq=10, callback=self._ir_cb)
+                print("ℹ️ Subscribed IR distance.")
+        except Exception as e:
+            pass  # ไม่เป็นไร
+
+    def _tof_cb(self, info):
+        # บาง SDK ให้ mm, บางตัว cm — เราจะแปลงให้เป็น cm ถ้าดูเหมือน mm
+        v = float(info[0]) if isinstance(info, (list,tuple)) else float(info)
+        cm = v/10.0 if v>100 else v
         if self.is_gimbal_forward:
             self.last_front_cm = cm
+
+    def _ir_cb(self, info):
+        v = float(info[0]) if isinstance(info, (list,tuple)) else float(info)
+        cm = v/10.0 if v>100 else v
+        if self.is_gimbal_forward:
+            # ใช้ค่าที่ “สั้นกว่า” เพื่อ safety
+            self.last_front_cm = min(self.last_front_cm, cm)
+
+    def _instant_read(self):
+        # พยายามอ่านแบบโพลล์ หากมีเมธอดให้เรียก
+        for sensor in [self.tof_sensor, self.ir_sensor]:
+            if sensor is None: continue
+            for name in ["get_distance", "get", "distance"]:
+                try:
+                    fn = getattr(sensor, name, None)
+                    if callable(fn):
+                        val = fn()
+                        v = float(val[0]) if isinstance(val, (list,tuple)) else float(val)
+                        return v/10.0 if v>100 else v
+                    elif isinstance(fn, (int,float)):
+                        v = float(fn); return v/10.0 if v>100 else v
+                except Exception:
+                    continue
+        return None
+
     def get_front_tof_cm(self):
         try:
-            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            if self.gimbal:
+                self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         except Exception: pass
         self.is_gimbal_forward = True
-        time.sleep(0.1)
-        return self.last_front_cm
+        time.sleep(0.05)
+        inst = self._instant_read()
+        if inst is not None:
+            self.last_front_cm = inst
+        return float(self.last_front_cm)
+
     def cleanup(self):
-        try: self.tof_sensor.unsub_distance()
+        try:
+            if self.tof_sensor and hasattr(self.tof_sensor, "unsub_distance"):
+                self.tof_sensor.unsub_distance()
+        except Exception: pass
+        try:
+            if self.ir_sensor and hasattr(self.ir_sensor, "unsub_distance"):
+                self.ir_sensor.unsub_distance()
         except Exception: pass
 
 # =========================
@@ -612,16 +643,15 @@ def append_objects_json(step_idx, next_rc, zone_to_objs, front_blocked, raw_list
 # ===== Main Program  =====
 # =========================
 if __name__ == "__main__":
-    print("🎯 Detect+Map merged start")
+    print("🎯 Detect+Map merged (S1-safe) start")
 
-    # --- INIT manager & threads (fire_target style) ---
     tracker = ObjectTracker(use_gpu=False)
     roi_state = {"x": ROI_X0, "y": ROI_Y0, "w": ROI_W0, "h": ROI_H0}
     manager = RMConnection()
     reconn = threading.Thread(target=reconnector_thread, args=(manager,), daemon=True)
     reconn.start()
 
-    is_detecting_flag = {"v": False}  # เริ่ม "ยังไม่เข้าโหมด s"
+    is_detecting_flag = {"v": False}  # เริ่มยังไม่เข้าโหมด s
     def is_detecting(): return is_detecting_flag["v"]
 
     cap_t  = threading.Thread(target=capture_thread_func, args=(manager, frame_queue), daemon=True)
@@ -630,22 +660,23 @@ if __name__ == "__main__":
                               daemon=True)
     cap_t.start(); proc_t.start()
 
-    # --- INIT exploration parts (test_cur_time_copy style minimal) ---
-    # อุปกรณ์ชั้นล่าง (อาจต่างตามเครื่องจริง โปรดตรวจชื่อ attr ของ SDK คุณ)
-    # ถ้า None บางส่วน, ฟังก์ชันที่อาศัยเซ็นเซอร์นั้นจะข้ามอย่างปลอดภัย
-    time.sleep(0.5)  # เผื่อให้เชื่อมต่อทัน
+    # ---- เตรียมโมดูลฮาร์ดแวร์ (safe getters) ----
+    time.sleep(0.5)
     gimbal = manager.get_gimbal()
     chassis = manager.get_chassis()
-    tof = manager.get_tof()
-    sensor_adaptor = manager.get_sensor_adapter()
+    tof = manager.get_tof()                             # อาจ None
+    sensor_adaptor = manager.get_sensor_adapter()       # อาจ None
+    ir_sensor = manager.get_ir_distance_sensor()        # อาจ None
 
-    # ตัวช่วยเดิน + มุม
     att = AttitudeHandler()
     if chassis is not None:
         att.start_monitoring(chassis)
     mover = MovementController(chassis) if chassis is not None else None
-    scanner = EnvironmentScanner(sensor_adaptor, tof, gimbal)
+    scanner = EnvironmentScanner(tof_sensor=tof, ir_sensor=ir_sensor, gimbal=gimbal)
+
     ogm = OccupancyGridMap(width=8, height=8)
+
+    import matplotlib.pyplot as plt
     vis = RealTimeVisualizer(grid_size=8)
 
     # ====== Exploration Loop ======
@@ -655,41 +686,33 @@ if __name__ == "__main__":
             step += 1
             print(f"\n========== STEP {step} at {CURRENT_POSITION} facing {CURRENT_DIRECTION} ==========")
 
-            # 1) ปรับกลางช่องด้วย ToF (ถ้าพร้อม)
+            # 1) ปรับกลางช่อง/มุมเบื้องต้น (ย่อ)
             if mover is not None and chassis is not None and gimbal is not None:
-                # (เรียกเวอร์ชันย่อ: รักษายอว์และค่อยๆขยับด้วยสปีดเล็ก)
-                # ขอย่อ: ถ้าระยะมากกว่า 50 ซม. ให้ข้ามการ center เพื่อไม่เสียเวลา
-                front_cm = scanner.get_front_tof_cm() if scanner is not None else float('inf')
-                print(f"[ToF] Front distance ~ {front_cm:.1f} cm")
-                if front_cm < 50:
-                    att.correct_yaw_to_target(chassis, get_compensated_target_yaw())
+                att.correct_yaw_to_target(chassis, get_compensated_target_yaw())
 
-            # 2) ตัดสิน “บล็อคถัดไป” และ “แกน monitor” จากหน้า/ทิศ
+            # 2) บล็อคถัดไป
             drdc_by_dir = {0:(-1,0), 1:(0,1), 2:(1,0), 3:(0,-1)}
             dr, dc = drdc_by_dir[CURRENT_DIRECTION]
             next_cell = (CURRENT_POSITION[0]+dr, CURRENT_POSITION[1]+dc)
-            axis_to_monitor = 'x' if (ROBOT_FACE % 2 != 0) else 'y'  # จากโค้ดเดิม
+            axis_to_monitor = 'x' if (ROBOT_FACE % 2 != 0) else 'y'
 
-            # 3) เช็ค ToF 60cm ข้างหน้า
+            # 3) เช็ค front ≤ 60 cm (fallback: ไม่มีเซนเซอร์ -> inf)
             front_cm = scanner.get_front_tof_cm() if scanner is not None else float('inf')
+            print(f"[Distance] Front ≈ {front_cm:.1f} cm")
             front_blocked = (front_cm < 60.0)
-            print(f"[ToF] Front <=60cm? {'YES' if front_blocked else 'NO'}  ({front_cm:.1f} cm)")
 
             # 4) เปิดโหมด s (detect) 1 วินาที
             is_detecting_flag["v"] = True
-            t0 = time.time()
-            time.sleep(1.0)  # ช่วงหน้าต่างตรวจ 1 วินาที (ปล่อย processing thread เก็บผล)
+            time.sleep(1.0)
             is_detecting_flag["v"] = False
 
-            # 5) ดึงผลตรวจและ “กรอง zone ตามกฎ ToF”
+            # 5) ดึงผล detect และกรองโซน
             with output_lock:
                 dets = list(processed_output["details"])
-
-            # ถ้า front_blocked -> เก็บทุก zone, else -> เก็บเฉพาะ Left/Right
             allowed_zones = {"Left","Right","Center"} if front_blocked else {"Left","Right"}
             dets_use = [d for d in dets if d["zone"] in allowed_zones]
 
-            # 6) บันทึกลง OGM “บล็อคถัดไป” (วัตถุ/สัญลักษณ์)
+            # 6) บันทึกลง OGM ที่ "บล็อคถัดไป"
             if 0 <= next_cell[0] < ogm.height and 0 <= next_cell[1] < ogm.width:
                 cell_obj = ogm.grid[next_cell[0]][next_cell[1]].objects
                 zone_bag = {"Left": [], "Center": [], "Right": []}
@@ -697,28 +720,25 @@ if __name__ == "__main__":
                     one = {"color": d["color"], "shape": d["shape"], "zone": d["zone"], "box": d["box"]}
                     cell_obj[d["zone"]].append(one)
                     zone_bag[d["zone"]].append(one)
-                # วาดแผนที่ (overlay สัญลักษณ์)
                 vis.update_plot(ogm, CURRENT_POSITION)
-                # 7) บันทึก JSON รายละเอียดครบ
                 append_objects_json(step, next_cell, zone_bag, front_blocked, dets)
 
-            # 8) เดินไปบล็อคถัดไปถ้าทางโล่ง (ดูจาก ToF จริง ณ ตอนนี้)
+            # 7) เดินไปบล็อคถัดไปถ้าไม่บล็อค
             if mover is not None and chassis is not None:
                 if not front_blocked:
                     mover.move_forward_one_grid(axis_to_monitor, att)
                     CURRENT_POSITION = next_cell
                 else:
-                    print("⛔ Front blocked (<=60cm). Skip moving forward this step.")
+                    print("⛔ Front blocked (<=60cm). Skip moving forward.")
 
-            # 9) อัปเดตภาพแผนที่หลังเคลื่อน
+            # 8) อัปเดตแผนที่หลังเคลื่อน
             vis.update_plot(ogm, CURRENT_POSITION)
 
-            # 10) หมุน/จัดข้าง (ย่อ) — คุณสามารถเสียบฟังก์ชัน align+sharp/IR จากไฟล์เดิมเพิ่มได้
+            # 9) รักษายอว์เบาๆ
             att.correct_yaw_to_target(chassis, get_compensated_target_yaw())
             time.sleep(0.1)
 
         print("\n✅ Exploration loop finished.")
-
     except KeyboardInterrupt:
         print("Interrupted by user.")
     finally:
