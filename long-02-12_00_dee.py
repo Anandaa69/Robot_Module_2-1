@@ -37,7 +37,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.5     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.2     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -672,7 +672,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail += 1
 
         # Tolerant reconnection policy (match fire_target.py behavior)
-        if fail >= 10:  # ลดจาก 30 เป็น 10 เหมือน fire_target.py
+        if fail >= 30:
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
@@ -795,12 +795,8 @@ def save_detected_objects_to_map(occupancy_map):
     """Save detected objects to map with position details in the next cell"""
     global processed_output, CURRENT_POSITION, CURRENT_DIRECTION
     
-    try:
-        with output_lock:
-            objects = processed_output["details"]
-    except Exception as e:
-        print(f"⚠️ Error accessing processed output: {e}")
-        return
+    with output_lock:
+        objects = processed_output["details"]
     
     if objects:
         # Calculate next node position (where robot will move to)
@@ -1266,7 +1262,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=17, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=19, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -1634,8 +1630,8 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
     # บันทึกตำแหน่งเริ่มต้นของ path execution
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_start")
 
-    # เดินไปยังโหนดก่อนสุดท้าย (ไม่ใช่โหนดสุดท้าย) - ไม่เปิดโหมด detect
-    for i in range(len(path) - 2):  # หยุดที่โหนดก่อนโหนดที่ยังไม่สำรวจ
+    # เดินไปยังโหนดก่อนสุดท้าย (ไม่ใช่โหนดสุดท้าย)
+    for i in range(len(path) - 2):  # เปลี่ยนจาก len(path) - 1 เป็น len(path) - 2
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
         
@@ -1654,23 +1650,25 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
                 print("🔄 Attempting rotation correction...")
                 movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
             
-            # --- ส่วนการตรวจสอบแบบง่าย (ไม่เปิดโหมด detect) ---
-            print(f"   -> [{path_name}] Quick ToF check to ({next_r},{next_c})...")
+            # --- ส่วนการตรวจสอบ ---
+            print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
             scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-            time.sleep(0.1)  # ลดเวลารอให้เร็วขึ้น
+            time.sleep(0.2)  # ลดเวลารอ
             
-            # อ่านค่าจากเซ็นเซอร์จริง
+            # 1. อ่านค่าจากเซ็นเซอร์จริง
             is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
             
-            # อัปเดตแผนที่
+            # 2. อัปเดตแผนที่เป็นเรื่องรอง
             occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
-            print(f"   -> [{path_name}] Quick ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
+            print(f"   -> [{path_name}] Real-time ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION)
 
-            # หยุดทันทีหากพบอุปสรรค
+            # 3. <<<<<<<<<<<<<<<<<<<< จุดแก้ไขสำคัญ >>>>>>>>>>>>>>>>>>>>
+            #    เปลี่ยนจากการเช็คแผนที่ มาเช็คผลจากเซ็นเซอร์โดยตรง!
             if is_blocked:
                 print(f"   -> 🔥 [{path_name}] IMMEDIATE STOP. Real-time sensor detected an obstacle. Aborting path.")
-                break
+                break # หยุดการทำงานทันที
+            # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -1681,37 +1679,23 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
     
-    # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้เริ่มระบบปกติ (เช็ค detect, scan, etc.)
+    # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้หันหน้าไปยังทิศทางที่จะไปโหนดสุดท้าย
     if len(path) >= 2:
-        current_r, current_c = path[-2]  # โหนดก่อนสุดท้าย (ที่หยุดอยู่)
+        current_r, current_c = path[-2]  # โหนดก่อนสุดท้าย
         target_r, target_c = path[-1]    # โหนดสุดท้าย (ที่ยังไม่สำรวจ)
-        
-        print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Starting normal exploration system...")
-        print(f"🎯 [{path_name}] Next target: unvisited node ({target_r},{target_c})")
-        
-        # อัปเดตตำแหน่งปัจจุบัน
-        CURRENT_POSITION = (current_r, current_c)
-        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_pre_target")
-        
-        # หันหน้าไปยังทิศทางที่จะไปโหนดสุดท้าย
         dr, dc = target_r - current_r, target_c - current_c
         target_direction = dir_vectors_map[(dr, dc)]
         
-        print(f"🔄 [{path_name}] Turning to face unvisited node ({target_r},{target_c})...")
+        print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Turning to face unvisited node ({target_r},{target_c})...")
         movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
         
         # เช็ค detection ก่อนเดินไปโหนดสุดท้าย
         print("🔍 Performing object detection before moving to unvisited node...")
-        try:
-            start_detection_mode()
-            time.sleep(1.0)
-            save_detected_objects_to_map(occupancy_map)
-            stop_detection_mode()
-            print("🔍 Object detection completed before final move")
-        except Exception as e:
-            print(f"⚠️ Object detection error: {e}")
-            stop_detection_mode()
-            print("🔍 Object detection failed, continuing without detection...")
+        start_detection_mode()
+        time.sleep(1.0)
+        save_detected_objects_to_map(occupancy_map)
+        stop_detection_mode()
+        print("🔍 Object detection completed before final move")
         
         # เช็คเส้นทางด้วย ToF ก่อนเดินไปโหนดสุดท้าย
         print(f"   -> [{path_name}] Final confirmation to unvisited node ({target_r},{target_c}) with ToF...")
@@ -1742,8 +1726,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         CURRENT_POSITION = (target_r, target_c)
         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_unvisited")
-        print(f"✅ Successfully reached unvisited node ({target_r},{target_c})")
-        print("✅ Backtrack complete. Resuming normal exploration...")
+        print(f"✅ [{path_name}] Successfully reached unvisited node ({target_r},{target_c})")
         visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
 
     print(f"✅ {path_name} complete.")
@@ -1859,16 +1842,11 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
                     # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
                     print("🔍 Performing object detection after turning to new direction...")
-                    try:
-                        start_detection_mode()
-                        time.sleep(1.0)
-                        save_detected_objects_to_map(occupancy_map)
-                        stop_detection_mode()
-                        print("🔍 Object detection completed after turn")
-                    except Exception as e:
-                        print(f"⚠️ Object detection error: {e}")
-                        stop_detection_mode()
-                        print("🔍 Object detection failed, continuing without detection...")
+                    start_detection_mode()
+                    time.sleep(1.0)
+                    save_detected_objects_to_map(occupancy_map)
+                    stop_detection_mode()
+                    print("🔍 Object detection completed after turn")
                     
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -2018,7 +1996,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -2283,16 +2261,11 @@ if __name__ == '__main__':
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
                             # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
                             print("🔍 Performing object detection after turning to new direction...")
-                            try:
-                                start_detection_mode()
-                                time.sleep(1.0)
-                                save_detected_objects_to_map(occupancy_map)
-                                stop_detection_mode()
-                                print("🔍 Object detection completed after turn")
-                            except Exception as e:
-                                print(f"⚠️ Object detection error: {e}")
-                                stop_detection_mode()
-                                print("🔍 Object detection failed, continuing without detection...")
+                            start_detection_mode()
+                            time.sleep(1.0)
+                            save_detected_objects_to_map(occupancy_map)
+                            stop_detection_mode()
+                            print("🔍 Object detection completed after turn")
                             
                             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                             t_start = time.time()
