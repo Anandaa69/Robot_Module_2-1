@@ -1,0 +1,14 @@
+{
+  "session_info": {
+    "start_time": "N/A",
+    "end_time": "N/A",
+    "total_positions_logged": 0,
+    "grid_size": "6x6",
+    "target_destination": [
+      6,
+      6
+    ],
+    "interrupted": true
+  },
+  "position_log": []
+}
