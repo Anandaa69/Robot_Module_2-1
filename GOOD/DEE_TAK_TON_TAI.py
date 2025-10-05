@@ -44,11 +44,9 @@ TOF_ADJUST_SPEED = 0.1             # ความเร็วในการข�
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
-GRID = 4
-
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West here
+CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION = 0   # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -1707,19 +1705,19 @@ if __name__ == '__main__':
                 occupancy_map = create_occupancy_map_from_json()
                 if occupancy_map is None:
                     print("❌ Failed to load occupancy map. Starting fresh session.")
-                    occupancy_map = OccupancyGridMap(width=GRID, height=GRID)
+                    occupancy_map = OccupancyGridMap(width=6, height=6)
                     RESUME_MODE = False
             else:
                 print("❌ Failed to load resume data. Starting fresh session.")
-                occupancy_map = OccupancyGridMap(width=GRID, height=GRID)
+                occupancy_map = OccupancyGridMap(width=6, height=6)
                 RESUME_MODE = False
         else:
             print("🆕 Starting fresh session...")
-            occupancy_map = OccupancyGridMap(width=GRID, height=GRID)
+            occupancy_map = OccupancyGridMap(width=6, height=6)
             RESUME_MODE = False
     else:
         print("🆕 No previous session found. Starting fresh session...")
-        occupancy_map = OccupancyGridMap(width=GRID, height=GRID)
+        occupancy_map = OccupancyGridMap(width=6, height=6)
         RESUME_MODE = False
     
     # --- INTEGRATED OBJECT DETECTION SYSTEM ---
@@ -1774,7 +1772,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -1900,7 +1898,7 @@ if __name__ == '__main__':
         display_t.start()
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=GRID, target_dest=TARGET_DESTINATION)
+        visualizer = RealTimeVisualizer(grid_size=6, target_dest=TARGET_DESTINATION)
         print("🤖 Connecting to robot...")
         ep_robot = robot.Robot()
         try:

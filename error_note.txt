@@ -1,111 +1,3 @@
-PS F:\Coder\Year2-1\Robot_Module> & F:\Coder\Year2-1\Robot_Module\.venv\Scripts\Activate.ps1
-(.venv) PS F:\Coder\Year2-1\Robot_Module> & F:\Coder\Year2-1\Robot_Module\.venv\Scripts\python.exe f:/Coder/Year2-1/Robot_Module/integrated_complete_ready.py
-⚠️ CUDA not available, CPU path
-
-🔄 Found previous session data!
-Do you want to resume from previous session? (y/n): n
-🆕 Starting fresh session...
-🎯 Initializing Integrated Object Detection System...
-🖼️  ObjectTracker in CPU mode
-🤖 Connecting to RoboMaster...
-🚀 Capture thread started
-🧠 Processing thread started.
-✅ Object Detection System initialized (Camera ON, Detection OFF)
-⏳ Waiting for camera to be ready...
-⚠️ Camera not ready (attempt 1/5), retrying connection...
-✅ RoboMaster connected & camera streaming
-🔌 Connection closed
-🤖 Connecting to RoboMaster...
-✅ RoboMaster connected & camera streaming
-🔌 Connection closed
-🤖 Connecting to RoboMaster...
-✅ RoboMaster connected & camera streaming
-✅ Camera is ready!
-🎯 Camera confirmed ready - Starting exploration...
-📹 Camera display thread started
-🤖 Connecting to robot...
- GIMBAL: Centering gimbal...
-🆕 Starting new exploration...
-📍 [new_session_start] Position: (3, 0), Direction: East, Time: 2025-10-05T08:01:49.764444Z
-🚀 Starting Integrated Exploration with Object Detection...
-
---- Step 1 at (3, 0), Facing: E ---
-📍 [step_1] Position: (3, 0), Direction: East, Time: 2025-10-05T08:01:49.764444Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: 0.5° -> 0.0°. Rotating: 0.5°
-✅ Yaw Correction Success: 0.5°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 194.4cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Left Side (Yaw locked at 0.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 13.92cm, Target: 13.0cm, Error: -0.92cm, Speed: -0.041
-[Left] Target distance reached! Final distance: 13.80 cm
-
---- Adjusting Right Side (Yaw locked at 0.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 11.86cm, Target: 13.0cm, Error:  1.14cm, Speed: -0.051
-[Right] Target distance reached! Final distance: 12.31 cm
-
-🔧 Correcting Yaw: -1.0° -> 0.0°. Rotating: -1.0°
-✅ Yaw Correction Success: -1.0°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📦 Saved 1 objects to cell (3, 1)
-✅ Saved 1 objects to map at next position (3, 1)
-   📦 Object: Red Rectangle_H in Right zone (attached to right wall)
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-Path to E at (3,1) seems clear. Attempting move.
-    Ensuring gimbal is centered before ToF confirmation...
-    Confirming path forward with ToF...
-    ToF confirmation: Wall belief updated. Path is CLEAR.
-
-🔧 Correcting Yaw: -0.9° -> 0.0°. Rotating: -0.9°
-✅ Yaw Correction Success: -0.9°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
-Moving... Dist: 0.565/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 137.58 cm
-[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (3, 1), Direction: East, Time: 2025-10-05T08:01:58.347129Z
-🔍 Performing object detection at new position...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Object detection completed at new position
-
---- Step 2 at (3, 1), Facing: E ---
-📍 [step_2] Position: (3, 1), Direction: East, Time: 2025-10-05T08:01:59.479440Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -0.9° -> 0.0°. Rotating: -0.9°
-✅ Yaw Correction Success: -0.9°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 137.4cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
     -> Final Result for Left side: FREE
 
 [SCAN] Right Side Analysis:
@@ -116,246 +8,44 @@ Moving... Dist: 0.565/0.60 m
 
 ⚠️  WARNING: No side walls detected. Skipping alignment.
 
-🔧 Correcting Yaw: -2.6° -> 0.0°. Rotating: -2.6°
-✅ Yaw Correction Success: -2.6°
+🔧 Correcting Yaw: 169.6° -> 178.0°. Rotating: -8.4°
+✅ Yaw Correction Success: 176.4°
 --- Performing Scan for Mapping (Front ToF Only) ---
 🔍 Starting automatic object detection after alignment...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
 🔍 Automatic object detection completed
-Path to E at (3,2) seems clear. Attempting move.
+Path to S at (4,0) seems clear. Attempting move.
     Ensuring gimbal is centered before ToF confirmation...
     Confirming path forward with ToF...
     ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: -4.8° -> 0.0°. Rotating: -4.8°
-✅ Yaw Correction Success: -2.0°
+🔧 Correcting Yaw: 176.5° -> 178.0°. Rotating: -1.5°
+✅ Yaw Correction Success: 176.5°
 🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
 Moving... Dist: 0.564/0.60 m
 ✅ Move complete!
 
 --- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 79.47 cm
+[ToF] Initial front distance: 184.97 cm
 [ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (3, 2), Direction: East, Time: 2025-10-05T08:02:06.526114Z
+📍 [moved_to_new_node] Position: (4, 0), Direction: South, Time: 2025-10-05T10:26:10.973947Z
 🔍 Performing object detection at new position...
 🔍 Detection mode activated for 1 second
-📦 Saved 2 objects to cell (3, 3)
-✅ Saved 2 objects to map at next position (3, 3)
-   📦 Object: Yellow Rectangle_V in Right zone (attached to right wall)
-   📦 Object: Green Rectangle_H in Center zone (in center of cell)
+📭 No objects detected
 🔍 Detection mode deactivated
 🔍 Object detection completed at new position
 
---- Step 3 at (3, 2), Facing: E ---
-📍 [step_3] Position: (3, 2), Direction: East, Time: 2025-10-05T08:02:07.729181Z
+--- Step 20 at (4, 0), Facing: S ---
+📍 [step_20] Position: (4, 0), Direction: South, Time: 2025-10-05T10:26:12.122831Z
    -> Resetting Yaw to ensure perfect alignment before new step...
 
-🔧 Correcting Yaw: -0.6° -> 0.0°. Rotating: -0.6°
-✅ Yaw Correction Success: -0.6°
+🔧 Correcting Yaw: 177.4° -> 178.0°. Rotating: -0.6°
+✅ Yaw Correction Success: 177.4°
 
 --- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 79.4cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Right Side (Yaw locked at 0.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-
-[Right] Target distance reached! Final distance: 13.73 cm
-
-🔧 Correcting Yaw: -2.5° -> 0.0°. Rotating: -2.5°
-✅ Yaw Correction Success: -2.5°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📦 Saved 2 objects to cell (3, 3)
-✅ Saved 2 objects to map at next position (3, 3)
-   📦 Object: Yellow Rectangle_V in Right zone (attached to right wall)
-   📦 Object: Green Rectangle_H in Center zone (in center of cell)
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-Path to E at (3,3) seems clear. Attempting move.
-    Ensuring gimbal is centered before ToF confirmation...
-    Confirming path forward with ToF...
-    ToF confirmation: Wall belief updated. Path is CLEAR.
-
-🔧 Correcting Yaw: -2.5° -> 0.0°. Rotating: -2.5°
-✅ Yaw Correction Success: -2.5°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
-Moving... Dist: 0.566/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 15.37 cm
-[ToF] Too close to front wall. Moving backward...
-[ToF] Adjusting... Current Distance: 18.14 cm
-[ToF] ✅ Centering complete. Final distance: 18.14 cm
-📍 [moved_to_new_node] Position: (3, 3), Direction: East, Time: 2025-10-05T08:02:15.672314Z
-🚫 Front wall detected at new position - Skipping object detection
-
---- Step 4 at (3, 3), Facing: E ---
-📍 [step_4] Position: (3, 3), Direction: East, Time: 2025-10-05T08:02:15.811837Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -0.6° -> 0.0°. Rotating: -0.6°
-✅ Yaw Correction Success: -0.6°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 20.5cm -> OCCUPIED
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: FREE
-    -> Ambiguity detected! Confirming with ToF...
-    -> ToF readings at -90°: ['18.4', '18.4', '18.4'] cm
-    -> Average ToF reading: 18.41 cm.
-    -> ToF Confirmation: WALL DETECTED.
-    -> Final Result for Left side: WALL
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Left Side (Yaw locked at 0.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-
-[Left] Target distance reached! Final distance: 12.74 cm
-
---- Adjusting Right Side (Yaw locked at 0.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 14.12cm, Target: 13.0cm, Error: -1.12cm, Speed: 0.050
-[Right] Target distance reached! Final distance: 13.80 cm
-
-🔧 Correcting Yaw: -0.8° -> 0.0°. Rotating: -0.8°
-✅ Yaw Correction Success: -0.8°
---- Performing Scan for Mapping (Front ToF Only) ---
-🚫 Front wall detected - Skipping object detection until robot turns to new direction
-🔍 Object detection will be performed after robot turns to clear path
-No immediate unvisited path. Initiating backtrack...
-🎯 Executing Backtrack Path: [(3, 3), (3, 2), (2, 2)]
-📍 [Backtrack_start] Position: (3, 3), Direction: East, Time: 2025-10-05T08:02:20.873640Z
-🔄 Rotating 90° RIGHT...
-
-🔧 Correcting Yaw: -0.5° -> 90.0°. Rotating: -90.5°
-✅ Yaw Correction Success: 89.6°
-🔄 Rotating 90° RIGHT...
-
-🔧 Correcting Yaw: 89.6° -> 180.0°. Rotating: -90.4°
-✅ Yaw Correction Success: 178.9°
-   -> [Backtrack] Confirming path to (3,2) with ToF...
-   -> [Backtrack] Real-time ToF check: Path is CLEAR.
-
-🔧 Correcting Yaw: 178.6° -> 180.0°. Rotating: -1.4°
-✅ Yaw Correction Success: 178.6°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
-Moving... Dist: 0.570/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 338.29 cm
-[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [Backtrack_moved] Position: (3, 2), Direction: West, Time: 2025-10-05T08:02:29.127489Z
-   -> [Backtrack] Performing side alignment at new position (3, 2)
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 335.9cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Right side: FREE
-
---- Adjusting Left Side (Yaw locked at 180.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 12.06cm, Target: 13.0cm, Error:  0.94cm, Speed: 0.042
-[Left] Target distance reached! Final distance: 13.25 cm
-
-🔧 Correcting Yaw: 178.6° -> 180.0°. Rotating: -1.4°
-✅ Yaw Correction Success: 178.6°
-🔍 [Backtrack] Performing object detection at new position...
-🔍 Detection mode activated for 1 second
-📦 Saved 1 objects to cell (3, 1)
-✅ Saved 1 objects to map at next position (3, 1)
-   📦 Object: Blue Uncertain in Right zone (attached to right wall)
-🔍 Detection mode deactivated
-🔍 [Backtrack] Object detection completed at new position
-🔄 Rotating 90° RIGHT...
-
-🔧 Correcting Yaw: 178.6° -> -90.0°. Rotating: -91.4°
-✅ Yaw Correction Success: -91.0°
-   -> [Backtrack] Confirming path to (2,2) with ToF...
-   -> [Backtrack] Real-time ToF check: Path is CLEAR.
-
-🔧 Correcting Yaw: -91.0° -> -90.0°. Rotating: -1.0°
-✅ Yaw Correction Success: -91.0°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
-Moving... Dist: 0.566/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 17.07 cm
-[ToF] Too close to front wall. Moving backward...
-[ToF] Adjusting... Current Distance: 18.41 cm
-[ToF] ✅ Centering complete. Final distance: 18.41 cm
-📍 [Backtrack_moved] Position: (2, 2), Direction: North, Time: 2025-10-05T08:02:40.612542Z
-   -> [Backtrack] Performing side alignment at new position (2, 2)
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 20.6cm -> OCCUPIED
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Right side: FREE
-
---- Adjusting Left Side (Yaw locked at -90.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 11.53cm, Target: 13.0cm, Error:  1.47cm, Speed: 0.066
-[Left] Target distance reached! Final distance: 12.26 cm
-
-🔧 Correcting Yaw: -90.5° -> -90.0°. Rotating: -0.5°
-✅ Yaw Correction Success: -90.5°
-🚫 [Backtrack] Front wall detected at new position - Skipping object detection
-✅ Backtrack complete.
-Backtrack to new area complete. Resuming exploration.
-
---- Step 5 at (2, 2), Facing: N ---
-📍 [step_5] Position: (2, 2), Direction: North, Time: 2025-10-05T08:02:44.270179Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -90.5° -> -90.0°. Rotating: -0.5°
-✅ Yaw Correction Success: -90.5°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 22.3cm -> OCCUPIED
+[SCAN] Front (ToF): 186.7cm -> FREE
 
 [SCAN] Left Side Analysis:
     -> Sharp -> Suggests: FREE
@@ -371,111 +61,220 @@ Backtrack to new area complete. Resuming exploration.
 
 ⚠️  WARNING: No side walls detected. Skipping alignment.
 
-🔧 Correcting Yaw: -90.5° -> -90.0°. Rotating: -0.5°
-✅ Yaw Correction Success: -90.5°
+🔧 Correcting Yaw: 168.3° -> 178.0°. Rotating: -9.7°
+✅ Yaw Correction Success: 176.5°
 --- Performing Scan for Mapping (Front ToF Only) ---
-🚫 Front wall detected - Skipping object detection until robot turns to new direction
-🔍 Object detection will be performed after robot turns to clear path
-Path to E at (2,3) seems clear. Attempting move.
-🔄 Rotating 90° RIGHT...
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+🔩 IMU Drift Compensation Updated: Visited 20 nodes. New offset is -4.0°
+Path to E at (4,1) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
 
-🔧 Correcting Yaw: -90.5° -> 0.0°. Rotating: -90.5°
-✅ Yaw Correction Success: -1.4°
+🔧 Correcting Yaw: 176.4° -> 86.0°. Rotating: 90.4°
+✅ Yaw Correction Success: 86.8°
     Ensuring gimbal is centered before ToF confirmation...
     Confirming path forward with ToF...
     ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: -1.5° -> 0.0°. Rotating: -1.5°
-✅ Yaw Correction Success: -1.5°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
+🔧 Correcting Yaw: 86.7° -> 86.0°. Rotating: 0.7°
+✅ Yaw Correction Success: 86.7°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.562/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 399.70 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (4, 1), Direction: East, Time: 2025-10-05T10:26:31.501455Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 21 at (4, 1), Facing: E ---
+📍 [step_21] Position: (4, 1), Direction: East, Time: 2025-10-05T10:26:32.642908Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 85.8° -> 86.0°. Rotating: -0.2°
+✅ Yaw Correction Success: 85.8°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 399.2cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at -90°: ['519.8', '562.9', '562.9'] cm
+    -> Average ToF reading: 548.50 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 76.6° -> 86.0°. Rotating: -9.4°
+✅ Yaw Correction Success: 84.5°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to E at (4,2) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 84.5° -> 86.0°. Rotating: -1.5°
+✅ Yaw Correction Success: 84.5°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.566/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 348.21 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (4, 2), Direction: East, Time: 2025-10-05T10:26:51.164046Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📦 Saved 1 objects to cell (4, 3)
+✅ Saved 1 objects to map at next position (4, 3)
+   📦 Object: Green Uncertain in Left zone (attached to left wall)
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 22 at (4, 2), Facing: E ---
+📍 [step_22] Position: (4, 2), Direction: East, Time: 2025-10-05T10:26:52.312465Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 85.2° -> 86.0°. Rotating: -0.8°
+✅ Yaw Correction Success: 85.2°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 350.4cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at -90°: ['395.4', '293.8', '293.8'] cm
+    -> Average ToF reading: 327.65 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 75.6° -> 86.0°. Rotating: -10.4°
+✅ Yaw Correction Success: 84.7°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to E at (4,3) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 84.7° -> 86.0°. Rotating: -1.3°
+✅ Yaw Correction Success: 84.7°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.557/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 296.09 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (4, 3), Direction: East, Time: 2025-10-05T10:27:15.771379Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 23 at (4, 3), Facing: E ---
+📍 [step_23] Position: (4, 3), Direction: East, Time: 2025-10-05T10:27:16.914647Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 84.9° -> 86.0°. Rotating: -1.1°
+✅ Yaw Correction Success: 84.9°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 293.5cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at -90°: ['319.8', '320.7', '320.7'] cm
+    -> Average ToF reading: 320.38 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 73.9° -> 86.0°. Rotating: -12.1°
+✅ Yaw Correction Success: 84.2°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to E at (4,4) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 84.5° -> 86.0°. Rotating: -1.5°
+✅ Yaw Correction Success: 84.5°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
 Moving... Dist: 0.563/0.60 m
 ✅ Move complete!
 
 --- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 70.80 cm
+[ToF] Initial front distance: 240.48 cm
 [ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (2, 3), Direction: East, Time: 2025-10-05T08:02:52.674756Z
+📍 [moved_to_new_node] Position: (4, 4), Direction: East, Time: 2025-10-05T10:27:37.366580Z
 🔍 Performing object detection at new position...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
 🔍 Object detection completed at new position
 
---- Step 6 at (2, 3), Facing: E ---
-📍 [step_6] Position: (2, 3), Direction: East, Time: 2025-10-05T08:02:53.803930Z
+--- Step 24 at (4, 4), Facing: E ---
+📍 [step_24] Position: (4, 4), Direction: East, Time: 2025-10-05T10:27:38.525324Z
    -> Resetting Yaw to ensure perfect alignment before new step...
 
-🔧 Correcting Yaw: -0.8° -> 0.0°. Rotating: -0.8°
-✅ Yaw Correction Success: -0.8°
+🔧 Correcting Yaw: 84.9° -> 86.0°. Rotating: -1.1°
+✅ Yaw Correction Success: 84.9°
 
 --- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 70.6cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Right Side (Yaw locked at 0.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 11.39cm, Target: 13.0cm, Error:  1.61cm, Speed: -0.072
-[Right] Target distance reached! Final distance: 12.90 cm
-
-🔧 Correcting Yaw: -2.7° -> 0.0°. Rotating: -2.7°
-✅ Yaw Correction Success: -2.7°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-Path to N at (1,3) seems clear. Attempting move.
-🔄 Rotating 90° LEFT...
-
-🔧 Correcting Yaw: -2.6° -> -90.0°. Rotating: 87.3°
-✅ Yaw Correction Success: -88.8°
-    Ensuring gimbal is centered before ToF confirmation...
-    Confirming path forward with ToF...
-    ToF confirmation: Wall belief updated. Path is CLEAR.
-
-🔧 Correcting Yaw: -88.6° -> -90.0°. Rotating: 1.4°
-✅ Yaw Correction Success: -88.6°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
-Moving... Dist: 0.569/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 136.42 cm
-[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (1, 3), Direction: North, Time: 2025-10-05T08:03:03.507691Z
-🔍 Performing object detection at new position...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Object detection completed at new position
-
---- Step 7 at (1, 3), Facing: N ---
-📍 [step_7] Position: (1, 3), Direction: North, Time: 2025-10-05T08:03:04.728423Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -90.3° -> -90.0°. Rotating: -0.3°
-✅ Yaw Correction Success: -90.3°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 137.8cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
+[SCAN] Front (ToF): 240.0cm -> FREE
+[LEFT] Wall Check Error: Not enough sensor data.
 
 [SCAN] Right Side Analysis:
     -> Sharp -> Suggests: FREE
@@ -485,139 +284,45 @@ Moving... Dist: 0.569/0.60 m
 
 ⚠️  WARNING: No side walls detected. Skipping alignment.
 
-🔧 Correcting Yaw: -92.4° -> -90.0°. Rotating: -2.4°
-✅ Yaw Correction Success: -92.4°
+🔧 Correcting Yaw: 74.7° -> 86.0°. Rotating: -11.3°
+✅ Yaw Correction Success: 84.3°
 --- Performing Scan for Mapping (Front ToF Only) ---
 🔍 Starting automatic object detection after alignment...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
 🔍 Automatic object detection completed
-Path to N at (0,3) seems clear. Attempting move.
+Path to N at (3,4) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: 84.2° -> -4.0°. Rotating: 88.2°
+✅ Yaw Correction Success: -2.5°
     Ensuring gimbal is centered before ToF confirmation...
     Confirming path forward with ToF...
     ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: -95.6° -> -90.0°. Rotating: -5.6°
-✅ Yaw Correction Success: -92.1°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+🔧 Correcting Yaw: -2.3° -> -4.0°. Rotating: 1.7°
+✅ Yaw Correction Success: -2.3°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
 Moving... Dist: 0.560/0.60 m
 ✅ Move complete!
 
 --- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 82.07 cm
+[ToF] Initial front distance: 60.07 cm
 [ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (0, 3), Direction: North, Time: 2025-10-05T08:03:12.930615Z
+📍 [moved_to_new_node] Position: (3, 4), Direction: North, Time: 2025-10-05T10:28:00.025389Z
 🔍 Performing object detection at new position...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
 🔍 Object detection completed at new position
 
---- Step 8 at (0, 3), Facing: N ---
-📍 [step_8] Position: (0, 3), Direction: North, Time: 2025-10-05T08:03:14.126684Z
+--- Step 25 at (3, 4), Facing: N ---
+📍 [step_25] Position: (3, 4), Direction: North, Time: 2025-10-05T10:28:01.211364Z
    -> Resetting Yaw to ensure perfect alignment before new step...
 
-🔧 Correcting Yaw: -90.6° -> -90.0°. Rotating: -0.6°
-✅ Yaw Correction Success: -90.6°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 81.8cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Right Side (Yaw locked at -90.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 12.11cm, Target: 13.0cm, Error:  0.89cm, Speed: -0.040
-[Right] Target distance reached! Final distance: 12.96 cm
-
-🔧 Correcting Yaw: -91.7° -> -90.0°. Rotating: -1.7°
-✅ Yaw Correction Success: -91.7°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-Path to W at (0,2) seems clear. Attempting move.
-🔄 Rotating 90° LEFT...
-
-🔧 Correcting Yaw: -91.6° -> 180.0°. Rotating: 88.4°
-✅ Yaw Correction Success: -178.9°
-    Ensuring gimbal is centered before ToF confirmation...
-    Confirming path forward with ToF...
-    ToF confirmation: Wall belief updated. Path is BLOCKED.
-    🚫 Wall detected! Turning back to original direction and recalculating path...
-    ✅ Turned back to W. Re-evaluating available paths...
-No immediate unvisited path. Initiating backtrack...
-🎯 Executing Backtrack Path: [(0, 3), (0, 2)]
-📍 [Backtrack_start] Position: (0, 3), Direction: West, Time: 2025-10-05T08:03:21.460912Z
-   -> [Backtrack] Confirming path to (0,2) with ToF...
-   -> [Backtrack] Real-time ToF check: Path is BLOCKED.
-   -> 🔥 [Backtrack] IMMEDIATE STOP. Real-time sensor detected an obstacle. Aborting path.
-✅ Backtrack complete.
-Backtrack to new area complete. Resuming exploration.
-
---- Step 9 at (0, 3), Facing: W ---
-📍 [step_9] Position: (0, 3), Direction: West, Time: 2025-10-05T08:03:23.106145Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -179.3° -> 180.0°. Rotating: 0.7°
-✅ Yaw Correction Success: -179.3°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 17.2cm -> OCCUPIED
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Right side: FREE
-
-⚠️  WARNING: No side walls detected. Skipping alignment.
-
-🔧 Correcting Yaw: -179.3° -> 180.0°. Rotating: 0.7°
-✅ Yaw Correction Success: -179.3°
---- Performing Scan for Mapping (Front ToF Only) ---
-🚫 Front wall detected - Skipping object detection until robot turns to new direction
-🔍 Object detection will be performed after robot turns to clear path
-No immediate unvisited path. Initiating backtrack...
-🎯 Executing Backtrack Path: [(0, 3), (1, 3), (1, 2)]
-📍 [Backtrack_start] Position: (0, 3), Direction: West, Time: 2025-10-05T08:03:25.823460Z
-🔄 Rotating 90° LEFT...
-
-🔧 Correcting Yaw: -179.3° -> 90.0°. Rotating: 90.7°
-✅ Yaw Correction Success: 91.0°
-   -> [Backtrack] Confirming path to (1,3) with ToF...
-   -> [Backtrack] Real-time ToF check: Path is CLEAR.
-
-🔧 Correcting Yaw: 90.7° -> 90.0°. Rotating: 0.7°
-✅ Yaw Correction Success: 90.7°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
-Moving... Dist: 0.565/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 79.12 cm
-[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [Backtrack_moved] Position: (1, 3), Direction: South, Time: 2025-10-05T08:03:32.042477Z
-   -> [Backtrack] Performing side alignment at new position (1, 3)
+🔧 Correcting Yaw: -4.7° -> -4.0°. Rotating: -0.7°
+✅ Yaw Correction Success: -4.7°
 
 --- Stage: Wall Detection & Side Alignment ---
 [SCAN] Front (ToF): 80.1cm -> FREE
@@ -636,101 +341,226 @@ Moving... Dist: 0.565/0.60 m
 
 ⚠️  WARNING: No side walls detected. Skipping alignment.
 
-🔧 Correcting Yaw: 88.2° -> 90.0°. Rotating: -1.8°
-✅ Yaw Correction Success: 88.2°
-🔍 [Backtrack] Performing object detection at new position...
+🔧 Correcting Yaw: -16.2° -> -4.0°. Rotating: -12.2°
+✅ Yaw Correction Success: -5.2°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
-🔍 [Backtrack] Object detection completed at new position
-🔄 Rotating 90° RIGHT...
+🔍 Automatic object detection completed
+Path to N at (2,4) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: 86.2° -> 180.0°. Rotating: -93.8°
-✅ Yaw Correction Success: 178.0°
-   -> [Backtrack] Confirming path to (1,2) with ToF...
-   -> [Backtrack] Real-time ToF check: Path is CLEAR.
-
-🔧 Correcting Yaw: 177.9° -> 180.0°. Rotating: -2.1°
-✅ Yaw Correction Success: 177.9°
+🔧 Correcting Yaw: -5.1° -> -4.0°. Rotating: -1.1°
+✅ Yaw Correction Success: -5.1°
 🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
 Moving... Dist: 0.560/0.60 m
 ✅ Move complete!
 
 --- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 137.32 cm
+[ToF] Initial front distance: 51.22 cm
 [ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [Backtrack_moved] Position: (1, 2), Direction: West, Time: 2025-10-05T08:03:43.272064Z
-   -> [Backtrack] Performing side alignment at new position (1, 2)
+📍 [moved_to_new_node] Position: (2, 4), Direction: North, Time: 2025-10-05T10:28:26.741505Z
+🚫 Front wall detected at new position - Skipping object detection
+
+--- Step 26 at (2, 4), Facing: N ---
+📍 [step_26] Position: (2, 4), Direction: North, Time: 2025-10-05T10:28:26.866582Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -4.6° -> -4.0°. Rotating: -0.6°
+✅ Yaw Correction Success: -4.6°
 
 --- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 136.8cm -> FREE
+[SCAN] Front (ToF): 51.8cm -> OCCUPIED
 
 [SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
 
 [SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
 
---- Adjusting Left Side (Yaw locked at 180.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 11.76cm, Target: 13.0cm, Error:  1.24cm, Speed: 0.056
-[Left] Target distance reached! Final distance: 12.47 cm
+⚠️  WARNING: No side walls detected. Skipping alignment.
 
---- Adjusting Right Side (Yaw locked at 180.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 11.72cm, Target: 13.0cm, Error:  1.28cm, Speed: -0.058
-[Right] Target distance reached! Final distance: 13.02 cm
-
-🔧 Correcting Yaw: 177.9° -> 180.0°. Rotating: -2.1°
-✅ Yaw Correction Success: 177.9°
-🔍 [Backtrack] Performing object detection at new position...
+🔧 Correcting Yaw: -14.9° -> -4.0°. Rotating: -10.9°
+✅ Yaw Correction Success: -5.3°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
 🔍 Detection mode activated for 1 second
 📭 No objects detected
 🔍 Detection mode deactivated
-🔍 [Backtrack] Object detection completed at new position
-✅ Backtrack complete.
-Backtrack to new area complete. Resuming exploration.
+🔍 Automatic object detection completed
+Path to N at (1,4) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
 
---- Step 10 at (1, 2), Facing: W ---
-📍 [step_10] Position: (1, 2), Direction: West, Time: 2025-10-05T08:03:48.722208Z
+🔧 Correcting Yaw: -5.4° -> -4.0°. Rotating: -1.4°
+✅ Yaw Correction Success: -5.4°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
+Moving... Dist: 0.569/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 115.14 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (1, 4), Direction: North, Time: 2025-10-05T10:28:48.675112Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 27 at (1, 4), Facing: N ---
+📍 [step_27] Position: (1, 4), Direction: North, Time: 2025-10-05T10:28:49.790731Z
    -> Resetting Yaw to ensure perfect alignment before new step...
 
-🔧 Correcting Yaw: 177.9° -> 180.0°. Rotating: -2.1°
-✅ Yaw Correction Success: 177.9°
+🔧 Correcting Yaw: -4.9° -> -4.0°. Rotating: -0.9°
+✅ Yaw Correction Success: -4.9°
 
 --- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 136.6cm -> FREE
+[SCAN] Front (ToF): 115.9cm -> FREE
 
 [SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
 
 [SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: -16.0° -> -4.0°. Rotating: -12.0°
+✅ Yaw Correction Success: -5.7°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to W at (1,3) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: -5.9° -> -94.0°. Rotating: 88.1°
+✅ Yaw Correction Success: -92.8°
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: -92.6° -> -94.0°. Rotating: 1.4°
+✅ Yaw Correction Success: -92.6°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.561/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 259.35 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (1, 3), Direction: West, Time: 2025-10-05T10:29:14.224264Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 28 at (1, 3), Facing: W ---
+📍 [step_28] Position: (1, 3), Direction: West, Time: 2025-10-05T10:29:15.417037Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -94.4° -> -94.0°. Rotating: -0.4°
+✅ Yaw Correction Success: -94.4°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 269.7cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
     -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['188.5', '187.6', '187.6'] cm
+    -> Average ToF reading: 187.95 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Right side: FREE
 
---- Adjusting Left Side (Yaw locked at 180.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 11.00cm, Target: 13.0cm, Error:  2.00cm, Speed: 0.090
-[Left] Target distance reached! Final distance: 12.31 cm
+⚠️  WARNING: No side walls detected. Skipping alignment.
 
---- Adjusting Right Side (Yaw locked at 180.00°) ---
-   -> Config: ID=2, Port=1, Target=13.0cm
-Adjusting Right... Current: 10.71cm, Target: 13.0cm, Error:  2.29cm, Speed: -0.103
-[Right] Target distance reached! Final distance: 12.31 cm
+🔧 Correcting Yaw: -107.3° -> -94.0°. Rotating: -13.3°
+✅ Yaw Correction Success: -95.4°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to W at (1,2) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: 178.9° -> 180.0°. Rotating: -1.1°
-✅ Yaw Correction Success: 178.9°
+🔧 Correcting Yaw: -95.3° -> -94.0°. Rotating: -1.3°
+✅ Yaw Correction Success: -95.3°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.565/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 272.22 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (1, 2), Direction: West, Time: 2025-10-05T10:29:45.486522Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 29 at (1, 2), Facing: W ---
+📍 [step_29] Position: (1, 2), Direction: West, Time: 2025-10-05T10:29:46.625680Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -94.8° -> -94.0°. Rotating: -0.8°
+✅ Yaw Correction Success: -94.8°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 278.1cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['165.2', '165.2', '223.3'] cm
+    -> Average ToF reading: 184.58 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: -108.0° -> -94.0°. Rotating: -14.0°
+✅ Yaw Correction Success: -95.9°
 --- Performing Scan for Mapping (Front ToF Only) ---
 🔍 Starting automatic object detection after alignment...
 🔍 Detection mode activated for 1 second
@@ -742,33 +572,438 @@ Path to W at (1,1) seems clear. Attempting move.
     Confirming path forward with ToF...
     ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: 178.9° -> 180.0°. Rotating: -1.1°
-✅ Yaw Correction Success: 178.9°
+🔧 Correcting Yaw: -95.8° -> -94.0°. Rotating: -1.8°
+✅ Yaw Correction Success: -95.8°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.564/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 246.65 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (1, 1), Direction: West, Time: 2025-10-05T10:30:10.978209Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 30 at (1, 1), Facing: W ---
+📍 [step_30] Position: (1, 1), Direction: West, Time: 2025-10-05T10:30:12.128604Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -94.9° -> -94.0°. Rotating: -0.9°
+✅ Yaw Correction Success: -94.9°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 248.9cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['338.7', '338.7', '338.6'] cm
+    -> Average ToF reading: 338.67 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: -110.0° -> -94.0°. Rotating: -16.0°
+✅ Yaw Correction Success: -95.2°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+🔩 IMU Drift Compensation Updated: Visited 30 nodes. New offset is -6.0°
+Path to S at (2,1) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: -95.1° -> 174.0°. Rotating: 90.9°
+✅ Yaw Correction Success: 175.4°
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 175.8° -> 174.0°. Rotating: 1.8°
+✅ Yaw Correction Success: 175.8°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
+Moving... Dist: 0.563/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 318.98 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (2, 1), Direction: South, Time: 2025-10-05T10:30:40.558456Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 31 at (2, 1), Facing: S ---
+📍 [step_31] Position: (2, 1), Direction: South, Time: 2025-10-05T10:30:41.718731Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 173.7° -> 174.0°. Rotating: -0.3°
+✅ Yaw Correction Success: 173.7°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 323.5cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 160.2° -> 174.0°. Rotating: -13.8°
+✅ Yaw Correction Success: 172.2°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to S at (3,1) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 172.0° -> 174.0°. Rotating: -2.0°
+✅ Yaw Correction Success: 172.0°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
+Moving... Dist: 0.568/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 273.29 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (3, 1), Direction: South, Time: 2025-10-05T10:31:13.293279Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 32 at (3, 1), Facing: S ---
+📍 [step_32] Position: (3, 1), Direction: South, Time: 2025-10-05T10:31:14.419258Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 172.9° -> 174.0°. Rotating: -1.1°
+✅ Yaw Correction Success: 172.9°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 274.6cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['19.4', '19.4', '19.1'] cm
+    -> Average ToF reading: 19.31 cm.
+    -> ToF Confirmation: WALL DETECTED.
+    -> Final Result for Right side: WALL
+
+--- Adjusting Right Side (Yaw locked at 174.00°) ---
+   -> Config: ID=2, Port=1, Target=13.0cm
+Adjusting Right... Current: 14.94cm, Target: 13.0cm, Error: -1.94cm, Speed: 0.087
+[Right] Target distance reached! Final distance: 13.67 cm
+
+🔧 Correcting Yaw: 159.7° -> 174.0°. Rotating: -14.3°
+✅ Yaw Correction Success: 173.0°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to E at (3,2) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: 173.2° -> 84.0°. Rotating: 89.2°
+✅ Yaw Correction Success: 85.5°
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 85.7° -> 84.0°. Rotating: 1.7°
+✅ Yaw Correction Success: 85.7°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.569/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 331.31 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (3, 2), Direction: East, Time: 2025-10-05T10:31:43.342569Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 33 at (3, 2), Facing: E ---
+📍 [step_33] Position: (3, 2), Direction: East, Time: 2025-10-05T10:31:44.529361Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 83.7° -> 84.0°. Rotating: -0.3°
+✅ Yaw Correction Success: 83.7°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 327.6cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at -90°: ['298.9', '298.9', '307.1'] cm
+    -> Average ToF reading: 301.60 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 68.1° -> 84.0°. Rotating: -15.9°
+✅ Yaw Correction Success: 82.7°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to E at (3,3) seems clear. Attempting move.
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: 83.0° -> 84.0°. Rotating: -1.0°
+✅ Yaw Correction Success: 83.0°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.564/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 297.88 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (3, 3), Direction: East, Time: 2025-10-05T10:32:13.109342Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 34 at (3, 3), Facing: E ---
+📍 [step_34] Position: (3, 3), Direction: East, Time: 2025-10-05T10:32:14.246651Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: 83.1° -> 84.0°. Rotating: -0.9°
+✅ Yaw Correction Success: 83.1°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 298.3cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at -90°: ['226.2', '226.0', '226.0'] cm
+    -> Average ToF reading: 226.06 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: 66.5° -> 84.0°. Rotating: -17.5°
+✅ Yaw Correction Success: 82.6°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to N at (2,3) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: 82.7° -> -6.0°. Rotating: 88.7°
+✅ Yaw Correction Success: -5.1°
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: -4.3° -> -6.0°. Rotating: 1.7°
+✅ Yaw Correction Success: -4.3°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
+Moving... Dist: 0.563/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 186.13 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (2, 3), Direction: North, Time: 2025-10-05T10:32:52.390147Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 35 at (2, 3), Facing: N ---
+📍 [step_35] Position: (2, 3), Direction: North, Time: 2025-10-05T10:32:53.541023Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -6.4° -> -6.0°. Rotating: -0.4°
+✅ Yaw Correction Success: -6.4°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 173.8cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: -22.5° -> -6.0°. Rotating: -16.5°
+✅ Yaw Correction Success: -7.5°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+Path to W at (2,2) seems clear. Attempting move.
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: -7.6° -> -96.0°. Rotating: 88.4°
+✅ Yaw Correction Success: -95.1°
+    Ensuring gimbal is centered before ToF confirmation...
+    Confirming path forward with ToF...
+    ToF confirmation: Wall belief updated. Path is CLEAR.
+
+🔧 Correcting Yaw: -94.8° -> -96.0°. Rotating: 1.2°
+✅ Yaw Correction Success: -94.8°
+🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
+Moving... Dist: 0.565/0.60 m
+✅ Move complete!
+
+--- Stage: Centering in Node with ToF ---
+[ToF] Initial front distance: 274.45 cm
+[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
+📍 [moved_to_new_node] Position: (2, 2), Direction: West, Time: 2025-10-05T10:33:24.274646Z
+🔍 Performing object detection at new position...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Object detection completed at new position
+
+--- Step 36 at (2, 2), Facing: W ---
+📍 [step_36] Position: (2, 2), Direction: West, Time: 2025-10-05T10:33:25.427290Z
+   -> Resetting Yaw to ensure perfect alignment before new step...
+
+🔧 Correcting Yaw: -96.5° -> -96.0°. Rotating: -0.5°
+✅ Yaw Correction Success: -96.5°
+
+--- Stage: Wall Detection & Side Alignment ---
+[SCAN] Front (ToF): 275.3cm -> FREE
+
+[SCAN] Left Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: FREE
+    -> Decision: Sensors agree. Result is FREE.
+    -> Final Result for Left side: FREE
+
+[SCAN] Right Side Analysis:
+    -> Sharp -> Suggests: FREE
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['357.4', '355.9', '355.9'] cm
+    -> Average ToF reading: 356.40 cm.
+    -> ToF Confirmation: NO WALL.
+    -> Final Result for Right side: FREE
+
+⚠️  WARNING: No side walls detected. Skipping alignment.
+
+🔧 Correcting Yaw: -114.3° -> -96.0°. Rotating: -18.3°
+✅ Yaw Correction Success: -98.0°
+--- Performing Scan for Mapping (Front ToF Only) ---
+🔍 Starting automatic object detection after alignment...
+🔍 Detection mode activated for 1 second
+📭 No objects detected
+🔍 Detection mode deactivated
+🔍 Automatic object detection completed
+No immediate unvisited path. Initiating backtrack...
+🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.
+
+🎉 === INTEGRATED EXPLORATION PHASE FINISHED ===
+
+
+--- NAVIGATION TO TARGET PHASE: From (2, 2) to (5, 0) ---
+✅ Path found to target: [(2, 2), (3, 2), (4, 2), (5, 2), (5, 1), (5, 0)]
+🎯 Executing Final Navigation Path: [(2, 2), (3, 2), (4, 2), (5, 2), (5, 1), (5, 0)]
+📍 [Final Navigation_start] Position: (2, 2), Direction: West, Time: 2025-10-05T10:33:44.535360Z     
+🔄 Rotating 90° LEFT...
+
+🔧 Correcting Yaw: -98.1° -> 174.0°. Rotating: 87.9°
+✅ Yaw Correction Success: 175.2°
+   -> [Final Navigation] Confirming path to (3,2) with ToF...
+   -> [Final Navigation] Real-time ToF check: Path is CLEAR.
+
+🔧 Correcting Yaw: 175.3° -> 174.0°. Rotating: 1.3°
+✅ Yaw Correction Success: 175.3°
 🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
 Moving... Dist: 0.569/0.60 m
 ✅ Move complete!
 
 --- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 80.10 cm
+[ToF] Initial front distance: 308.52 cm
 [ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (1, 1), Direction: West, Time: 2025-10-05T08:03:57.780977Z
-🔍 Performing object detection at new position...
-🔍 Detection mode activated for 1 second
-📦 Saved 1 objects to cell (1, 0)
-✅ Saved 1 objects to map at next position (1, 0)
-   📦 Object: Red Uncertain in Center zone (in center of cell)
-🔍 Detection mode deactivated
-🔍 Object detection completed at new position
-
---- Step 11 at (1, 1), Facing: W ---
-📍 [step_11] Position: (1, 1), Direction: West, Time: 2025-10-05T08:03:58.934874Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: 179.1° -> 180.0°. Rotating: -0.9°
-✅ Yaw Correction Success: 179.1°
+📍 [Final Navigation_moved] Position: (3, 2), Direction: South, Time: 2025-10-05T10:34:04.424455Z    
+   -> [Final Navigation] Performing side alignment at new position (3, 2)
 
 --- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 79.8cm -> FREE
+[SCAN] Front (ToF): 317.0cm -> FREE
 
 [SCAN] Left Side Analysis:
     -> Sharp -> Suggests: FREE
@@ -782,125 +1017,31 @@ Moving... Dist: 0.569/0.60 m
     -> Decision: Sensors agree. Result is FREE.
     -> Final Result for Right side: FREE
 
-⚠️  WARNING: No side walls detected. Skipping alignment.
+⚠️ User interrupted exploration.
+💾 Saving data before exit...
+🛑 Capture thread stopped
+🛑 Processing thread stopped.
+🛑 Camera display thread stopped
 
-🔧 Correcting Yaw: 176.5° -> 180.0°. Rotating: -3.5°
-✅ Yaw Correction Success: 178.3°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📦 Saved 1 objects to cell (1, 0)
-✅ Saved 1 objects to map at next position (1, 0)
-   📦 Object: Red Uncertain in Center zone (in center of cell)
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-🔩 IMU Drift Compensation Updated: Visited 10 nodes. New offset is -2.0°
-Path to N at (0,1) seems clear. Attempting move.
-🔄 Rotating 90° RIGHT...
-
-🔧 Correcting Yaw: 178.2° -> -92.0°. Rotating: -89.8°
-✅ Yaw Correction Success: -93.1°
-    Ensuring gimbal is centered before ToF confirmation...
-    Confirming path forward with ToF...
-    ToF confirmation: Wall belief updated. Path is CLEAR.
-
-🔧 Correcting Yaw: -93.2° -> -92.0°. Rotating: -1.2°
-✅ Yaw Correction Success: -93.2°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'y'
-Moving... Dist: 0.567/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 84.66 cm
-[ToF] Distance >= 50cm, likely in an open space. Skipping centering.
-📍 [moved_to_new_node] Position: (0, 1), Direction: North, Time: 2025-10-05T08:04:08.790479Z
-🔍 Performing object detection at new position...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Object detection completed at new position
-
---- Step 12 at (0, 1), Facing: N ---
-📍 [step_12] Position: (0, 1), Direction: North, Time: 2025-10-05T08:04:09.928712Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -92.6° -> -92.0°. Rotating: -0.6°
-✅ Yaw Correction Success: -92.6°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 84.4cm -> FREE
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
-    -> Final Result for Left side: FREE
-
+ตอนช่วงการรันหลังๆ มันประมวลผลช้ามากๆ กว่าจะออกเดินไม่รู้ทำไม
 [SCAN] Right Side Analysis:
     -> Sharp -> Suggests: FREE
-    -> IR    -> Suggests: FREE
-    -> Decision: Sensors agree. Result is FREE.
+    -> IR    -> Suggests: WALL
+    -> Ambiguity detected! Confirming with ToF...
+    -> ToF readings at 90°: ['357.4', '355.9', '355.9'] cm
+    -> Average ToF reading: 356.40 cm.
+    -> ToF Confirmation: NO WALL.
     -> Final Result for Right side: FREE
 
 ⚠️  WARNING: No side walls detected. Skipping alignment.
 
-🔧 Correcting Yaw: -95.1° -> -92.0°. Rotating: -3.1°
-✅ Yaw Correction Success: -93.8°
---- Performing Scan for Mapping (Front ToF Only) ---
-🔍 Starting automatic object detection after alignment...
-🔍 Detection mode activated for 1 second
-📭 No objects detected
-🔍 Detection mode deactivated
-🔍 Automatic object detection completed
-Path to E at (0,2) seems clear. Attempting move.
-🔄 Rotating 90° RIGHT...
+อันนี้ 1 ที่เวลาสแกนขวาแล้วรอนานมาก
 
-🔧 Correcting Yaw: -93.9° -> -2.0°. Rotating: -91.9°
-✅ Yaw Correction Success: -3.6°
+
+🔧 Correcting Yaw: -7.6° -> -96.0°. Rotating: 88.4°
+✅ Yaw Correction Success: -95.1°
     Ensuring gimbal is centered before ToF confirmation...
     Confirming path forward with ToF...
     ToF confirmation: Wall belief updated. Path is CLEAR.
 
-🔧 Correcting Yaw: -3.7° -> -2.0°. Rotating: -1.7°
-✅ Yaw Correction Success: -3.7°
-🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS 'x'
-Moving... Dist: 0.561/0.60 m
-✅ Move complete!
-
---- Stage: Centering in Node with ToF ---
-[ToF] Initial front distance: 20.38 cm
-[ToF] Too far from front wall. Moving forward...
-[ToF] Adjusting... Current Distance: 19.40 cm
-[ToF] ✅ Centering complete. Final distance: 19.40 cm
-📍 [moved_to_new_node] Position: (0, 2), Direction: East, Time: 2025-10-05T08:04:20.606839Z
-🚫 Front wall detected at new position - Skipping object detection
-
---- Step 13 at (0, 2), Facing: E ---
-📍 [step_13] Position: (0, 2), Direction: East, Time: 2025-10-05T08:04:20.824506Z
-   -> Resetting Yaw to ensure perfect alignment before new step...
-
-🔧 Correcting Yaw: -2.8° -> -2.0°. Rotating: -0.8°
-✅ Yaw Correction Success: -2.8°
-
---- Stage: Wall Detection & Side Alignment ---
-[SCAN] Front (ToF): 18.2cm -> OCCUPIED
-
-[SCAN] Left Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Left side: WALL
-
-[SCAN] Right Side Analysis:
-    -> Sharp -> Suggests: WALL
-    -> IR    -> Suggests: WALL
-    -> Decision: Sensors agree. Result is WALL.
-    -> Final Result for Right side: WALL
-
---- Adjusting Left Side (Yaw locked at -2.00°) ---
-   -> Config: ID=1, Port=1, Target=13.0cm
-Adjusting Left... Current: 11.35cm, Target: 13.0cm, Error:  1.65cm, Speed: 0.074
-[Left] Target distance reached! Final distance: 13.25 cm
-2025-10-05 15:04:29,163 ERROR client.py:163 Client: send_sync_msg wait msg receiver:0306, cmdset:0x3f, cmdid:0x20 timeout!
-⚠️ No frames received for 5 seconds, checking camera connection...
-⚠️ Camera read error:
+อันนี้อีกที่ กว่าจะออกเดินใช้เวลานานหลังจาก print ToF confir... ในช่วงบล็อคการเดินหลังๆ
