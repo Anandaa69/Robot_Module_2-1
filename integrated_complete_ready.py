@@ -44,11 +44,11 @@ TOF_ADJUST_SPEED = 0.1             # ความเร็วในการข�
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
-GRID = 3
+GRID = 4
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (0,2)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION =  2  # 0:North, 1:East, 2:South, 3:West here
+CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION =  0  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -57,8 +57,8 @@ ROBOT_FACE = 1  # 1,3,5.. = X axis, 2,4,6.. = Y axis
 
 # --- NEW: IMU Drift Compensation Parameters ---
 IMU_COMPENSATION_START_NODE_COUNT = 7      # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
-IMU_COMPENSATION_NODE_INTERVAL = 10      # เพิ่มค่าชดเชยทุกๆ N โหนด
-IMU_COMPENSATION_DEG_PER_INTERVAL = -2.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
+IMU_COMPENSATION_NODE_INTERVAL = 15      # เพิ่มค่าชดเชยทุกๆ N โหนด
+IMU_COMPENSATION_DEG_PER_INTERVAL = -1.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
 IMU_DRIFT_COMPENSATION_DEG = 0.0           # ตัวแปรเก็บค่าชดเชยปัจจุบัน
 
 # --- Occupancy Grid Parameters ---
@@ -79,7 +79,7 @@ OCCUPANCY_THRESHOLD = 0.7
 FREE_THRESHOLD = 0.3
 
 # --- Visualization Configuration ---
-MAP_FIGURE_SIZE = (10, 8)  # (width, height) ปรับได้ตามต้องการ
+MAP_FIGURE_SIZE = (6, 4)  # (width, height) ปรับได้ตามต้องการ
 
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
@@ -175,10 +175,10 @@ def save_all_data(occupancy_map):
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
 
-def camera_is_healthy(timeout=0.5) -> bool:
+def camera_is_healthy(timeout=3.0) -> bool:
     """
     ถือว่ากล้องพร้อมใช้งานเมื่อเชื่อมต่ออยู่และมีเฟรมล่าสุดในไม่กี่วินาทีนี้
-    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 0.5 วินาที)
+    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 3.0 วินาที)
     """
     try:
         # ใช้ตัวแปร global manager ที่ถูกประกาศตอน initialize
@@ -644,7 +644,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             continue
             
         try:
-            frame = cam.read_cv2_image(timeout=1.0)
+            frame = cam.read_cv2_image(timeout=1.5)
             if frame is not None and frame.size > 0:
                 # Clear queue if it's full to prevent memory buildup
                 if q.full():
@@ -671,7 +671,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail += 1
 
         # Tolerant reconnection policy (match fire_target.py behavior)
-        if fail >= 20:
+        if fail >= 30:
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
@@ -695,6 +695,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
     global processed_output
     print("🧠 Processing thread started.")
     processing_count = 0
+    last_cleanup_time = time.time()
 
     while not stop_event.is_set():
         if not is_detecting_func():
@@ -743,6 +744,14 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
 
             with output_lock:
                 processed_output = {"details": detailed_results}
+            
+            # Periodic cleanup to prevent memory buildup
+            if time.time() - last_cleanup_time > 30.0:  # Every 30 seconds
+                processing_count = 0
+                last_cleanup_time = time.time()
+                # Force garbage collection
+                import gc
+                gc.collect()
 
         except queue.Empty:
             time.sleep(0.1)  # Sleep when no frames to process
@@ -1316,7 +1325,7 @@ class EnvironmentScanner:
             # เงียบ error เพื่อไม่ให้รบกวนการทำงาน
             pass
 
-    def _get_stable_reading_cm(self, side, duration=0.35):
+    def _get_stable_reading_cm(self, side, duration=0.2):
         sensor_info = self.side_sensors.get(side)
         if not sensor_info: return None, None
         readings = []
@@ -1324,8 +1333,8 @@ class EnvironmentScanner:
         while time.time() - start_time < duration:
             adc = self.sensor_adaptor.get_adc(id=sensor_info["sharp_id"], port=sensor_info["sharp_port"])
             readings.append(convert_adc_to_cm(adc))
-            time.sleep(0.05)
-        if len(readings) < 5: return None, None
+            time.sleep(0.04)
+        if len(readings) < 2: return None, None
         return statistics.mean(readings), statistics.stdev(readings)
 
     def get_sensor_readings(self):
@@ -1371,19 +1380,11 @@ class EnvironmentScanner:
                         t_gimbal = time.time() - t_start
                         if t_gimbal > 2.0:
                             print(f"    ⚠️ Gimbal move took {t_gimbal:.2f}s (unusually long!)")
-                        time.sleep(0.15)  # ลดเวลารอ (เดิม 0.3)
+                        time.sleep(0.08)  # ลดเวลารอ (เดิม 0.15)
                         
-                        # อ่านค่า ToF หลายครั้งเพื่อความแม่นยำ (ลดจาก 3 เป็น 2 ครั้ง)
-                        tof_readings = []
-                        for i in range(2):  # อ่าน 2 ครั้ง
-                            tof_readings.append(self.side_tof_reading_cm)
-                            if i < 1:  # ไม่ sleep ครั้งสุดท้าย
-                                time.sleep(0.05)  # ลดเวลา (เดิม 0.1)
-                        
-                        # ใช้ค่าเฉลี่ยของการอ่าน
-                        tof_confirm_dist_cm = sum(tof_readings) / len(tof_readings)
-                        print(f"    -> ToF readings at {target_gimbal_yaw}°: {[f'{r:.1f}' for r in tof_readings]} cm")
-                        print(f"    -> Average ToF reading: {tof_confirm_dist_cm:.2f} cm.")
+                        # อ่าน ToF เพียงครั้งเดียว (เร็วที่สุด)
+                        tof_confirm_dist_cm = self.side_tof_reading_cm
+                        print(f"    -> ToF reading at {target_gimbal_yaw}°: {tof_confirm_dist_cm:.1f} cm")
                         
                         is_wall = (tof_confirm_dist_cm < self.tof_wall_threshold_cm)
                         print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
@@ -1391,7 +1392,7 @@ class EnvironmentScanner:
                     finally:
                         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
-                        time.sleep(0.1)  # ลดเวลา (เดิม 0.2)
+                        time.sleep(0.05)  # ลดเวลา (เดิม 0.1)
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -1503,41 +1504,6 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
-            
-            print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
-            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
-            
-            # --- OBJECT DETECTION AFTER BACKTRACK MOVEMENT ---
-            # ถ้ากล้องไม่พร้อมหลัง backtrack ให้หยุดและรอเช่นกัน
-            if not camera_is_healthy():
-                print(f"🛑 [{path_name}] Camera unhealthy → locking chassis and waiting...")
-                try:
-                    movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-                except Exception:
-                    pass
-                wait_start = time.time()
-                while not camera_is_healthy():
-                    if time.time() - wait_start > 30.0:
-                        print(f"⚠️ [{path_name}] Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
-                        manager.drop_and_reconnect()
-                        wait_start = time.time()
-                    time.sleep(0.2)
-                print(f"✅ [{path_name}] Camera recovered. Continuing...")
-            # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่
-            is_front_occupied_after_backtrack = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-            
-            if not is_front_occupied_after_backtrack:
-                print(f"🔍 [{path_name}] Performing object detection at new position...")
-                if camera_is_healthy():
-                    start_detection_mode()
-                    time.sleep(1.0)
-                    save_detected_objects_to_map(occupancy_map)
-                    stop_detection_mode()
-                    print(f"🔍 [{path_name}] Object detection completed at new position")
-                else:
-                    print(f"📹 [{path_name}] Camera not ready - Skipping object detection")
-            else:
-                print(f"🚫 [{path_name}] Front wall detected at new position - Skipping object detection")
 
     print(f"✅ {path_name} complete.")
 
@@ -1633,11 +1599,6 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 time.sleep(0.1)
                 # <<< END OF NEW CODE >>>
                 
-                # Check camera health before ToF confirmation (quick check)
-                if not camera_is_healthy(timeout=0.5):
-                    print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
-                    wait_for_camera_recovery(pause_label="Path Confirmation (explore_with_ogm)")
-                
                 print("    Confirming path forward with ToF...")
                 is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
                 
@@ -1654,10 +1615,13 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # <<< END OF NEW CODE >>>
                 
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                    # Check camera health before moving (quick check)
-                    if not camera_is_healthy(timeout=0.5):
-                        print("🛑 Camera unhealthy before movement → waiting for recovery...")
-                        wait_for_camera_recovery(pause_label="Before Movement")
+                    # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
+                    print("🔍 Performing object detection after turning to new direction...")
+                    start_detection_mode()
+                    time.sleep(1.0)
+                    save_detected_objects_to_map(occupancy_map)
+                    stop_detection_mode()
+                    print("🔍 Object detection completed after turn")
                     
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -1776,7 +1740,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -1796,12 +1760,7 @@ if __name__ == '__main__':
                         continue
                         
                 except queue.Empty:
-                    # Check if we're getting frames regularly
-                    if time.time() - last_frame_time > 5.0 and frame_count > 0:
-                        print("⚠️ No frames received for 5 seconds, checking camera connection...")
-                        if not manager.connected.is_set():
-                            print("📹 Camera disconnected, attempting reconnect...")
-                            manager.connect()
+                    # ลบการเช็ค 5-second timeout เพราะ capture thread จัดการเองแล้ว
                     time.sleep(0.1)
                     continue
                 except Exception as e:
@@ -1982,21 +1941,7 @@ if __name__ == '__main__':
                     print("🚫 Front wall detected - Skipping object detection until robot turns to new direction")
                     print("🔍 Object detection will be performed after robot turns to clear path")
                 else:
-                    print("🔍 Starting automatic object detection after alignment...")
-                    if camera_is_healthy():
-                        start_detection_mode()
-                        
-                        # Wait for detection to complete (1 second)
-                        time.sleep(1.0)
-                        
-                        # Save detected objects to map
-                        save_detected_objects_to_map(occupancy_map)
-                        
-                        # Stop detection mode
-                        stop_detection_mode()
-                        print("🔍 Automatic object detection completed")
-                    else:
-                        print("📹 Camera not ready - Skipping object detection")
+                    print("🔍 Object detection will be performed after robot turns to clear path")
                 
                 # Check detection timer
                 check_detection_timer()
@@ -2037,11 +1982,6 @@ if __name__ == '__main__':
                             print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
                         time.sleep(0.1)
                         
-                        # Check camera health before ToF confirmation (quick check)
-                        if not camera_is_healthy(timeout=0.5):
-                            print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
-                            wait_for_camera_recovery(pause_label="Path Confirmation")
-                        
                         print("    Confirming path forward with ToF...")
                         t_start = time.time()
                         is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
@@ -2062,10 +2002,13 @@ if __name__ == '__main__':
                         # <<< END OF NEW CODE >>>
                         
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                            # Check camera health before moving (quick check)
-                            if not camera_is_healthy(timeout=0.5):
-                                print("🛑 Camera unhealthy before movement → waiting for recovery...")
-                                wait_for_camera_recovery(pause_label="Before Movement")
+                            # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
+                            print("🔍 Performing object detection after turning to new direction...")
+                            start_detection_mode()
+                            time.sleep(1.0)
+                            save_detected_objects_to_map(occupancy_map)
+                            stop_detection_mode()
+                            print("🔍 Object detection completed after turn")
                             
                             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                             t_start = time.time()
@@ -2078,39 +2021,6 @@ if __name__ == '__main__':
                             
                             CURRENT_POSITION = (target_r, target_c)
                             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
-                            
-                            # --- OBJECT DETECTION AFTER MOVING TO NEW POSITION ---
-                            # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่
-                            is_front_occupied_after_move = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-                            
-                            # ถ้ากล้องไม่พร้อมหลังการเคลื่อนที่ ให้หยุดและรอเหมือนเดิม
-                            if not camera_is_healthy():
-                                print("🛑 Camera unhealthy after move → locking chassis and waiting...")
-                                try:
-                                    movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-                                except Exception:
-                                    pass
-                                wait_start = time.time()
-                                while not camera_is_healthy():
-                                    if time.time() - wait_start > 30.0:
-                                        print("⚠️ Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
-                                        manager.drop_and_reconnect()
-                                        wait_start = time.time()
-                                    time.sleep(0.2)
-                                print("✅ Camera recovered. Continuing...")
-
-                            if not is_front_occupied_after_move:
-                                print("🔍 Performing object detection at new position...")
-                                if camera_is_healthy():
-                                    start_detection_mode()
-                                    time.sleep(1.0)
-                                    save_detected_objects_to_map(occupancy_map)
-                                    stop_detection_mode()
-                                    print("🔍 Object detection completed at new position")
-                                else:
-                                    print("📹 Camera not ready - Skipping object detection")
-                            else:
-                                print("🚫 Front wall detected at new position - Skipping object detection")
                             
                             moved = True
                             break
