@@ -44,11 +44,11 @@ TOF_ADJUST_SPEED = 0.1             # ความเร็วในการข�
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
-GRID = 4
+GRID = 6
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West here
+CURRENT_POSITION = (5,5)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION =  3  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -175,15 +175,18 @@ def save_all_data(occupancy_map):
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
 
-def camera_is_healthy() -> bool:
-    """ถือว่ากล้องพร้อมใช้งานเมื่อเชื่อมต่ออยู่และมีเฟรมล่าสุดในไม่กี่วินาทีนี้"""
+def camera_is_healthy(timeout=2.0) -> bool:
+    """
+    ถือว่ากล้องพร้อมใช้งานเมื่อเชื่อมต่ออยู่และมีเฟรมล่าสุดในไม่กี่วินาทีนี้
+    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 2.0 วินาที)
+    """
     try:
         # ใช้ตัวแปร global manager ที่ถูกประกาศตอน initialize
         if not manager.connected.is_set():
             return False
     except Exception:
         return False
-    return (time.time() - last_frame_received_ts) <= 3.0
+    return (time.time() - last_frame_received_ts) <= timeout
 
 def wait_for_camera_recovery(pause_label="Runtime"):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
@@ -556,29 +559,23 @@ class RMConnection:
         with self._lock:
             self._safe_close()
             print("🤖 Connecting to RoboMaster...")
+            rb = robot.Robot()
+            rb.initialize(conn_type="ap")
+            rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
+            # subscribe angles
             try:
-                rb = robot.Robot()
-                rb.initialize(conn_type="ap")
-                time.sleep(1.0)  # Wait for initialization
-                rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
-                time.sleep(1.0)  # Wait for camera to start
-                # subscribe angles - ลดความถี่เพื่อลด error
-                try:
-                    rb.gimbal.sub_angle(freq=20, callback=sub_angle_cb)
-                except Exception as e:
-                    print("Gimbal sub_angle error:", e)
-                self._robot = rb
-                self.connected.set()
-                print("✅ RoboMaster connected & camera streaming")
-
-                # recenter gimbal on start
-                try:
-                    rb.gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
-                except Exception as e:
-                    print("Recenter error:", e)
+                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
             except Exception as e:
-                print(f"❌ Connection failed: {e}")
-                self._safe_close()
+                print("Gimbal sub_angle error:", e)
+            self._robot = rb
+            self.connected.set()
+            print("✅ RoboMaster connected & camera streaming")
+
+            # recenter gimbal on start
+            try:
+                rb.gimbal.recenter(pitch_speed=200, yaw_speed=200).wait_for_completed()
+            except Exception as e:
+                print("Recenter error:", e)
 
     def _safe_close(self):
         if self._robot is not None:
@@ -1369,16 +1366,21 @@ class EnvironmentScanner:
                     
                     try:
                         self.is_gimbal_centered = False
+                        t_start = time.time()
                         self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                        time.sleep(0.3)  # เพิ่มเวลารอให้ gimbal หยุดนิ่ง
+                        t_gimbal = time.time() - t_start
+                        if t_gimbal > 2.0:
+                            print(f"    ⚠️ Gimbal move took {t_gimbal:.2f}s (unusually long!)")
+                        time.sleep(0.15)  # ลดเวลารอ (เดิม 0.3)
                         
-                        # อ่านค่า ToF หลายครั้งเพื่อความแม่นยำ
+                        # อ่านค่า ToF หลายครั้งเพื่อความแม่นยำ (ลดจาก 3 เป็น 2 ครั้ง)
                         tof_readings = []
-                        for i in range(3):  # อ่าน 3 ครั้ง
+                        for i in range(2):  # อ่าน 2 ครั้ง
                             tof_readings.append(self.side_tof_reading_cm)
-                            time.sleep(0.1)  # รอระหว่างการอ่าน
+                            if i < 1:  # ไม่ sleep ครั้งสุดท้าย
+                                time.sleep(0.05)  # ลดเวลา (เดิม 0.1)
                         
-                        # ใช้ค่าเฉลี่ยของ 3 การอ่าน
+                        # ใช้ค่าเฉลี่ยของการอ่าน
                         tof_confirm_dist_cm = sum(tof_readings) / len(tof_readings)
                         print(f"    -> ToF readings at {target_gimbal_yaw}°: {[f'{r:.1f}' for r in tof_readings]} cm")
                         print(f"    -> Average ToF reading: {tof_confirm_dist_cm:.2f} cm.")
@@ -1389,7 +1391,7 @@ class EnvironmentScanner:
                     finally:
                         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
-                        time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal กลับมาที่กลาง
+                        time.sleep(0.1)  # ลดเวลา (เดิม 0.2)
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -1631,8 +1633,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                     time.sleep(0.1)
                     # <<< END OF NEW CODE >>>
                     
-                    # Check camera health before ToF confirmation
-                    if not camera_is_healthy():
+                    # Check camera health before ToF confirmation (quick check)
+                    if not camera_is_healthy(timeout=1.5):
                         print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
                         wait_for_camera_recovery(pause_label="Path Confirmation (explore_with_ogm)")
                     
@@ -1652,8 +1654,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                     # <<< END OF NEW CODE >>>
                     
                     if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                        # Check camera health before moving
-                        if not camera_is_healthy():
+                        # Check camera health before moving (quick check)
+                        if not camera_is_healthy(timeout=1.5):
                             print("🛑 Camera unhealthy before movement → waiting for recovery...")
                             wait_for_camera_recovery(pause_label="Before Movement")
                         
@@ -1774,7 +1776,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -2028,16 +2030,24 @@ if __name__ == '__main__':
                         movement_controller.rotate_to_direction(target_dir, attitude_handler)
                         
                         print("    Ensuring gimbal is centered before ToF confirmation...")
+                        t_start = time.time()
                         scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        t_gimbal = time.time() - t_start
+                        if t_gimbal > 2.0:
+                            print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
                         time.sleep(0.1)
                         
-                        # Check camera health before ToF confirmation
-                        if not camera_is_healthy():
+                        # Check camera health before ToF confirmation (quick check)
+                        if not camera_is_healthy(timeout=1.5):
                             print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
                             wait_for_camera_recovery(pause_label="Path Confirmation")
                         
                         print("    Confirming path forward with ToF...")
+                        t_start = time.time()
                         is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                        t_tof = time.time() - t_start
+                        if t_tof > 1.0:
+                            print(f"    ⚠️ ToF read took {t_tof:.2f}s (unusually long!)")
                         
                         occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
                         print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
@@ -2052,13 +2062,17 @@ if __name__ == '__main__':
                         # <<< END OF NEW CODE >>>
                         
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                            # Check camera health before moving
-                            if not camera_is_healthy():
+                            # Check camera health before moving (quick check)
+                            if not camera_is_healthy(timeout=1.5):
                                 print("🛑 Camera unhealthy before movement → waiting for recovery...")
                                 wait_for_camera_recovery(pause_label="Before Movement")
                             
                             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+                            t_start = time.time()
                             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+                            t_move = time.time() - t_start
+                            if t_move > 15.0:
+                                print(f"    ⚠️ Movement took {t_move:.2f}s (unusually long!)")
                             
                             movement_controller.center_in_node_with_tof(scanner, attitude_handler)
                             
