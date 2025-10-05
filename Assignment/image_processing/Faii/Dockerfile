@@ -1,26 +1,26 @@
-# Dockerfile สำหรับ Mac M1/M2
-# ใช้ platform amd64 เพื่อให้ robomaster ติดตั้งได้
+# ใช้ Python 3.9 บน amd64 (แก้ปัญหาพวก wheel ไม่รองรับ arm64)
 FROM --platform=linux/amd64 python:3.9-slim
 
-# ตั้ง working directory ใน container
+# ทำงานในโฟลเดอร์ /app
 WORKDIR /app
 
-# 1. ติดตั้งไลบรารีของระบบที่จำเป็นสำหรับ OpenCV
-# ไลบรารีเหล่านี้จำเป็นเพื่อให้ไบนารีของ OpenCV ทำงานได้ในสภาพแวดล้อม Linux
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
+# ติดตั้ง dependency เบื้องต้น
+RUN apt-get update && apt-get install -y \
+    libgl1 \
     libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 && \
-    rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# 2. คัดลอก requirements.txt และติดตั้ง dependency ของ Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# คัดลอก requirements.txt เข้าไป
+COPY requirements.txt 
 
-# 3. คัดลอกไฟล์โปรเจกต์ทั้งหมด
+# ติดตั้ง lib หลักก่อน (ที่ไม่งอแง)
+RUN pip install --no-cache-dir numpy opencv-python pandas matplotlib pillow scipy netaddr netifaces
+
+# พยายามติดตั้ง robomaster แยก (ถ้าไม่ได้ก็ไม่พังทั้งก้อน)
+RUN pip install --no-cache-dir robomaster==0.1.1.68 || echo "robomaster install failed, skipping..."
+
+# คัดลอกไฟล์โปรเจกต์ทั้งหมดเข้าไป
 COPY . .
 
-# 4. รัน cope_camera.py เมื่อ container start
+# คำสั่งเริ่มต้น
 CMD ["python", "cope_camera.py"]
