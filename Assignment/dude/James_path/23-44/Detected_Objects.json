@@ -1,0 +1,64 @@
+{
+  "session_info": {
+    "total_objects_detected": 5,
+    "detection_timestamp": 1759682659.1342442,
+    "grid_size": "4x4"
+  },
+  "detected_objects": [
+    {
+      "color": "Red",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759682414.1815085,
+      "cell_position": {
+        "row": 2,
+        "col": 1
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759682528.683255,
+      "cell_position": {
+        "row": 2,
+        "col": 2
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Rectangle_H",
+      "zone": "Right",
+      "is_target": false,
+      "timestamp": 1759682513.4100595,
+      "cell_position": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Circle",
+      "zone": "Right",
+      "is_target": false,
+      "timestamp": 1759682424.8226364,
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Rectangle_V",
+      "zone": "Right",
+      "is_target": false,
+      "timestamp": 1759682581.696744,
+      "cell_position": {
+        "row": 3,
+        "col": 2
+      }
+    }
+  ]
+}
