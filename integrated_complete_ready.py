@@ -1195,10 +1195,18 @@ class EnvironmentScanner:
                     try:
                         self.is_gimbal_centered = False
                         self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                        time.sleep(0.1)
+                        time.sleep(0.3)  # เพิ่มเวลารอให้ gimbal หยุดนิ่ง
                         
-                        tof_confirm_dist_cm = self.side_tof_reading_cm
-                        print(f"    -> ToF reading at {target_gimbal_yaw}° is {tof_confirm_dist_cm:.2f} cm.")
+                        # อ่านค่า ToF หลายครั้งเพื่อความแม่นยำ
+                        tof_readings = []
+                        for i in range(3):  # อ่าน 3 ครั้ง
+                            tof_readings.append(self.side_tof_reading_cm)
+                            time.sleep(0.1)  # รอระหว่างการอ่าน
+                        
+                        # ใช้ค่าเฉลี่ยของ 3 การอ่าน
+                        tof_confirm_dist_cm = sum(tof_readings) / len(tof_readings)
+                        print(f"    -> ToF readings at {target_gimbal_yaw}°: {[f'{r:.1f}' for r in tof_readings]} cm")
+                        print(f"    -> Average ToF reading: {tof_confirm_dist_cm:.2f} cm.")
                         
                         is_wall = (tof_confirm_dist_cm < self.tof_wall_threshold_cm)
                         print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
@@ -1206,7 +1214,7 @@ class EnvironmentScanner:
                     finally:
                         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
-                        time.sleep(0.1)
+                        time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal กลับมาที่กลาง
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -1321,6 +1329,23 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             
             print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
             perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+            
+            # --- OBJECT DETECTION AFTER BACKTRACK MOVEMENT ---
+            # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่
+            is_front_occupied_after_backtrack = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+            
+            if not is_front_occupied_after_backtrack:
+                print(f"🔍 [{path_name}] Performing object detection at new position...")
+                if manager.connected.is_set():
+                    start_detection_mode()
+                    time.sleep(1.0)
+                    save_detected_objects_to_map(occupancy_map)
+                    stop_detection_mode()
+                    print(f"🔍 [{path_name}] Object detection completed at new position")
+                else:
+                    print(f"📹 [{path_name}] Camera not ready - Skipping object detection")
+            else:
+                print(f"🚫 [{path_name}] Front wall detected at new position - Skipping object detection")
 
     print(f"✅ {path_name} complete.")
 
@@ -1720,27 +1745,31 @@ if __name__ == '__main__':
             perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
             
             # --- AUTOMATIC OBJECT DETECTION AFTER ALIGNMENT ---
-            print("🔍 Starting automatic object detection after alignment...")
-            if manager.connected.is_set():
-                start_detection_mode()
-                
-                # Wait for detection to complete (1 second)
-                time.sleep(1.0)
-                
-                # Save detected objects to map
-                save_detected_objects_to_map(occupancy_map)
-                
-                # Stop detection mode
-                stop_detection_mode()
-                print("🔍 Automatic object detection completed")
-            else:
-                print("📹 Camera not ready - Skipping object detection")
-            
-            # Check ToF for wall detection
+            # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่ก่อนทำ object detection
             print("--- Performing Scan for Mapping (Front ToF Only) ---")
             is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
             dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
             occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+            
+            if is_front_occupied:
+                print("🚫 Front wall detected - Skipping object detection until robot turns to new direction")
+                print("🔍 Object detection will be performed after robot turns to clear path")
+            else:
+                print("🔍 Starting automatic object detection after alignment...")
+                if manager.connected.is_set():
+                    start_detection_mode()
+                    
+                    # Wait for detection to complete (1 second)
+                    time.sleep(1.0)
+                    
+                    # Save detected objects to map
+                    save_detected_objects_to_map(occupancy_map)
+                    
+                    # Stop detection mode
+                    stop_detection_mode()
+                    print("🔍 Automatic object detection completed")
+                else:
+                    print("📹 Camera not ready - Skipping object detection")
             
             # Check detection timer
             check_detection_timer()
@@ -1800,6 +1829,24 @@ if __name__ == '__main__':
                         
                         CURRENT_POSITION = (target_r, target_c)
                         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                        
+                        # --- OBJECT DETECTION AFTER MOVING TO NEW POSITION ---
+                        # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่
+                        is_front_occupied_after_move = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                        
+                        if not is_front_occupied_after_move:
+                            print("🔍 Performing object detection at new position...")
+                            if manager.connected.is_set():
+                                start_detection_mode()
+                                time.sleep(1.0)
+                                save_detected_objects_to_map(occupancy_map)
+                                stop_detection_mode()
+                                print("🔍 Object detection completed at new position")
+                            else:
+                                print("📹 Camera not ready - Skipping object detection")
+                        else:
+                            print("🚫 Front wall detected at new position - Skipping object detection")
+                        
                         moved = True
                         break
                     else:
