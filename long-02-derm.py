@@ -1303,16 +1303,9 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def rotate_to_direction(self, target_direction, attitude_handler):
+    def rotate_to_direction(self, target_direction, attitude_handler, scanner=None):
         global CURRENT_DIRECTION
         if CURRENT_DIRECTION == target_direction: return
-        
-        # เก็บ reference ของ gimbal เพื่อใช้ในการควบคุม
-        gimbal = None
-        try:
-            gimbal = manager.get_gimbal()
-        except Exception as e:
-            print(f"⚠️ Could not get gimbal reference: {e}")
         
         diff = (target_direction - CURRENT_DIRECTION + 4) % 4
         
@@ -1330,12 +1323,11 @@ class MovementController:
         time.sleep(0.5)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
         
         # หลังจากหุ่นเลี้ยวเสร็จแล้ว ให้ gimbal หันตามหน้าหุ่น
-        if gimbal is not None:
+        if scanner is not None:
             try:
                 print("   -> Adjusting gimbal to follow robot's new direction...")
                 # คำนวณมุม gimbal ที่ต้องหมุนตามการเลี้ยวของหุ่น
                 # เมื่อหุ่นเลี้ยว gimbal ต้องหมุนในทิศทางตรงข้ามเพื่อให้ยังคงมองไปข้างหน้า
-                gimbal_yaw_offset = 0  # gimbal จะอยู่ที่ตำแหน่งเดิมเมื่อหุ่นเลี้ยวเสร็จ
                 
                 # ตรวจสอบมุมปัจจุบันของ gimbal และปรับให้ตรงกับทิศทางใหม่ของหุ่น
                 with gimbal_angle_lock:
@@ -1349,6 +1341,8 @@ class MovementController:
                     gimbal_yaw_offset = current_gimbal_yaw + 90
                 elif diff == 2:  # เลี้ยว 180 องศา
                     gimbal_yaw_offset = current_gimbal_yaw + 180
+                else:
+                    gimbal_yaw_offset = current_gimbal_yaw
                 
                 # ปรับมุมให้อยู่ในช่วง -180 ถึง 180
                 while gimbal_yaw_offset > 180:
@@ -1357,33 +1351,28 @@ class MovementController:
                     gimbal_yaw_offset += 360
                 
                 print(f"   -> Gimbal adjusting from {current_gimbal_yaw:.1f}° to {gimbal_yaw_offset:.1f}°")
-                gimbal.moveto(pitch=0, yaw=gimbal_yaw_offset, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                
+                # ใช้ gimbal จาก scanner และรอให้เสร็จสิ้น
+                scanner.gimbal.moveto(pitch=0, yaw=gimbal_yaw_offset, yaw_speed=SPEED_ROTATE).wait_for_completed()
                 time.sleep(0.2)  # รอให้ gimbal เสถียร
                 print("   -> ✅ Gimbal adjusted to follow robot direction")
+                
             except Exception as e:
                 print(f"   -> ⚠️ Gimbal adjustment error: {e}")
+        else:
+            print("   -> ⚠️ No scanner provided, skipping gimbal adjustment")
 
     def rotate_90_degrees_right(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° RIGHT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4; ROBOT_FACE += 1
     def rotate_90_degrees_left(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° LEFT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4; ROBOT_FACE -= 1
         if ROBOT_FACE < 1: ROBOT_FACE += 4
     def cleanup(self):
@@ -1549,15 +1538,14 @@ def find_path_bfs(occupancy_map, start, end):
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
     """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N)"""
-    from collections import deque
     h, w = occupancy_map.height, occupancy_map.width
     
     # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
-    queue = deque([(start_pos, [start_pos])])
+    queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
     
     while queue:
-        current_pos, path = queue.popleft()
+        current_pos, path = queue.pop(0)
         
         # เช็คทุกทิศทาง
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
@@ -1602,7 +1590,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             
             target_direction = dir_vectors_map[(dr, dc)]
             
-            movement_controller.rotate_to_direction(target_direction, attitude_handler)
+            movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
             
             # --- ส่วนการตรวจสอบ ---
             print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
@@ -1641,7 +1629,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         target_direction = dir_vectors_map[(dr, dc)]
         
         print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Turning to face unvisited node ({target_r},{target_c})...")
-        movement_controller.rotate_to_direction(target_direction, attitude_handler)
+        movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
         
         # เช็ค detection ก่อนเดินไปโหนดสุดท้าย
         print("🔍 Performing object detection before moving to unvisited node...")
@@ -1761,7 +1749,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
             
             if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
                 print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                movement_controller.rotate_to_direction(target_dir, attitude_handler)
+                movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                 
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
@@ -2143,7 +2131,7 @@ if __name__ == '__main__':
                     
                     if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
                         print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                        movement_controller.rotate_to_direction(target_dir, attitude_handler)
+                        movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                         
                         print("    Ensuring gimbal is centered before ToF confirmation...")
                         t_start = time.time()
