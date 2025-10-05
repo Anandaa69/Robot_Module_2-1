@@ -1,14 +1,87 @@
 {
   "session_info": {
-    "start_time": "N/A",
-    "end_time": "N/A",
-    "total_positions_logged": 0,
-    "grid_size": "6x6",
+    "start_time": "2025-10-05T14:35:57.889528Z",
+    "end_time": "2025-10-05T14:36:26.772004Z",
+    "total_positions_logged": 6,
+    "grid_size": "3x3",
     "target_destination": [
-      6,
-      6
+      0,
+      2
     ],
     "interrupted": true
   },
-  "position_log": []
+  "position_log": [
+    {
+      "timestamp": 1759674957.8895283,
+      "iso_timestamp": "2025-10-05T14:35:57.889528Z",
+      "position": [
+        0,
+        2
+      ],
+      "direction": "South",
+      "action": "new_session_start",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759674957.8905294,
+      "iso_timestamp": "2025-10-05T14:35:57.890529Z",
+      "position": [
+        0,
+        2
+      ],
+      "direction": "South",
+      "action": "step_1",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759674968.4795644,
+      "iso_timestamp": "2025-10-05T14:36:08.479564Z",
+      "position": [
+        1,
+        2
+      ],
+      "direction": "South",
+      "action": "moved_to_new_node",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759674969.6302693,
+      "iso_timestamp": "2025-10-05T14:36:09.630269Z",
+      "position": [
+        1,
+        2
+      ],
+      "direction": "South",
+      "action": "step_2",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759674986.16333,
+      "iso_timestamp": "2025-10-05T14:36:26.163330Z",
+      "position": [
+        1,
+        1
+      ],
+      "direction": "West",
+      "action": "moved_to_new_node",
+      "yaw_angle": 90.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759674986.7720048,
+      "iso_timestamp": "2025-10-05T14:36:26.772004Z",
+      "position": [
+        1,
+        1
+      ],
+      "direction": "West",
+      "action": "step_3",
+      "yaw_angle": 90.0,
+      "imu_compensation": 0.0
+    }
+  ]
 }
