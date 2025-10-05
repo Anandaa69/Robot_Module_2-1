@@ -1487,15 +1487,14 @@ def find_path_bfs(occupancy_map, start, end):
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
     """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N)"""
-    from collections import deque
     h, w = occupancy_map.height, occupancy_map.width
     
     # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
-    queue = deque([(start_pos, [start_pos])])
+    queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
     
     while queue:
-        current_pos, path = queue.popleft()
+        current_pos, path = queue.pop(0)
         
         # เช็คทุกทิศทาง
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
