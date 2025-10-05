@@ -2,6 +2,7 @@ import json
 import matplotlib.pyplot as plt
 import numpy as np
 from typing import Dict, Any, List, Tuple
+# ไม่จำเป็นต้อง import matplotlib.patches เพราะตอนนี้กลับมาใช้ marker='X'
 
 def generate_mission_map(
     # ใช้ Path เต็มเป็นค่าเริ่มต้น (Default) เพื่อให้รันได้แม้ไฟล์จะอยู่คนละโฟลเดอร์
@@ -40,30 +41,24 @@ def generate_mission_map(
     
     # 3. เตรียมข้อมูลเส้นทางการเคลื่อนที่
     
+    # FIX 1: ดึง position_log อย่างปลอดภัย, ถ้าไม่มีให้ใช้ list ว่าง []
+    position_log = position_data.get('position_log', []) 
+
     # แปลง log ตำแหน่งเป็นการเคลื่อนที่ (x, y) สำหรับ Matplotlib
-    # ใน Grid Map: row = y, col = x
-    x_path = [log['position'][1] + 0.5 for log in position_data['position_log']]
-    y_path = [N - 1 - log['position'][0] + 0.5 for log in position_data['position_log']] # ปรับแกน Y ให้ถูกต้อง (จากล่างขึ้นบน)
+    # List comprehension จะสร้าง list ว่างอย่างปลอดภัยถ้า position_log ว่าง
+    x_path = [log['position'][1] + 0.5 for log in position_log]
+    y_path = [N - 1 - log['position'][0] + 0.5 for log in position_log] # ปรับแกน Y
 
     # 4. สร้างกราฟ
     fig, ax = plt.subplots(figsize=(8, 8))
     
-    # --- การตั้งค่า Ticks และ Labels (แก้ไขปัญหา ValueError) ---
-    
-    # 1. ตั้งค่า Ticks หลัก (Minor Ticks) ให้ตรงกับเส้น Grid (N + 1 ตำแหน่ง)
+    # --- การตั้งค่า Ticks และ Labels ---
     ax.set_xticks(np.arange(N + 1), minor=True)
     ax.set_yticks(np.arange(N + 1), minor=True)
-    
-    # 2. กำหนดตำแหน่ง Label (Major Ticks) ให้แสดงที่กึ่งกลางของ Cell (N ตำแหน่ง)
     ax.set_xticks(np.arange(N) + 0.5, minor=False)
     ax.set_yticks(np.arange(N) + 0.5, minor=False)
-    
-    # 3. กำหนด Label Index (N Labels)
     ax.set_xticklabels(np.arange(N), minor=False)
-    # สำหรับแกน Y ต้องสลับลำดับ (N-1 ถึง 0) เพื่อให้ Row 0 อยู่ด้านบน
     ax.set_yticklabels(np.arange(N)[::-1], minor=False) 
-    
-    # วาด Grid โดยใช้ Minor Ticks
     ax.grid(True, which='minor', color='gray', linestyle='-', linewidth=0.5)
     
     # ตั้งชื่อแกน
@@ -83,23 +78,19 @@ def generate_mission_map(
         x_graph = c
         
         # วาดผนัง (ถ้า Wall Probability สูงกว่า 0.9)
-        # North Wall: จาก (x, y+1) ถึง (x+1, y+1)
         if node['wall_probabilities']['north'] > 0.9: 
             ax.plot([x_graph, x_graph + 1], [y_graph + 1, y_graph + 1], color=wall_color, linewidth=wall_width)
-        # South Wall: จาก (x, y) ถึง (x+1, y)
         if node['wall_probabilities']['south'] > 0.9: 
             ax.plot([x_graph, x_graph + 1], [y_graph, y_graph], color=wall_color, linewidth=wall_width)
-        # East Wall: จาก (x+1, y) ถึง (x+1, y+1)
         if node['wall_probabilities']['east'] > 0.9: 
             ax.plot([x_graph + 1, x_graph + 1], [y_graph, y_graph + 1], color=wall_color, linewidth=wall_width)
-        # West Wall: จาก (x, y) ถึง (x, y+1)
         if node['wall_probabilities']['west'] > 0.9: 
             ax.plot([x_graph, x_graph], [y_graph, y_graph + 1], color=wall_color, linewidth=wall_width)
 
     # วาดเส้นทางการเคลื่อนที่ (Path)
     ax.plot(x_path, y_path, color='blue', linestyle='-', linewidth=1.5, marker='o', markersize=3, label='Robot Path')
 
-    # วาดวัตถุที่ตรวจจับได้ (Detected Objects)
+    # วาดวัตถุที่ตรวจจับได้ (Detected Objects) - ใช้ marker='X' เหมือนเดิม
     object_colors = {'Yellow': 'yellow', 'Red': 'red', 'Green': 'green'}
     
     # ใช้แค่ object ที่มีพิกัด Cell Position ที่ไม่ซ้ำกัน
@@ -109,6 +100,7 @@ def generate_mission_map(
         if pos not in unique_objects:
             unique_objects[pos] = obj
             
+    # โค้ดวาดวัตถุด้วย marker='X'
     for pos, obj in unique_objects.items():
         r, c = pos
         x_obj = c + 0.5
@@ -123,30 +115,45 @@ def generate_mission_map(
         ax.text(x_obj + 0.1, y_obj + 0.1, f"{obj['color'][0]}", fontsize=8, color='black')
 
     # วาดจุดเริ่มต้นและจุดสิ้นสุด
-    start_pos = position_data['position_log'][0]['position']
-    end_pos = position_data['position_log'][-1]['position']
     target_pos = position_data['session_info']['target_destination']
     
-    # แปลงเป็นพิกัดกราฟ
-    y_start = N - 1 - start_pos[0] + 0.5
-    x_start = start_pos[1] + 0.5
-    y_end = N - 1 - end_pos[0] + 0.5
-    x_end = end_pos[1] + 0.5
+    # FIX 2: ตรวจสอบว่า position_log มีข้อมูลหรือไม่ก่อนวาด Start/End
+    if position_log:
+        start_pos = position_log[0]['position']
+        end_pos = position_log[-1]['position']
+        
+        # แปลงเป็นพิกัดกราฟ
+        y_start = N - 1 - start_pos[0] + 0.5
+        x_start = start_pos[1] + 0.5
+        y_end = N - 1 - end_pos[0] + 0.5
+        x_end = end_pos[1] + 0.5
+        
+        ax.plot(x_start, y_start, marker='s', markersize=12, color='green', label=f'Start ({start_pos[0]}, {start_pos[1]})', markeredgecolor='black')
+        ax.plot(x_end, y_end, marker='D', markersize=12, color='red', label=f'End ({end_pos[0]}, {end_pos[1]})', markeredgecolor='black')
+    else:
+        print("Warning: position_log is empty. Skipping plotting of Start and End positions.")
+
+
+    # พิกัด Target (ดึงข้อมูลเสมอเพราะไม่ขึ้นกับ position_log)
     y_target = N - 1 - target_pos[0] + 0.5
     x_target = target_pos[1] + 0.5
     
-    ax.plot(x_start, y_start, marker='s', markersize=12, color='green', label=f'Start ({start_pos[0]}, {start_pos[1]})', markeredgecolor='black')
-    ax.plot(x_end, y_end, marker='D', markersize=12, color='red', label=f'End ({end_pos[0]}, {end_pos[1]})', markeredgecolor='black')
     ax.plot(x_target, y_target, marker='*', markersize=15, color='purple', label=f'Target ({target_pos[0]}, {target_pos[1]})', markeredgecolor='black')
 
 
-    # 5. แสดงกราฟ
+    # 5. แสดงกราฟ (ปรับปรุง Legend และการแสดงผล)
     ax.set_xlim(0, N)
     ax.set_ylim(0, N)
-    ax.legend(loc='upper right', fontsize=8)
+
+    # ปรับปรุง Legend ให้แสดงเฉพาะ Label ที่ไม่ซ้ำกัน
+    handles, labels = ax.get_legend_handles_labels()
+    unique_labels = dict(zip(labels, handles))
+    ax.legend(unique_labels.values(), unique_labels.keys(), loc='upper right', fontsize=8)
+
     plt.gca().set_aspect('equal', adjustable='box')
+    
+    # สั่งให้แสดงผล
     plt.show()
 
-# --- การเรียกใช้งานฟังก์ชัน (แก้ไขให้ใช้ Default Path) ---
-# เรียกใช้ฟังก์ชันโดยไม่มี Arguments เพื่อให้ใช้ Full Path ที่กำหนดใน 'def'
+# --- การเรียกใช้งานฟังก์ชัน ---
 generate_mission_map()
