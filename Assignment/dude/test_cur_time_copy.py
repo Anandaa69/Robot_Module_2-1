@@ -10,12 +10,13 @@ import matplotlib.pyplot as plt
 from collections import deque
 import traceback
 import statistics
+import os
 
 # =============================================================================
 # ===== CONFIGURATION & PARAMETERS ============================================
 # =============================================================================
 SPEED_ROTATE = 480
-SAVE_PATH = r"D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude"
+
 # --- Sharp Distance Sensor Configuration ---
 LEFT_SHARP_SENSOR_ID = 1
 LEFT_SHARP_SENSOR_PORT = 1
@@ -35,15 +36,15 @@ RIGHT_IR_SENSOR_PORT = 2
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
 SHARP_STDEV_THRESHOLD = 0.3     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
-# --- ToF Centering Configuration (from dude_kum.py) ---
+# --- ToF Centering Configuration (from dude_kum.py) 
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (2,2)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION = 0  # 0:North, 1:East, 2:South, 3:West here
-TARGET_DESTINATION = (2,2)#here
+CURRENT_POSITION = (2,0)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West here
+TARGET_DESTINATION =(2, 0)#here
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
@@ -74,6 +75,10 @@ FREE_THRESHOLD = 0.3
 
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
+
+# --- NEW: Resume Function Variables ---
+RESUME_MODE = False  # ตัวแปรบอกว่าเป็นโหมด resume หรือไม่
+DATA_FOLDER = r"D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude"  # โฟลเดอร์สำหรับเก็บไฟล์ JSON
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -130,6 +135,169 @@ def log_position_timestamp(position, direction, action="arrived"):
     
     POSITION_LOG.append(log_entry)
     print(f"📍 [{action}] Position: {position}, Direction: {direction_names[direction]}, Time: {log_entry['iso_timestamp']}")
+
+def check_for_resume_data():
+    """
+    NEW: ตรวจสอบว่ามีไฟล์ JSON สำหรับ resume หรือไม่
+    """
+    map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
+    timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+    
+    if os.path.exists(map_file) and os.path.exists(timestamp_file):
+        return True
+    return False
+
+def load_resume_data():
+    """
+    NEW: โหลดข้อมูลจากไฟล์ JSON เพื่อ resume การทำงาน
+    """
+    global CURRENT_POSITION, CURRENT_DIRECTION, CURRENT_TARGET_YAW, ROBOT_FACE, IMU_DRIFT_COMPENSATION_DEG, POSITION_LOG, RESUME_MODE
+    
+    try:
+        print("🔄 Loading resume data...")
+        
+        # โหลดข้อมูล timestamp
+        timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+        with open(timestamp_file, "r", encoding="utf-8") as f:
+            timestamp_data = json.load(f)
+        
+        # ตั้งค่า global variables จากข้อมูล timestamp
+        if timestamp_data["position_log"]:
+            last_log = timestamp_data["position_log"][-1]
+            CURRENT_POSITION = tuple(last_log["position"])
+            CURRENT_TARGET_YAW = last_log["yaw_angle"]
+            IMU_DRIFT_COMPENSATION_DEG = last_log["imu_compensation"]
+            
+            # สำคัญ: ต้องโหลดข้อมูลเก่าทั้งหมดกลับมา
+            POSITION_LOG = timestamp_data["position_log"].copy()  # ใช้ .copy() เพื่อไม่ให้แก้ไขข้อมูลต้นฉบับ
+            
+            # คำนวณทิศทางจาก yaw angle (เป็น default)
+            yaw = last_log["yaw_angle"]
+            if -45 <= yaw <= 45:
+                calculated_direction = 0  # North
+            elif 45 < yaw <= 135:
+                calculated_direction = 1  # East
+            elif 135 < yaw or yaw <= -135:
+                calculated_direction = 2  # South
+            else:
+                calculated_direction = 3  # West
+            
+            print(f"✅ Resume data loaded:")
+            print(f"   Position: {CURRENT_POSITION}")
+            print(f"   Calculated Direction: {['North', 'East', 'South', 'West'][calculated_direction]}")
+            print(f"   Yaw: {CURRENT_TARGET_YAW:.1f}°")
+            print(f"   IMU Compensation: {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
+            print(f"   Previous positions logged: {len(POSITION_LOG)}")
+            print(f"   Total exploration history: {len(POSITION_LOG)} entries")
+            
+            # ให้ผู้ใช้ยืนยันทิศทาง
+            print("\n🤖 Please confirm the robot's current facing direction:")
+            print("   ↑ North (1)")
+            print("   → East (2)")
+            print("   ↓ South (3)")
+            print("   ← West (4)")
+            print(f"   Calculated: {['North', 'East', 'South', 'West'][calculated_direction]} (Press Enter to confirm)")
+            
+            direction_input = input("Enter direction (1-4) or press Enter to confirm: ").strip()
+            
+            if direction_input == "":
+                CURRENT_DIRECTION = calculated_direction
+                print(f"✅ Using calculated direction: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]}")
+            else:
+                try:
+                    direction_num = int(direction_input)
+                    if 1 <= direction_num <= 4:
+                        CURRENT_DIRECTION = direction_num - 1
+                        print(f"✅ Manual direction set: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]}")
+                    else:
+                        print("❌ Invalid input, using calculated direction")
+                        CURRENT_DIRECTION = calculated_direction
+                except ValueError:
+                    print("❌ Invalid input, using calculated direction")
+                    CURRENT_DIRECTION = calculated_direction
+            
+            # ตั้งค่า ROBOT_FACE
+            ROBOT_FACE = CURRENT_DIRECTION + 1
+            
+            print(f"   Final Direction: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]}")
+            print(f"   Robot Face: {ROBOT_FACE}")
+        
+        RESUME_MODE = True
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error loading resume data: {e}")
+        return False
+
+def create_occupancy_map_from_json():
+    """
+    NEW: สร้าง OccupancyGridMap จากไฟล์ JSON
+    """
+    try:
+        map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
+        with open(map_file, "r", encoding="utf-8") as f:
+            map_data = json.load(f)
+        
+        # หาขนาดของกริด
+        max_row = max(node['coordinate']['row'] for node in map_data['nodes'])
+        max_col = max(node['coordinate']['col'] for node in map_data['nodes'])
+        width = max_col + 1
+        height = max_row + 1
+        
+        print(f"📊 Map data loaded: {width}x{height} grid")
+        print(f"📊 Total nodes: {len(map_data['nodes'])}")
+        
+        # สร้าง OccupancyGridMap
+        occupancy_map = OccupancyGridMap(width, height)
+        
+        # โหลดข้อมูลจาก JSON กลับเข้าไปใน occupancy_map
+        for i, node_data in enumerate(map_data['nodes']):
+            r = node_data['coordinate']['row']
+            c = node_data['coordinate']['col']
+            cell = occupancy_map.grid[r][c]
+            
+            # โหลด node probability (แก้ไข domain error)
+            prob = node_data['probability']
+            if prob <= 0:
+                cell.log_odds_occupied = -10  # ใกล้ 0
+            elif prob >= 1:
+                cell.log_odds_occupied = 10   # ใกล้ 1
+            elif prob == 0.5:
+                cell.log_odds_occupied = 0   # ไม่แน่ใจ
+            else:
+                cell.log_odds_occupied = math.log(prob / (1 - prob))
+            
+            # Debug: แสดงข้อมูลที่โหลด
+            if i < 5:  # แสดงแค่ 5 โหนดแรก
+                print(f"   Node {i}: ({r},{c}) prob={prob:.3f} -> log_odds={cell.log_odds_occupied:.3f}")
+            
+            # โหลด wall probabilities (แก้ไข domain error)
+            walls = node_data['wall_probabilities']
+            for direction, prob in walls.items():
+                if prob <= 0:
+                    log_odds = -10  # ใกล้ 0
+                elif prob >= 1:
+                    log_odds = 10   # ใกล้ 1
+                elif prob == 0.5:
+                    log_odds = 0    # ไม่แน่ใจ
+                else:
+                    log_odds = math.log(prob / (1 - prob))
+                
+                if direction == 'north':
+                    cell.walls['N'].log_odds = log_odds
+                elif direction == 'south':
+                    cell.walls['S'].log_odds = log_odds
+                elif direction == 'east':
+                    cell.walls['E'].log_odds = log_odds
+                elif direction == 'west':
+                    cell.walls['W'].log_odds = log_odds
+        
+        print(f"✅ Occupancy map loaded from JSON ({width}x{height})")
+        return occupancy_map
+        
+    except Exception as e:
+        print(f"❌ Error loading occupancy map: {e}")
+        return None
 
 # =============================================================================
 # ===== OCCUPANCY GRID MAP & VISUALIZATION (from map_suay.py) =================
@@ -337,7 +505,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=target_distance)
+        pid = PID(Kp=0.7, Ki=0.25, Kd=20, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -712,6 +880,12 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
     global CURRENT_POSITION, CURRENT_DIRECTION, IMU_DRIFT_COMPENSATION_DEG
     visited_cells = set()
     
+    # NEW: ถ้าเป็น resume mode ให้เพิ่มตำแหน่งปัจจุบันเข้าไปใน visited_cells
+    if RESUME_MODE:
+        visited_cells.add(CURRENT_POSITION)
+        print(f"🔄 Resume mode: Added current position {CURRENT_POSITION} to visited_cells")
+        print(f"   📍 Total visited cells: {len(visited_cells)}")
+    
     # บันทึกตำแหน่งเริ่มต้น
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "exploration_start")
     
@@ -747,12 +921,18 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
         # --- END OF NEW CODE ---
 
+        # แก้ไข priority_dirs ให้ถูกต้อง: ขวา, ตรง, ซ้าย
         priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
         moved = False
+        # แก้ไข dir_vectors ให้ถูกต้อง: N, E, S, W
         dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
 
         for target_dir in priority_dirs:
-            target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
+            # แก้ไขการคำนวณ target_r, target_c ให้ถูกต้อง
+            dr, dc = dir_vectors[target_dir]
+            target_r, target_c = r + dr, c + dc
+            
+            print(f"🔍 Current: ({r},{c}) Direction: {['N','E','S','W'][CURRENT_DIRECTION]} -> Checking {['N','E','S','W'][target_dir]} -> target: ({target_r},{target_c})")
             
             if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
                 print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
@@ -773,12 +953,17 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 visualizer.update_plot(occupancy_map, CURRENT_POSITION)
 
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
+                    print(f"🚀 Moving from ({r},{c}) to ({target_r},{target_c})")
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
 
                     movement_controller.center_in_node_with_tof(scanner, attitude_handler)
 
+                    # แก้ไขการอัปเดตตำแหน่งให้ถูกต้อง
+                    old_position = CURRENT_POSITION
                     CURRENT_POSITION = (target_r, target_c)
+                    print(f"✅ Position updated: {old_position} -> {CURRENT_POSITION}")
+                    print(f"✅ Direction: {['N','E','S','W'][CURRENT_DIRECTION]}")
                     # บันทึกตำแหน่งใหม่หลังจากเคลื่อนที่
                     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
                     moved = True
@@ -805,11 +990,37 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
 # =============================================================================
 if __name__ == '__main__':
     ep_robot = None
-    occupancy_map = OccupancyGridMap(width=3, height=3)#here
+    occupancy_map = None
     attitude_handler = AttitudeHandler()
     movement_controller = None
     scanner = None
     ep_chassis = None
+    
+    # --- NEW: Resume Logic ---
+    if check_for_resume_data():
+        print("\n🔄 Found previous session data!")
+        user_input = input("Do you want to resume from previous session? (y/n): ").lower().strip()
+        
+        if user_input == 'y' or user_input == 'yes':
+            print("🔄 Resuming from previous session...")
+            if load_resume_data():
+                occupancy_map = create_occupancy_map_from_json()
+                if occupancy_map is None:
+                    print("❌ Failed to load occupancy map. Starting fresh session.")
+                    occupancy_map = OccupancyGridMap(width=3, height=3)
+                    RESUME_MODE = False
+            else:
+                print("❌ Failed to load resume data. Starting fresh session.")
+                occupancy_map = OccupancyGridMap(width=3, height=3)
+                RESUME_MODE = False
+        else:
+            print("🆕 Starting fresh session...")
+            occupancy_map = OccupancyGridMap(width=3, height=3)
+            RESUME_MODE = False
+    else:
+        print("🆕 No previous session found. Starting fresh session...")
+        occupancy_map = OccupancyGridMap(width=3, height=3)
+        RESUME_MODE = False
     
     try:
         visualizer = RealTimeVisualizer(grid_size=3, target_dest=TARGET_DESTINATION)#here
@@ -822,6 +1033,17 @@ if __name__ == '__main__':
         scanner = EnvironmentScanner(ep_sensor_adaptor, ep_tof_sensor, ep_gimbal, ep_chassis)
         movement_controller = MovementController(ep_chassis)
         attitude_handler.start_monitoring(ep_chassis)
+        
+        if RESUME_MODE:
+            print("🔄 Resuming exploration from previous position...")
+            print(f"   📍 Current position: {CURRENT_POSITION}")
+            print(f"   📍 Total previous logs: {len(POSITION_LOG)}")
+            # บันทึกตำแหน่งปัจจุบัน (resume)
+            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "resume_session")
+        else:
+            print("🆕 Starting new exploration...")
+            # บันทึกตำแหน่งเริ่มต้น
+            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "new_session_start")
         
         explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_map, visualizer)
         
@@ -879,9 +1101,10 @@ if __name__ == '__main__':
                     }
                     final_map_data["nodes"].append(cell_data)
 
-            with open(f"{SAVE_PATH}\\Mapping_Top.json", "w") as f:
+            map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
+            with open(map_file, "w") as f:
                 json.dump(final_map_data, f, indent=2)
-            print("✅ Final Hybrid Belief Map (with walls) saved to Mapping_Top.json")
+            print(f"✅ Final Hybrid Belief Map (with walls) saved to {map_file}")
             
             # บันทึกข้อมูล timestamp และตำแหน่ง
             timestamp_data = {
@@ -891,14 +1114,15 @@ if __name__ == '__main__':
                     "total_positions_logged": len(POSITION_LOG),
                     "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
                     "target_destination": list(TARGET_DESTINATION),
-                    "interrupted": True  # บอกว่าเซสชันถูก interrupt
+                    "interrupted": not RESUME_MODE  # บอกว่าเซสชันถูก interrupt หรือไม่
                 },
                 "position_log": POSITION_LOG
             }
             
-            with open(f"{SAVE_PATH}\\Robot_Position_Timestamps.json", "w") as f:
+            timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+            with open(timestamp_file, "w") as f:
                 json.dump(timestamp_data, f, indent=2)
-            print("✅ Robot position timestamps saved to Robot_Position_Timestamps.json")
+            print(f"✅ Robot position timestamps saved to {timestamp_file}")
             
         except Exception as save_error:
             print(f"❌ Error saving data: {save_error}")
