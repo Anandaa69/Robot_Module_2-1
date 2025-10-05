@@ -167,7 +167,9 @@ def load_resume_data():
             CURRENT_POSITION = tuple(last_log["position"])
             CURRENT_TARGET_YAW = last_log["yaw_angle"]
             IMU_DRIFT_COMPENSATION_DEG = last_log["imu_compensation"]
-            POSITION_LOG = timestamp_data["position_log"]
+            
+            # สำคัญ: ต้องโหลดข้อมูลเก่าทั้งหมดกลับมา
+            POSITION_LOG = timestamp_data["position_log"].copy()  # ใช้ .copy() เพื่อไม่ให้แก้ไขข้อมูลต้นฉบับ
             
             # คำนวณ direction จาก yaw angle
             yaw = last_log["yaw_angle"]
@@ -190,6 +192,7 @@ def load_resume_data():
         print(f"   Yaw: {CURRENT_TARGET_YAW:.1f}°")
         print(f"   IMU Compensation: {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
         print(f"   Previous positions logged: {len(POSITION_LOG)}")
+        print(f"   Total exploration history: {len(POSITION_LOG)} entries")
         
         RESUME_MODE = True
         return True
@@ -825,6 +828,12 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
     global CURRENT_POSITION, CURRENT_DIRECTION, IMU_DRIFT_COMPENSATION_DEG
     visited_cells = set()
     
+    # NEW: ถ้าเป็น resume mode ให้เพิ่มตำแหน่งปัจจุบันเข้าไปใน visited_cells
+    if RESUME_MODE:
+        visited_cells.add(CURRENT_POSITION)
+        print(f"🔄 Resume mode: Added current position {CURRENT_POSITION} to visited_cells")
+        print(f"   📍 Total visited cells: {len(visited_cells)}")
+    
     # บันทึกตำแหน่งเริ่มต้น
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "exploration_start")
     
@@ -964,6 +973,8 @@ if __name__ == '__main__':
         
         if RESUME_MODE:
             print("🔄 Resuming exploration from previous position...")
+            print(f"   📍 Current position: {CURRENT_POSITION}")
+            print(f"   📍 Total previous logs: {len(POSITION_LOG)}")
             # บันทึกตำแหน่งปัจจุบัน (resume)
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "resume_session")
         else:
