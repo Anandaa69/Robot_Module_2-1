@@ -44,11 +44,11 @@ TOF_ADJUST_SPEED = 0.1             # ความเร็วในการข�
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
-GRID = 6
+GRID = 3
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5,5)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION =  3  # 0:North, 1:East, 2:South, 3:West here
+CURRENT_POSITION = (0,2)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION =  2  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -175,10 +175,10 @@ def save_all_data(occupancy_map):
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
 
-def camera_is_healthy(timeout=2.0) -> bool:
+def camera_is_healthy(timeout=0.5) -> bool:
     """
     ถือว่ากล้องพร้อมใช้งานเมื่อเชื่อมต่ออยู่และมีเฟรมล่าสุดในไม่กี่วินาทีนี้
-    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 2.0 วินาที)
+    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 0.5 วินาที)
     """
     try:
         # ใช้ตัวแปร global manager ที่ถูกประกาศตอน initialize
@@ -671,7 +671,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail += 1
 
         # Tolerant reconnection policy (match fire_target.py behavior)
-        if fail >= 10:
+        if fail >= 20:
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
@@ -1570,7 +1570,7 @@ def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_ha
         print("\n⚠️  WARNING: No side walls detected. Skipping alignment.")
     
     attitude_handler.correct_yaw_to_target(movement_controller.chassis, get_compensated_target_yaw()) # MODIFIED
-    time.sleep(0.1)
+    time.sleep(0.05)
 
 
 def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_map, visualizer, max_steps=40):
@@ -1584,105 +1584,105 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         if not camera_is_healthy():
             wait_for_camera_recovery(pause_label=f"Step {step+1}")
 
-            r, c = CURRENT_POSITION
-            print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
-            
-            # บันทึกตำแหน่งในแต่ละ step
-            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
-            
-            print("   -> Resetting Yaw to ensure perfect alignment before new step...")
-            attitude_handler.correct_yaw_to_target(movement_controller.chassis, get_compensated_target_yaw()) # MODIFIED
-            
-            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+        r, c = CURRENT_POSITION
+        print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
+        
+        # บันทึกตำแหน่งในแต่ละ step
+        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
+        
+        print("   -> Resetting Yaw to ensure perfect alignment before new step...")
+        attitude_handler.correct_yaw_to_target(movement_controller.chassis, get_compensated_target_yaw()) # MODIFIED
+        
+        perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
 
-            print("--- Performing Scan for Mapping (Front ToF Only) ---")
-            is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-            dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
-            occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+        print("--- Performing Scan for Mapping (Front ToF Only) ---")
+        is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+        dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
+        occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+        
+        occupancy_map.update_node(r, c, False, 'tof')
+        visited_cells.add((r, c))
+        visualizer.update_plot(occupancy_map, CURRENT_POSITION)
+        
+        # --- NEW: Update IMU Drift Compensation ---
+        nodes_visited = len(visited_cells)
+        if nodes_visited >= IMU_COMPENSATION_START_NODE_COUNT:
+            # Calculate how many intervals have passed
+            compensation_intervals = nodes_visited // IMU_COMPENSATION_NODE_INTERVAL
+            new_compensation = compensation_intervals * IMU_COMPENSATION_DEG_PER_INTERVAL
+            if new_compensation != IMU_DRIFT_COMPENSATION_DEG:
+                IMU_DRIFT_COMPENSATION_DEG = new_compensation
+                print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
+        # --- END OF NEW CODE ---
+        
+        priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
+        moved = False
+        dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+        
+        for target_dir in priority_dirs:
+            target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
             
-            occupancy_map.update_node(r, c, False, 'tof')
-            visited_cells.add((r, c))
-            visualizer.update_plot(occupancy_map, CURRENT_POSITION)
-            
-            # --- NEW: Update IMU Drift Compensation ---
-            nodes_visited = len(visited_cells)
-            if nodes_visited >= IMU_COMPENSATION_START_NODE_COUNT:
-                # Calculate how many intervals have passed
-                compensation_intervals = nodes_visited // IMU_COMPENSATION_NODE_INTERVAL
-                new_compensation = compensation_intervals * IMU_COMPENSATION_DEG_PER_INTERVAL
-                if new_compensation != IMU_DRIFT_COMPENSATION_DEG:
-                    IMU_DRIFT_COMPENSATION_DEG = new_compensation
-                    print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
-            # --- END OF NEW CODE ---
-            
-            priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
-            moved = False
-            dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-            
-            for target_dir in priority_dirs:
-                target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
+            if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
+                print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
+                movement_controller.rotate_to_direction(target_dir, attitude_handler)
                 
-                if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
-                    print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                    movement_controller.rotate_to_direction(target_dir, attitude_handler)
-                    
-                    # <<< NEW CODE ADDED >>>
-                    # Ensure the gimbal is facing forward before checking the path and moving.
-                    print("    Ensuring gimbal is centered before ToF confirmation...")
-                    scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
-                    time.sleep(0.1)
-                    # <<< END OF NEW CODE >>>
-                    
-                    # Check camera health before ToF confirmation (quick check)
-                    if not camera_is_healthy(timeout=1.5):
-                        print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
-                        wait_for_camera_recovery(pause_label="Path Confirmation (explore_with_ogm)")
-                    
-                    print("    Confirming path forward with ToF...")
-                    is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-                    
-                    occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
-                    print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
-                    visualizer.update_plot(occupancy_map, CURRENT_POSITION)
-                    
-                    # <<< NEW: Double-check with ToF after rotation >>>
-                    if is_blocked:
-                        print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
-                        movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler)
-                        print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
-                        continue  # Skip this direction and try next one
-                    # <<< END OF NEW CODE >>>
-                    
-                    if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                        # Check camera health before moving (quick check)
-                        if not camera_is_healthy(timeout=1.5):
-                            print("🛑 Camera unhealthy before movement → waiting for recovery...")
-                            wait_for_camera_recovery(pause_label="Before Movement")
-                        
-                        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
-                        movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
-                    
-                        movement_controller.center_in_node_with_tof(scanner, attitude_handler)
-                    
-                        CURRENT_POSITION = (target_r, target_c)
-                        # บันทึกตำแหน่งใหม่หลังจากเคลื่อนที่
-                        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
-                        moved = True
-                        break
-                    else:
-                        print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
-            
-            if not moved:
-                print("No immediate unvisited path. Initiating backtrack...")
-                backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                # <<< NEW CODE ADDED >>>
+                # Ensure the gimbal is facing forward before checking the path and moving.
+                print("    Ensuring gimbal is centered before ToF confirmation...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
+                time.sleep(0.1)
+                # <<< END OF NEW CODE >>>
                 
-                if backtrack_path and len(backtrack_path) > 1:
-                    execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
-                    print("Backtrack to new area complete. Resuming exploration.")
-                    continue
-                else:
-                    print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                # Check camera health before ToF confirmation (quick check)
+                if not camera_is_healthy(timeout=0.5):
+                    print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
+                    wait_for_camera_recovery(pause_label="Path Confirmation (explore_with_ogm)")
+                
+                print("    Confirming path forward with ToF...")
+                is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                
+                occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+                print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
+                visualizer.update_plot(occupancy_map, CURRENT_POSITION)
+                
+                # <<< NEW: Double-check with ToF after rotation >>>
+                if is_blocked:
+                    print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
+                    movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler)
+                    print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
+                    continue  # Skip this direction and try next one
+                # <<< END OF NEW CODE >>>
+                
+                if occupancy_map.is_path_clear(r, c, target_r, target_c):
+                    # Check camera health before moving (quick check)
+                    if not camera_is_healthy(timeout=0.5):
+                        print("🛑 Camera unhealthy before movement → waiting for recovery...")
+                        wait_for_camera_recovery(pause_label="Before Movement")
+                    
+                    axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+                    movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+                
+                    movement_controller.center_in_node_with_tof(scanner, attitude_handler)
+                
+                    CURRENT_POSITION = (target_r, target_c)
+                    # บันทึกตำแหน่งใหม่หลังจากเคลื่อนที่
+                    log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                    moved = True
                     break
+                else:
+                    print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
+        
+        if not moved:
+            print("No immediate unvisited path. Initiating backtrack...")
+            backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+            
+            if backtrack_path and len(backtrack_path) > 1:
+                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                print("Backtrack to new area complete. Resuming exploration.")
+                continue
+            else:
+                print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                break
         # end of per-step block
     
     print("\n🎉 === EXPLORATION PHASE FINISHED ===")
@@ -1776,7 +1776,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -2038,7 +2038,7 @@ if __name__ == '__main__':
                         time.sleep(0.1)
                         
                         # Check camera health before ToF confirmation (quick check)
-                        if not camera_is_healthy(timeout=1.5):
+                        if not camera_is_healthy(timeout=0.5):
                             print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
                             wait_for_camera_recovery(pause_label="Path Confirmation")
                         
@@ -2063,7 +2063,7 @@ if __name__ == '__main__':
                         
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
                             # Check camera health before moving (quick check)
-                            if not camera_is_healthy(timeout=1.5):
+                            if not camera_is_healthy(timeout=0.5):
                                 print("🛑 Camera unhealthy before movement → waiting for recovery...")
                                 wait_for_camera_recovery(pause_label="Before Movement")
                             
