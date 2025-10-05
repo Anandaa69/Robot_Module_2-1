@@ -1,19 +1,19 @@
 {
   "session_info": {
-    "total_objects_detected": 3,
-    "detection_timestamp": 1759596296.086333
+    "total_objects_detected": 2,
+    "detection_timestamp": 1759597812.2289467
   },
   "detected_objects": [
     {
       "id": 1,
       "color": "Green",
       "shape": "Rectangle_H",
-      "zone": "Right",
+      "zone": "Left",
       "is_target": false,
       "box": [
-        664,
-        65,
-        54,
+        749,
+        58,
+        51,
         35
       ]
     },
@@ -24,23 +24,10 @@
       "zone": "Center",
       "is_target": false,
       "box": [
-        282,
-        64,
-        46,
-        47
-      ]
-    },
-    {
-      "id": 1,
-      "color": "Yellow",
-      "shape": "Uncertain",
-      "zone": "Left",
-      "is_target": false,
-      "box": [
-        186,
-        51,
-        29,
-        87
+        372,
+        57,
+        40,
+        42
       ]
     }
   ]

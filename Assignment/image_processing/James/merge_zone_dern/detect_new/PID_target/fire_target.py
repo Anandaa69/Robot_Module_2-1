@@ -39,7 +39,7 @@ VERTICAL_FOV_DEG = 54.0
 PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
 
 # ต้องการเล็งเชิดขึ้น +3°
-PITCH_BIAS_DEG = 2.0
+PITCH_BIAS_DEG = 2.5
 PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V  # บวกที่ error_y (เล็งสูงขึ้น)
 
 # ROI เริ่มต้นตามไฟล์เดิม
