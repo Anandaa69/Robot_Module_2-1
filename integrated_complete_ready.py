@@ -45,7 +45,7 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (0,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION = 1   # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -1503,19 +1503,19 @@ if __name__ == '__main__':
                 occupancy_map = create_occupancy_map_from_json()
                 if occupancy_map is None:
                     print("❌ Failed to load occupancy map. Starting fresh session.")
-                    occupancy_map = OccupancyGridMap(width=3, height=3)
+                    occupancy_map = OccupancyGridMap(width=4, height=4)
                     RESUME_MODE = False
             else:
                 print("❌ Failed to load resume data. Starting fresh session.")
-                occupancy_map = OccupancyGridMap(width=3, height=3)
+                occupancy_map = OccupancyGridMap(width=4, height=4)
                 RESUME_MODE = False
         else:
             print("🆕 Starting fresh session...")
-            occupancy_map = OccupancyGridMap(width=3, height=3)
+            occupancy_map = OccupancyGridMap(width=4, height=4)
             RESUME_MODE = False
     else:
         print("🆕 No previous session found. Starting fresh session...")
-        occupancy_map = OccupancyGridMap(width=3, height=3)
+        occupancy_map = OccupancyGridMap(width=4, height=4)
         RESUME_MODE = False
     
     # --- INTEGRATED OBJECT DETECTION SYSTEM ---
@@ -1693,7 +1693,7 @@ if __name__ == '__main__':
     display_t.start()
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=3, target_dest=TARGET_DESTINATION)
+        visualizer = RealTimeVisualizer(grid_size=4, target_dest=TARGET_DESTINATION)
         print("🤖 Connecting to robot...")
         ep_robot = robot.Robot()
         try:
