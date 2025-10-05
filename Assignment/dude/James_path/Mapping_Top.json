@@ -9,16 +9,25 @@
       "is_occupied": false,
       "walls": {
         "north": true,
-        "south": true,
+        "south": false,
         "east": false,
-        "west": false
+        "west": true
       },
       "wall_probabilities": {
-        "north": 0.9,
-        "south": 0.9,
-        "east": 0.003,
-        "west": 0.5
-      }
+        "north": 0.988,
+        "south": 0.001,
+        "east": 0.006,
+        "west": 0.95
+      },
+      "objects": [
+        {
+          "color": "Yellow",
+          "shape": "Rectangle_V",
+          "zone": "Right",
+          "is_target": false,
+          "timestamp": 1759662517.2135441
+        }
+      ]
     },
     {
       "coordinate": {
@@ -34,18 +43,124 @@
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.9,
-        "south": 0.679,
-        "east": 0.05,
-        "west": 0.003
-      }
+        "north": 0.994,
+        "south": 0.001,
+        "east": 0.0,
+        "west": 0.006
+      },
+      "objects": []
     },
     {
       "coordinate": {
         "row": 0,
         "col": 2
       },
-      "probability": 0.5,
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": true,
+        "west": false
+      },
+      "wall_probabilities": {
+        "north": 0.1,
+        "south": 0.999,
+        "east": 1.0,
+        "west": 0.0
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 0,
+        "col": 3
+      },
+      "probability": 0.003,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": true
+      },
+      "wall_probabilities": {
+        "north": 0.006,
+        "south": 0.0,
+        "east": 0.9,
+        "west": 1.0
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 1,
+        "col": 0
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": true,
+        "west": false
+      },
+      "wall_probabilities": {
+        "north": 0.001,
+        "south": 0.003,
+        "east": 0.994,
+        "west": 0.1
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 1,
+        "col": 1
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": true
+      },
+      "wall_probabilities": {
+        "north": 0.001,
+        "south": 0.006,
+        "east": 0.003,
+        "west": 0.994
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 1,
+        "col": 2
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": false,
+        "west": false
+      },
+      "wall_probabilities": {
+        "north": 0.999,
+        "south": 1.0,
+        "east": 0.001,
+        "west": 0.003
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 1,
+        "col": 3
+      },
+      "probability": 0.05,
       "is_occupied": false,
       "walls": {
         "north": false,
@@ -54,18 +169,76 @@
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.5,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.05
-      }
+        "north": 0.0,
+        "south": 0.006,
+        "east": 0.012,
+        "west": 0.001
+      },
+      "objects": []
     },
     {
       "coordinate": {
-        "row": 1,
+        "row": 2,
         "col": 0
       },
-      "probability": 0.5,
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": true
+      },
+      "wall_probabilities": {
+        "north": 0.003,
+        "south": 0.994,
+        "east": 0.5,
+        "west": 0.9
+      },
+      "objects": [
+        {
+          "color": "Yellow",
+          "shape": "Square",
+          "zone": "Center",
+          "is_target": false,
+          "timestamp": 1759662562.9175804
+        },
+        {
+          "color": "Yellow",
+          "shape": "Square",
+          "zone": "Center",
+          "is_target": false,
+          "timestamp": 1759662574.1009398
+        }
+      ]
+    },
+    {
+      "coordinate": {
+        "row": 2,
+        "col": 1
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": false,
+        "east": false,
+        "west": false
+      },
+      "wall_probabilities": {
+        "north": 0.006,
+        "south": 0.006,
+        "east": 0.0,
+        "west": 0.5
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 2,
+        "col": 2
+      },
+      "probability": 0.003,
       "is_occupied": false,
       "walls": {
         "north": true,
@@ -74,111 +247,140 @@
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.9,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.5
-      }
-    },
-    {
-      "coordinate": {
-        "row": 1,
-        "col": 1
+        "north": 1.0,
+        "south": 0.0,
+        "east": 0.0,
+        "west": 0.0
       },
-      "probability": 0.5,
-      "is_occupied": false,
-      "walls": {
-        "north": false,
-        "south": false,
-        "east": false,
-        "west": false
-      },
-      "wall_probabilities": {
-        "north": 0.679,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.5
-      }
-    },
-    {
-      "coordinate": {
-        "row": 1,
-        "col": 2
-      },
-      "probability": 0.5,
-      "is_occupied": false,
-      "walls": {
-        "north": false,
-        "south": false,
-        "east": false,
-        "west": false
-      },
-      "wall_probabilities": {
-        "north": 0.5,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.5
-      }
+      "objects": []
     },
     {
       "coordinate": {
         "row": 2,
+        "col": 3
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": false,
+        "south": true,
+        "east": false,
+        "west": false
+      },
+      "wall_probabilities": {
+        "north": 0.006,
+        "south": 0.988,
+        "east": 0.05,
+        "west": 0.0
+      },
+      "objects": [
+        {
+          "color": "Green",
+          "shape": "Rectangle_V",
+          "zone": "Center",
+          "is_target": false,
+          "timestamp": 1759662411.5123255
+        }
+      ]
+    },
+    {
+      "coordinate": {
+        "row": 3,
         "col": 0
       },
-      "probability": 0.5,
+      "probability": 0.05,
       "is_occupied": false,
       "walls": {
-        "north": false,
-        "south": false,
+        "north": true,
+        "south": true,
         "east": false,
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.5,
-        "south": 0.5,
-        "east": 0.5,
+        "north": 0.994,
+        "south": 0.9,
+        "east": 0.003,
         "west": 0.5
-      }
+      },
+      "objects": []
     },
     {
       "coordinate": {
-        "row": 2,
+        "row": 3,
         "col": 1
       },
-      "probability": 0.5,
+      "probability": 0.05,
       "is_occupied": false,
       "walls": {
         "north": false,
-        "south": false,
-        "east": false,
+        "south": true,
+        "east": true,
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.5,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.5
-      }
+        "north": 0.006,
+        "south": 0.9,
+        "east": 0.994,
+        "west": 0.003
+      },
+      "objects": [
+        {
+          "color": "Red",
+          "shape": "Rectangle_V",
+          "zone": "Left",
+          "is_target": false,
+          "timestamp": 1759662240.5026948
+        },
+        {
+          "color": "Green",
+          "shape": "Rectangle_V",
+          "zone": "Center",
+          "is_target": false,
+          "timestamp": 1759662240.5026948
+        }
+      ]
     },
     {
       "coordinate": {
-        "row": 2,
+        "row": 3,
         "col": 2
       },
-      "probability": 0.5,
+      "probability": 0.05,
       "is_occupied": false,
       "walls": {
         "north": false,
-        "south": false,
+        "south": true,
         "east": false,
+        "west": true
+      },
+      "wall_probabilities": {
+        "north": 0.0,
+        "south": 0.994,
+        "east": 0.0,
+        "west": 0.994
+      },
+      "objects": []
+    },
+    {
+      "coordinate": {
+        "row": 3,
+        "col": 3
+      },
+      "probability": 0.05,
+      "is_occupied": false,
+      "walls": {
+        "north": true,
+        "south": true,
+        "east": true,
         "west": false
       },
       "wall_probabilities": {
-        "north": 0.5,
-        "south": 0.5,
-        "east": 0.5,
-        "west": 0.5
-      }
+        "north": 0.988,
+        "south": 0.9,
+        "east": 0.95,
+        "west": 0.0
+      },
+      "objects": []
     }
   ]
 }
