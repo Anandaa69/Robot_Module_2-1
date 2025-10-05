@@ -1,0 +1,63 @@
+{
+  "session_info": {
+    "start_time": "2025-10-04T17:09:52.966490Z",
+    "end_time": "2025-10-04T17:10:01.414530Z",
+    "total_positions_logged": 4,
+    "grid_size": "3x3",
+    "target_destination": [
+      0,
+      0
+    ],
+    "interrupted": true
+  },
+  "position_log": [
+    {
+      "timestamp": 1759597792.966491,
+      "iso_timestamp": "2025-10-04T17:09:52.966490Z",
+      "position": [
+        0,
+        0
+      ],
+      "direction": "East",
+      "action": "new_session_start",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759597792.966491,
+      "iso_timestamp": "2025-10-04T17:09:52.966490Z",
+      "position": [
+        0,
+        0
+      ],
+      "direction": "East",
+      "action": "step_1",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759597801.4145303,
+      "iso_timestamp": "2025-10-04T17:10:01.414530Z",
+      "position": [
+        0,
+        1
+      ],
+      "direction": "East",
+      "action": "moved_to_new_node",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759597801.4145303,
+      "iso_timestamp": "2025-10-04T17:10:01.414530Z",
+      "position": [
+        0,
+        1
+      ],
+      "direction": "East",
+      "action": "step_2",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    }
+  ]
+}
