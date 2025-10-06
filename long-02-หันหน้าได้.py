@@ -45,7 +45,7 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.15
 
-GRID = 5
+GRID = 4
 
 # --- Logical state for the grid map (from map_suay.py) ---
 CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
@@ -1194,7 +1194,7 @@ class MovementController:
         self.current_x_pos, self.current_y_pos = position_info[0], position_info[1]
 
     def _calculate_yaw_correction(self, attitude_handler, target_yaw):
-        KP_YAW = 0.8; MAX_YAW_SPEED = 25
+        KP_YAW = 1.8; MAX_YAW_SPEED = 25
         yaw_error = attitude_handler.normalize_angle(target_yaw - attitude_handler.current_yaw)
         speed = KP_YAW * yaw_error
         return max(min(speed, MAX_YAW_SPEED), -MAX_YAW_SPEED)
@@ -1202,7 +1202,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=0.5, Ki=0.1, Kd=25, setpoint=target_distance)
+        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -1303,20 +1303,11 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def rotate_to_direction(self, target_direction, attitude_handler):
+    def rotate_to_direction(self, target_direction, attitude_handler, scanner=None):
         global CURRENT_DIRECTION
         if CURRENT_DIRECTION == target_direction: return
         
-        # เก็บ reference ของ gimbal เพื่อใช้ในการควบคุม
-        gimbal = None
-        try:
-            gimbal = manager.get_gimbal()
-        except Exception as e:
-            print(f"⚠️ Could not get gimbal reference: {e}")
-        
         diff = (target_direction - CURRENT_DIRECTION + 4) % 4
-        
-        # ทำการเลี้ยวหุ่นก่อน และรอให้เสร็จสิ้น
         if diff == 1: 
             self.rotate_90_degrees_right(attitude_handler)
         elif diff == 3: 
@@ -1325,65 +1316,24 @@ class MovementController:
             self.rotate_90_degrees_right(attitude_handler); 
             self.rotate_90_degrees_right(attitude_handler)
         
-        # รอให้การเลี้ยวเสร็จสิ้นก่อนที่จะปรับ Gimbal
+        # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
         print("   -> Waiting for robot rotation to complete...")
         time.sleep(0.5)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
         
-        # หลังจากหุ่นเลี้ยวเสร็จแล้ว ให้ gimbal หันตามหน้าหุ่น
-        if gimbal is not None:
-            try:
-                print("   -> Adjusting gimbal to follow robot's new direction...")
-                # คำนวณมุม gimbal ที่ต้องหมุนตามการเลี้ยวของหุ่น
-                # เมื่อหุ่นเลี้ยว gimbal ต้องหมุนในทิศทางตรงข้ามเพื่อให้ยังคงมองไปข้างหน้า
-                gimbal_yaw_offset = 0  # gimbal จะอยู่ที่ตำแหน่งเดิมเมื่อหุ่นเลี้ยวเสร็จ
-                
-                # ตรวจสอบมุมปัจจุบันของ gimbal และปรับให้ตรงกับทิศทางใหม่ของหุ่น
-                with gimbal_angle_lock:
-                    current_gimbal_yaw = gimbal_angles[1]  # yaw angle ของ gimbal
-                
-                # คำนวณมุมที่ gimbal ต้องหมุนเพื่อให้ยังคงมองไปข้างหน้า
-                # เมื่อหุ่นเลี้ยว 90 องศา gimbal ต้องหมุน -90 องศาเพื่อให้ยังคงมองไปข้างหน้า
-                if diff == 1:  # เลี้ยวขวา 90 องศา
-                    gimbal_yaw_offset = current_gimbal_yaw - 90
-                elif diff == 3:  # เลี้ยวซ้าย 90 องศา  
-                    gimbal_yaw_offset = current_gimbal_yaw + 90
-                elif diff == 2:  # เลี้ยว 180 องศา
-                    gimbal_yaw_offset = current_gimbal_yaw + 180
-                
-                # ปรับมุมให้อยู่ในช่วง -180 ถึง 180
-                while gimbal_yaw_offset > 180:
-                    gimbal_yaw_offset -= 360
-                while gimbal_yaw_offset <= -180:
-                    gimbal_yaw_offset += 360
-                
-                print(f"   -> Gimbal adjusting from {current_gimbal_yaw:.1f}° to {gimbal_yaw_offset:.1f}°")
-                gimbal.moveto(pitch=0, yaw=gimbal_yaw_offset, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                time.sleep(0.2)  # รอให้ gimbal เสถียร
-                print("   -> ✅ Gimbal adjusted to follow robot direction")
-            except Exception as e:
-                print(f"   -> ⚠️ Gimbal adjustment error: {e}")
+        # ไม่ให้ gimbal หันตามหุ่นในระหว่างการเลี้ยว - ให้หุ่นเลี้ยวได้ตรงก่อน
+        # Gimbal จะถูกควบคุมแค่ตอนที่จำเป็นเท่านั้น (เช่น ตอน scan)
 
     def rotate_90_degrees_right(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° RIGHT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4; ROBOT_FACE += 1
     def rotate_90_degrees_left(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° LEFT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4; ROBOT_FACE -= 1
         if ROBOT_FACE < 1: ROBOT_FACE += 4
     def cleanup(self):
@@ -1547,17 +1497,52 @@ def find_path_bfs(occupancy_map, start, end):
                     queue.append(new_path)
     return None
 
+def is_dead_end(occupancy_map, position, visited_cells):
+    """ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่"""
+    r, c = position
+    directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]  # N, E, S, W
+    dir_names = ['N', 'E', 'S', 'W']
+    
+    accessible_neighbors = 0
+    unvisited_neighbors = 0
+    
+    for i, (dr, dc) in enumerate(directions):
+        nr, nc = r + dr, c + dc
+        
+        # ตรวจสอบว่าอยู่ในขอบเขตหรือไม่
+        if 0 <= nr < occupancy_map.height and 0 <= nc < occupancy_map.width:
+            # ตรวจสอบว่าเส้นทางเปิดหรือไม่
+            if occupancy_map.is_path_clear(r, c, nr, nc):
+                accessible_neighbors += 1
+                # ตรวจสอบว่าเป็นโหนดที่ยังไม่ไปหรือไม่
+                if (nr, nc) not in visited_cells:
+                    unvisited_neighbors += 1
+    
+    # ถ้าไม่มีเพื่อนบ้านที่เข้าถึงได้ หรือมีแค่เพื่อนบ้านที่ไปแล้ว = ทางตัน
+    is_dead = (accessible_neighbors == 0) or (accessible_neighbors > 0 and unvisited_neighbors == 0)
+    
+    if is_dead:
+        print(f"   -> Dead end analysis: {accessible_neighbors} accessible neighbors, {unvisited_neighbors} unvisited")
+    
+    return is_dead
+
+def mark_cell_as_dead_end(occupancy_map, position):
+    """ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน"""
+    r, c = position
+    # เพิ่มข้อมูลใน occupancy map เพื่อระบุว่าโหนดนี้เป็นทางตัน
+    # สามารถใช้ log_odds หรือเพิ่มฟิลด์ใหม่ได้
+    print(f"   -> Marking cell {position} as dead end")
+
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
     """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N)"""
-    from collections import deque
     h, w = occupancy_map.height, occupancy_map.width
     
     # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
-    queue = deque([(start_pos, [start_pos])])
+    queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
     
     while queue:
-        current_pos, path = queue.popleft()
+        current_pos, path = queue.pop(0)
         
         # เช็คทุกทิศทาง
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
@@ -1602,7 +1587,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             
             target_direction = dir_vectors_map[(dr, dc)]
             
-            movement_controller.rotate_to_direction(target_direction, attitude_handler)
+            movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
             
             # --- ส่วนการตรวจสอบ ---
             print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
@@ -1641,7 +1626,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         target_direction = dir_vectors_map[(dr, dc)]
         
         print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Turning to face unvisited node ({target_r},{target_c})...")
-        movement_controller.rotate_to_direction(target_direction, attitude_handler)
+        movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
         
         # เช็ค detection ก่อนเดินไปโหนดสุดท้าย
         print("🔍 Performing object detection before moving to unvisited node...")
@@ -1662,6 +1647,10 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         if is_blocked:
             print(f"   -> 🔥 [{path_name}] FINAL STOP. Real-time sensor detected obstacle to unvisited node.")
+            # ตรวจสอบว่าโหนดปลายทางเป็นทางตันหรือไม่
+            if is_dead_end(occupancy_map, (target_r, target_c), set()):
+                print(f"   -> 🚫 Target node ({target_r},{target_c}) is a dead end. Marking as explored.")
+                mark_cell_as_dead_end(occupancy_map, (target_r, target_c))
             return
         
         # เดินไปโหนดสุดท้าย (ที่ยังไม่สำรวจ)
@@ -1713,6 +1702,7 @@ def perform_side_alignment_and_mapping(movement_controller, scanner, attitude_ha
 def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_map, visualizer, max_steps=40):
     global CURRENT_POSITION, CURRENT_DIRECTION, IMU_DRIFT_COMPENSATION_DEG
     visited_cells = set()
+    backtrack_attempts = {}  # นับจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
     
     # บันทึกตำแหน่งเริ่มต้น
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "exploration_start")
@@ -1761,7 +1751,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
             
             if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
                 print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                movement_controller.rotate_to_direction(target_dir, attitude_handler)
+                movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                 
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
@@ -1780,7 +1770,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # <<< NEW: Double-check with ToF after rotation >>>
                 if is_blocked:
                     print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
-                    movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler)
+                    movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler, scanner)
                     print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
                     continue  # Skip this direction and try next one
                 # <<< END OF NEW CODE >>>
@@ -1809,9 +1799,32 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         
         if not moved:
             print("No immediate unvisited path. Initiating backtrack...")
+            
+            # ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่
+            if is_dead_end(occupancy_map, CURRENT_POSITION, visited_cells):
+                print(f"🚫 Dead end detected at {CURRENT_POSITION}. Marking as fully explored.")
+                # ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน
+                mark_cell_as_dead_end(occupancy_map, CURRENT_POSITION)
+            
             backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
             
             if backtrack_path and len(backtrack_path) > 1:
+                target_node = backtrack_path[-1]
+                
+                # ตรวจสอบจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
+                if target_node in backtrack_attempts:
+                    backtrack_attempts[target_node] += 1
+                    if backtrack_attempts[target_node] >= 3:  # ถ้าพยายามมากกว่า 3 ครั้ง
+                        print(f"🔄 Too many attempts to reach {target_node}. Marking as dead end.")
+                        mark_cell_as_dead_end(occupancy_map, target_node)
+                        # ลบโหนดนี้ออกจาก backtrack path และลองหาใหม่
+                        backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                        if not backtrack_path or len(backtrack_path) <= 1:
+                            print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                            break
+                else:
+                    backtrack_attempts[target_node] = 1
+                
                 execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
                 print("Backtrack to new area complete. Resuming exploration.")
                 continue
@@ -2143,7 +2156,7 @@ if __name__ == '__main__':
                     
                     if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
                         print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
-                        movement_controller.rotate_to_direction(target_dir, attitude_handler)
+                        movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                         
                         print("    Ensuring gimbal is centered before ToF confirmation...")
                         t_start = time.time()
@@ -2167,7 +2180,7 @@ if __name__ == '__main__':
                         # <<< NEW: Double-check with ToF after rotation >>>
                         if is_blocked:
                             print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
-                            movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler)
+                            movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler, scanner)
                             print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
                             continue  # Skip this direction and try next one
                         # <<< END OF NEW CODE >>>
