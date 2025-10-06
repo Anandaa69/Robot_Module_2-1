@@ -239,15 +239,20 @@ def solve_tsp_optimal(grid, start_pos, target_positions, width, height):
     if len(target_positions) == 1:
         return [start_pos] + target_positions
     
-    # ถ้ามีเป้าหมายมาก (>8) ใช้ greedy algorithm
-    if len(target_positions) > 8:
-        return solve_tsp_greedy(grid, start_pos, target_positions, width, height)
+    # ใช้ Brute Force สำหรับเป้าหมายน้อย (≤4) - เร็วมาก
+    if len(target_positions) <= 4:
+        return solve_tsp_brute_force(grid, start_pos, target_positions, width, height)
     
-    # ลองทุกลำดับที่เป็นไปได้
+    # ใช้ Greedy สำหรับเป้าหมายมาก (>4) - เร็วที่สุด
+    else:
+        return solve_tsp_greedy(grid, start_pos, target_positions, width, height)
+
+def solve_tsp_brute_force(grid, start_pos, target_positions, width, height):
+    """แก้ปัญหา TSP ด้วย Brute Force (สำหรับเป้าหมายน้อย)"""
     best_order = None
     best_length = float('inf')
     
-    print(f"🔍 Calculating optimal path for {len(target_positions)} targets...")
+    print(f"🔍 Brute Force TSP for {len(target_positions)} targets...")
     
     for perm in permutations(target_positions):
         path_sequence = [start_pos] + list(perm)
@@ -261,7 +266,8 @@ def solve_tsp_optimal(grid, start_pos, target_positions, width, height):
         print(f"✅ Optimal path length: {best_length} steps")
         return [start_pos] + list(best_order)
     else:
-        return [start_pos] + target_positions
+        print(f"⚠️ No valid path found, using greedy fallback")
+        return solve_tsp_greedy(grid, start_pos, target_positions, width, height)
 
 def solve_tsp_greedy(grid, start_pos, target_positions, width, height):
     """แก้ปัญหา TSP ด้วย Greedy algorithm (ใช้เมื่อมีเป้าหมายมาก)"""
@@ -269,7 +275,7 @@ def solve_tsp_greedy(grid, start_pos, target_positions, width, height):
     path_sequence = [start_pos]
     current = start_pos
     
-    print(f"🔍 Using greedy algorithm for {len(target_positions)} targets...")
+    print(f"🔍 Greedy TSP for {len(target_positions)} targets...")
     
     while remaining:
         nearest = None
@@ -285,12 +291,15 @@ def solve_tsp_greedy(grid, start_pos, target_positions, width, height):
         
         if nearest is None:
             print(f"⚠️ Cannot reach some targets from {current}")
+            # เพิ่มเป้าหมายที่เหลือเข้าไปใน path (แม้จะหาเส้นทางไม่ได้)
+            path_sequence.extend(list(remaining))
             break
         
         path_sequence.append(nearest)
         remaining.remove(nearest)
         current = nearest
     
+    print(f"✅ Greedy path length: {len(path_sequence)-1} steps")
     return path_sequence
 
 # =============================================================================
@@ -859,85 +868,137 @@ def execute_shooting_mission(grid, width, height, target_sequence, movement_cont
     print(f"\n🎯 Starting shooting mission from {current_pos}")
     print(f"📍 Targets to shoot: {len(target_sequence) - 1}")
     
+    # Process targets by position (grouped targets)
+    current_position_index = 0
+    target_index = 0
+    
     for i in range(1, len(target_sequence)):
         target_info = target_sequence[i]
-        target_pos = target_info['shoot_from']
-        target_obj = target_info['object']
         
-        print(f"\n{'='*60}")
-        print(f"🎯 Target {i}/{len(target_sequence)-1}: {target_obj['color']} {target_obj['shape']}")
-        print(f"📍 Moving to position: {target_pos}")
-        print(f"{'='*60}")
-        
-        # Find path to shooting position
-        path = find_path_bfs(grid, CURRENT_POSITION, target_pos, width, height)
-        
-        if path is None or len(path) == 0:
-            print(f"❌ Cannot find path from {CURRENT_POSITION} to {target_pos}")
-            continue
-        
-        print(f"🗺️ Path: {path}")
-        
-        # Execute path
-        dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
-        
-        for j in range(len(path) - 1):
-            current_r, current_c = path[j]
-            next_r, next_c = path[j+1]
-            dr, dc = next_r - current_r, next_c - current_c
+        # Check if this is a new position (not a tuple means it's a target)
+        if isinstance(target_info, tuple):
+            # This is a position, move to it
+            target_pos = target_info
+            current_position_index += 1
             
-            target_direction = dir_vectors_map[(dr, dc)]
+            print(f"\n{'='*60}")
+            print(f"📍 Position {current_position_index}: Moving to {target_pos}")
+            print(f"{'='*60}")
             
-            # Rotate to correct direction
-            CURRENT_DIRECTION, CURRENT_TARGET_YAW = movement_controller.rotate_to_direction(
-                target_direction, CURRENT_DIRECTION, attitude_handler, CURRENT_TARGET_YAW
+            # Find path to shooting position
+            path = find_path_bfs(grid, CURRENT_POSITION, target_pos, width, height)
+            
+            if path is None or len(path) == 0:
+                print(f"❌ Cannot find path from {CURRENT_POSITION} to {target_pos}")
+                continue
+            
+            print(f"🗺️ Path: {path}")
+            
+            # Execute path
+            dir_vectors_map = {(-1, 0): 0, (0, 1): 1, (1, 0): 2, (0, -1): 3}
+            
+            for j in range(len(path) - 1):
+                current_r, current_c = path[j]
+                next_r, next_c = path[j+1]
+                dr, dc = next_r - current_r, next_c - current_c
+                
+                target_direction = dir_vectors_map[(dr, dc)]
+                
+                # Rotate to correct direction
+                CURRENT_DIRECTION, CURRENT_TARGET_YAW = movement_controller.rotate_to_direction(
+                    target_direction, CURRENT_DIRECTION, attitude_handler, CURRENT_TARGET_YAW
+                )
+                
+                # Update ROBOT_FACE
+                if CURRENT_DIRECTION == 0:  # North
+                    ROBOT_FACE = 1
+                elif CURRENT_DIRECTION == 1:  # East
+                    ROBOT_FACE = 2
+                elif CURRENT_DIRECTION == 2:  # South
+                    ROBOT_FACE = 3
+                else:  # West
+                    ROBOT_FACE = 4
+                
+                # Move forward
+                axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+                movement_controller.move_forward_one_grid(axis_to_monitor, attitude_handler, CURRENT_TARGET_YAW)
+                
+                CURRENT_POSITION = (next_r, next_c)
+                nodes_visited += 1
+                print(f"✅ Moved to {CURRENT_POSITION} (Node #{nodes_visited})")
+                
+                # Update IMU drift compensation (เหมือนโค้ดรอบที่ 1)
+                if nodes_visited >= IMU_COMPENSATION_START_NODE_COUNT:
+                    compensation_intervals = nodes_visited // IMU_COMPENSATION_NODE_INTERVAL
+                    new_compensation = compensation_intervals * IMU_COMPENSATION_DEG_PER_INTERVAL
+                    if new_compensation != IMU_DRIFT_COMPENSATION_DEG:
+                        IMU_DRIFT_COMPENSATION_DEG = new_compensation
+                        print(f"🔩 IMU Drift Compensation Updated: {IMU_DRIFT_COMPENSATION_DEG:.1f}° (after {nodes_visited} nodes)")
+            
+            print(f"🎯 Arrived at position {target_pos}")
+            
+        else:
+            # This is a target, shoot it
+            target_obj = target_info['object']
+            target_obj_pos = target_info.get('target_position', target_pos)
+            target_index += 1
+            
+            print(f"\n🎯 Target {target_index}: {target_obj['color']} {target_obj['shape']}")
+            print(f"📍 At position {CURRENT_POSITION} - Facing target at {target_obj_pos}...")
+            
+            # Calculate direction to face the target
+            dr = target_obj_pos[0] - CURRENT_POSITION[0]
+            dc = target_obj_pos[1] - CURRENT_POSITION[1]
+            
+            # Determine target direction
+            if dr == -1 and dc == 0:  # Target is North
+                target_direction = 0
+            elif dr == 0 and dc == 1:  # Target is East
+                target_direction = 1
+            elif dr == 1 and dc == 0:  # Target is South
+                target_direction = 2
+            elif dr == 0 and dc == -1:  # Target is West
+                target_direction = 3
+            else:
+                # Target is not adjacent, keep current direction
+                target_direction = CURRENT_DIRECTION
+                print(f"⚠️ Target at {target_obj_pos} is not adjacent to current position {CURRENT_POSITION}")
+            
+            # Rotate to face the target
+            if target_direction != CURRENT_DIRECTION:
+                print(f"🔄 Rotating to face target at {target_obj_pos}...")
+                CURRENT_DIRECTION, CURRENT_TARGET_YAW = movement_controller.rotate_to_direction(
+                    target_direction, CURRENT_DIRECTION, attitude_handler, CURRENT_TARGET_YAW
+                )
+                
+                # Update ROBOT_FACE
+                if CURRENT_DIRECTION == 0:  # North
+                    ROBOT_FACE = 1
+                elif CURRENT_DIRECTION == 1:  # East
+                    ROBOT_FACE = 2
+                elif CURRENT_DIRECTION == 2:  # South
+                    ROBOT_FACE = 3
+                else:  # West
+                    ROBOT_FACE = 4
+            
+            print(f"🎯 Facing target at {target_obj_pos} - Searching for target...")
+            
+            # Aim and shoot
+            success = aim_and_shoot_target(
+                manager, 
+                target_obj['shape'], 
+                target_obj['color'], 
+                roi_state,
+                max_lock_time=15.0
             )
             
-            # Update ROBOT_FACE
-            if CURRENT_DIRECTION == 0:  # North
-                ROBOT_FACE = 1
-            elif CURRENT_DIRECTION == 1:  # East
-                ROBOT_FACE = 2
-            elif CURRENT_DIRECTION == 2:  # South
-                ROBOT_FACE = 3
-            else:  # West
-                ROBOT_FACE = 4
+            if success:
+                print(f"✅ Successfully shot target {target_index}!")
+            else:
+                print(f"❌ Failed to shoot target {target_index}")
             
-            # Move forward
-            axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
-            movement_controller.move_forward_one_grid(axis_to_monitor, attitude_handler, CURRENT_TARGET_YAW)
-            
-            CURRENT_POSITION = (next_r, next_c)
-            nodes_visited += 1
-            print(f"✅ Moved to {CURRENT_POSITION} (Node #{nodes_visited})")
-            
-            # Update IMU drift compensation (เหมือนโค้ดรอบที่ 1)
-            if nodes_visited >= IMU_COMPENSATION_START_NODE_COUNT:
-                compensation_intervals = nodes_visited // IMU_COMPENSATION_NODE_INTERVAL
-                new_compensation = compensation_intervals * IMU_COMPENSATION_DEG_PER_INTERVAL
-                if new_compensation != IMU_DRIFT_COMPENSATION_DEG:
-                    IMU_DRIFT_COMPENSATION_DEG = new_compensation
-                    print(f"🔩 IMU Drift Compensation Updated: {IMU_DRIFT_COMPENSATION_DEG:.1f}° (after {nodes_visited} nodes)")
-        
-        # Now at target position - aim and shoot
-        print(f"🎯 At position {target_pos} - Searching for target...")
-        
-        # Aim and shoot
-        success = aim_and_shoot_target(
-            manager, 
-            target_obj['shape'], 
-            target_obj['color'], 
-            roi_state,
-            max_lock_time=15.0
-        )
-        
-        if success:
-            print(f"✅ Successfully shot target {i}!")
-        else:
-            print(f"❌ Failed to shoot target {i}")
-        
-        # Wait before next target
-        time.sleep(1.0)
+            # Wait before next target
+            time.sleep(1.0)
     
     print(f"\n{'='*60}")
     print("🎉 MISSION COMPLETE!")
@@ -993,10 +1054,19 @@ if __name__ == '__main__':
     matching_targets = []
     for obj in detected_objects:
         if obj.get('shape') == target_shape and obj.get('color') == target_color:
-            pos = obj.get('cell_position', {})
-            if 'row' in pos and 'col' in pos:
-                obj['row'] = pos['row']
-                obj['col'] = pos['col']
+            # ใช้ detected_from_node (ตำแหน่งที่หุ่นเจอวัตถุ) แทน cell_position
+            detected_from = obj.get('detected_from_node', [])
+            if len(detected_from) == 2:
+                obj['row'] = detected_from[0]
+                obj['col'] = detected_from[1]
+                # เก็บตำแหน่งวัตถุจริงไว้สำหรับการหันหน้า
+                pos = obj.get('cell_position', {})
+                if 'row' in pos and 'col' in pos:
+                    obj['target_row'] = pos['row']
+                    obj['target_col'] = pos['col']
+                else:
+                    obj['target_row'] = detected_from[0]
+                    obj['target_col'] = detected_from[1]
                 matching_targets.append(obj)
     
     if len(matching_targets) == 0:
@@ -1007,43 +1077,62 @@ if __name__ == '__main__':
     print(f"\n✅ Found {len(matching_targets)} matching target(s):")
     for i, obj in enumerate(matching_targets):
         zone = obj.get('zone', 'unknown')
-        print(f"  {i+1}. Position: ({obj['row']}, {obj['col']}), Zone: {zone}")
+        target_pos = (obj.get('target_row', obj['row']), obj.get('target_col', obj['col']))
+        print(f"  {i+1}. Shoot from: ({obj['row']}, {obj['col']}), Target at: {target_pos}, Zone: {zone}")
     
-    # Calculate shooting positions (go directly to recorded position)
+    # Calculate shooting positions (go to detected_from_node position)
     target_positions = []
     
     for obj in matching_targets:
-        obj_pos = (obj['row'], obj['col'])
+        shoot_pos = (obj['row'], obj['col'])  # ตำแหน่งที่หุ่นเจอวัตถุ
+        target_pos = (obj.get('target_row', obj['row']), obj.get('target_col', obj['col']))  # ตำแหน่งวัตถุจริง
         
-        # Check if the position is accessible
-        if obj_pos in grid and not grid[obj_pos]['is_occupied']:
+        # Check if the shooting position is accessible
+        if shoot_pos in grid and not grid[shoot_pos]['is_occupied']:
             target_positions.append({
                 'object': obj,
-                'shoot_from': obj_pos
+                'shoot_from': shoot_pos,
+                'target_position': target_pos  # เก็บตำแหน่งวัตถุจริงไว้สำหรับการหันหน้า
             })
-            print(f"  → Will shoot from {obj_pos}")
+            print(f"  → Will shoot from {shoot_pos} (facing {target_pos})")
         else:
-            print(f"  ⚠️ Cannot access position {obj_pos} (occupied)")
+            print(f"  ⚠️ Cannot access position {shoot_pos} (occupied)")
     
     if len(target_positions) == 0:
         print("\n❌ Cannot find valid shooting positions!")
         exit(1)
     
-    # Solve TSP to find optimal order
-    print(f"\n🗺️ Planning optimal route for {len(target_positions)} target(s)...")
+    # Group targets by shooting position (to avoid visiting same node multiple times)
+    print(f"\n📦 Grouping targets by shooting position...")
+    grouped_targets = {}
+    for target in target_positions:
+        pos = target['shoot_from']
+        if pos not in grouped_targets:
+            grouped_targets[pos] = []
+        grouped_targets[pos].append(target)
+    
+    # Show grouped targets
+    for pos, targets in grouped_targets.items():
+        print(f"  📍 Position {pos}: {len(targets)} target(s)")
+        for i, target in enumerate(targets):
+            obj = target['object']
+            print(f"    {i+1}. {obj['color']} {obj['shape']}")
+    
+    # Solve TSP to find optimal order (using unique positions only)
+    print(f"\n🗺️ Planning optimal route for {len(grouped_targets)} position(s)...")
     
     start_pos = CURRENT_POSITION
-    shoot_positions = [t['shoot_from'] for t in target_positions]
+    unique_positions = list(grouped_targets.keys())
     
-    optimal_sequence = solve_tsp_optimal(grid, start_pos, shoot_positions, width, height)
+    optimal_sequence = solve_tsp_optimal(grid, start_pos, unique_positions, width, height)
     
-    # Create ordered target sequence
+    # Create ordered target sequence with grouped targets
     ordered_targets = [start_pos]
     for pos in optimal_sequence[1:]:
-        for t in target_positions:
-            if t['shoot_from'] == pos:
-                ordered_targets.append(t)
-                break
+        if pos in grouped_targets:
+            # Add all targets at this position
+            for target in grouped_targets[pos]:
+                ordered_targets.append(target)
     
     print(f"✅ Optimal route calculated!")
     print(f"📍 Route: {[t if isinstance(t, tuple) else t['shoot_from'] for t in ordered_targets]}")
