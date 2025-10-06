@@ -320,7 +320,7 @@ object_lock = threading.Lock()
 def sub_angle_cb(angle_info):
     global gimbal_angles
     with gimbal_angle_lock:
-        gimbal_angles = tuple(angle_info)
+        gimbal_angles = angle_info
     # Debug: Print gimbal angles when in tracking mode
     if is_tracking_mode:
         print(f"🎯 Gimbal angles: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}°")
@@ -614,7 +614,7 @@ class RMConnection:
             rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
             # subscribe angles
             try:
-                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
+                rb.gimbal.sub_angle(freq=20, callback=sub_angle_cb)
             except Exception as e:
                 print("Gimbal sub_angle error:", e)
             self._robot = rb
