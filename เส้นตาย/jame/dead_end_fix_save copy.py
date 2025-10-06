@@ -20,6 +20,11 @@ import queue
 # =============================================================================
 SPEED_ROTATE = 480
 
+# --- JSON File Paths ---
+MAPPING_JSON_PATH = "Robot_Module/Assignment/dude/James_path/Mapping_Top.json"
+POSITION_JSON_PATH = "Robot_Module/Assignment/dude/James_path/Robot_Position_Timestamps.json"
+DETECTED_OBJECTS_JSON_PATH = "Robot_Module/Assignment/dude/James_path/Detected_Objects.json"
+
 # --- PID Target Tracking & Firing Configuration ---
 TARGET_SHAPE = "Circle"  # Shape to track
 TARGET_COLOR = "Red"     # Color to track
@@ -2169,6 +2174,229 @@ class EnvironmentScanner:
     def cleanup(self):
         try: self.tof_sensor.unsub_distance()
         except Exception: pass
+
+# =============================================================================
+# ===== JSON TARGET HUNTING LOGIC =============================================
+# =============================================================================
+
+def load_json_data():
+    """Load mapping, position, and detected objects data from JSON files"""
+    try:
+        # Load mapping data
+        with open(MAPPING_JSON_PATH, 'r') as f:
+            mapping_data = json.load(f)
+        
+        # Load position data
+        with open(POSITION_JSON_PATH, 'r') as f:
+            position_data = json.load(f)
+        
+        # Load detected objects data
+        with open(DETECTED_OBJECTS_JSON_PATH, 'r') as f:
+            detected_objects_data = json.load(f)
+        
+        print("✅ Successfully loaded JSON data:")
+        print(f"   - Mapping: {len(mapping_data['nodes'])} nodes")
+        print(f"   - Position log: {len(position_data['position_log'])} entries")
+        print(f"   - Detected objects: {len(detected_objects_data['detected_objects'])} objects")
+        
+        return mapping_data, position_data, detected_objects_data
+        
+    except Exception as e:
+        print(f"❌ Error loading JSON data: {e}")
+        return None, None, None
+
+def create_occupancy_map_from_json(mapping_data):
+    """Create occupancy map from JSON mapping data"""
+    if not mapping_data:
+        return None
+    
+    # Get grid size from mapping data
+    nodes = mapping_data['nodes']
+    max_row = max(node['coordinate']['row'] for node in nodes)
+    max_col = max(node['coordinate']['col'] for node in nodes)
+    grid_size = max(max_row, max_col) + 1
+    
+    print(f"📊 Creating occupancy map from JSON: {grid_size}x{grid_size}")
+    
+    # Create occupancy map
+    occupancy_map = OccupancyGridMap(grid_size, grid_size)
+    
+    # Populate the map with wall data from JSON
+    for node in nodes:
+        row = node['coordinate']['row']
+        col = node['coordinate']['col']
+        
+        # Update walls based on JSON data
+        walls = node['walls']
+        if walls['north']:
+            occupancy_map.update_wall(row, col, 'N', True, 'json')
+        if walls['south']:
+            occupancy_map.update_wall(row, col, 'S', True, 'json')
+        if walls['east']:
+            occupancy_map.update_wall(row, col, 'E', True, 'json')
+        if walls['west']:
+            occupancy_map.update_wall(row, col, 'W', True, 'json')
+        
+        # Mark node as visited if probability is low (indicating it was explored)
+        if node['probability'] < 0.1:
+            occupancy_map.update_node(row, col, False, 'json')
+    
+    return occupancy_map
+
+def get_target_locations_from_json(detected_objects_data):
+    """Extract target locations and detected_from_node positions from JSON"""
+    if not detected_objects_data:
+        return []
+    
+    targets = []
+    for obj in detected_objects_data['detected_objects']:
+        if obj.get('is_target', False):
+            target_info = {
+                'position': (obj['cell_position']['row'], obj['cell_position']['col']),
+                'detected_from_node': tuple(obj['detected_from_node']),
+                'color': obj['color'],
+                'shape': obj['shape'],
+                'zone': obj['zone']
+            }
+            targets.append(target_info)
+            print(f"🎯 Found target: {target_info['color']} {target_info['shape']} at {target_info['position']}, detected from {target_info['detected_from_node']}")
+    
+    return targets
+
+def calculate_target_hunting_paths(occupancy_map, targets):
+    """Calculate paths to each target's detected_from_node position"""
+    if not targets:
+        print("❌ No targets found in JSON data")
+        return []
+    
+    hunting_paths = []
+    global CURRENT_POSITION
+    
+    for i, target in enumerate(targets):
+        target_pos = target['detected_from_node']
+        print(f"🎯 Calculating path to target {i+1} detection position: {target_pos}")
+        
+        # Find path to detected_from_node position
+        path = find_path_bfs(occupancy_map, CURRENT_POSITION, target_pos)
+        
+        if path:
+            hunting_paths.append({
+                'target_info': target,
+                'path': path,
+                'target_index': i + 1
+            })
+            print(f"✅ Path to target {i+1}: {len(path)} steps")
+        else:
+            print(f"❌ No path found to target {i+1} detection position")
+    
+    return hunting_paths
+
+def execute_target_hunting_path(path_info, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, manager):
+    """Execute path to target detection position and perform shooting"""
+    global CURRENT_POSITION, CURRENT_DIRECTION, is_tracking_mode, shots_fired
+    
+    target_info = path_info['target_info']
+    path = path_info['path']
+    target_index = path_info['target_index']
+    
+    print(f"🎯 Executing hunting path for target {target_index}: {target_info['color']} {target_info['shape']}")
+    print(f"📍 Path: {path}")
+    
+    # Execute the path (excluding the last position which is the detection point)
+    if len(path) > 1:
+        print(f"🚶 Moving to detection position for target {target_index}...")
+        execute_path(path[:-1], movement_controller, attitude_handler, scanner, visualizer, occupancy_map, f"Target_{target_index}_Hunting")
+    
+    # Now we're at the detection position, start object detection
+    print(f"🔍 Starting object detection for target {target_index}...")
+    
+    # Reset firing state for this target
+    shots_fired = 0
+    
+    try:
+        # Start detection mode
+        start_detection_mode()
+        time.sleep(1.0)  # Give detection time to initialize
+        
+        # Perform detection and shooting
+        detection_start_time = time.time()
+        detection_timeout = 30  # 30 seconds timeout
+        
+        while is_tracking_mode and (time.time() - detection_start_time) < detection_timeout:
+            if check_for_targets():
+                print(f"🎯 Target {target_index} detected! Starting PID tracking and firing...")
+                
+                # PID tracking and firing loop
+                tracking_start_time = time.time()
+                while is_tracking_mode and (time.time() - tracking_start_time) < 20:  # 20 second tracking timeout
+                    if pid_tracking_and_firing(manager, roi_state):
+                        time.sleep(0.01)  # Small delay for PID loop
+                    else:
+                        break
+                
+                print(f"🎯 Target {target_index} shooting completed, moving to next target...")
+                break
+            else:
+                time.sleep(0.1)  # Wait for target detection
+        
+        # Stop detection mode
+        stop_detection_mode()
+        
+    except Exception as e:
+        print(f"❌ Error during target {target_index} hunting: {e}")
+        stop_detection_mode()
+    
+    print(f"✅ Target {target_index} hunting completed")
+
+def target_hunting_mode(movement_controller, attitude_handler, scanner, visualizer, occupancy_map, manager):
+    """Main target hunting mode - replaces exploration mode"""
+    global CURRENT_POSITION, CURRENT_DIRECTION
+    
+    print("🎯 Starting Target Hunting Mode...")
+    
+    # Load JSON data
+    mapping_data, position_data, detected_objects_data = load_json_data()
+    if not mapping_data:
+        print("❌ Failed to load JSON data, falling back to exploration mode")
+        return False
+    
+    # Create occupancy map from JSON
+    occupancy_map = create_occupancy_map_from_json(mapping_data)
+    if not occupancy_map:
+        print("❌ Failed to create occupancy map from JSON data")
+        return False
+    
+    # Get target locations
+    targets = get_target_locations_from_json(detected_objects_data)
+    if not targets:
+        print("❌ No targets found in JSON data")
+        return False
+    
+    # Calculate hunting paths
+    hunting_paths = calculate_target_hunting_paths(occupancy_map, targets)
+    if not hunting_paths:
+        print("❌ No valid paths found to any targets")
+        return False
+    
+    print(f"🎯 Found {len(hunting_paths)} targets to hunt")
+    
+    # Execute hunting for each target
+    for i, path_info in enumerate(hunting_paths):
+        print(f"\n🎯 === HUNTING TARGET {i+1}/{len(hunting_paths)} ===")
+        try:
+            execute_target_hunting_path(path_info, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, manager)
+            
+            # Small delay between targets
+            if i < len(hunting_paths) - 1:
+                print("⏳ Waiting before next target...")
+                time.sleep(2.0)
+                
+        except Exception as e:
+            print(f"❌ Error hunting target {i+1}: {e}")
+            continue
+    
+    print("🎯 All targets hunted successfully!")
+    return True
 
 # =============================================================================
 # ===== PATHFINDING & EXPLORATION LOGIC =======================================

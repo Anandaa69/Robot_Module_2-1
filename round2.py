@@ -531,65 +531,6 @@ def create_occupancy_map_from_json():
         print(f"❌ Error loading occupancy map: {e}")
         return None
 
-def load_target_data_from_json():
-    """
-    โหลดข้อมูล target จาก Detected_Objects.json
-    """
-    try:
-        targets_file = os.path.join(DATA_FOLDER, "Detected_Objects.json")
-        with open(targets_file, "r", encoding="utf-8") as f:
-            targets_data = json.load(f)
-        
-        targets = []
-        for obj in targets_data.get("detected_objects", []):
-            if obj.get("is_target", False):
-                target_info = {
-                    "color": obj.get("color"),
-                    "shape": obj.get("shape"),
-                    "zone": obj.get("zone"),
-                    "detected_from_node": tuple(obj.get("detected_from_node", [])),
-                    "cell_position": tuple(obj.get("cell_position", {}).values()) if obj.get("cell_position") else None,
-                    "timestamp": obj.get("timestamp")
-                }
-                targets.append(target_info)
-        
-        print(f"✅ Loaded {len(targets)} targets from JSON")
-        for i, target in enumerate(targets):
-            print(f"   Target {i+1}: {target['color']} {target['shape']} at {target['detected_from_node']}")
-        
-        return targets
-        
-    except Exception as e:
-        print(f"❌ Error loading target data: {e}")
-        return []
-
-def load_robot_position_from_json():
-    """
-    โหลดตำแหน่งเริ่มต้นของ robot จาก Robot_Position_Timestamps.json
-    """
-    try:
-        position_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
-        with open(position_file, "r", encoding="utf-8") as f:
-            position_data = json.load(f)
-        
-        if position_data.get("position_log"):
-            last_log = position_data["position_log"][-1]
-            start_position = tuple(last_log["position"])
-            start_direction = last_log["direction"]
-            
-            # แปลง direction string เป็น number
-            direction_map = {"North": 0, "East": 1, "South": 2, "West": 3}
-            start_direction_num = direction_map.get(start_direction, 1)
-            
-            print(f"✅ Robot start position: {start_position}, direction: {start_direction}")
-            return start_position, start_direction_num
-        
-        return None, None
-        
-    except Exception as e:
-        print(f"❌ Error loading robot position: {e}")
-        return None, None
-
 # =============================================================================
 # ===== OBJECT DETECTION FUNCTIONS ==========================================
 # =============================================================================
@@ -1038,167 +979,6 @@ def check_detection_timer():
     return False
 
 # Removed duplicate sub_angle_cb function
-
-def find_target_shooting_position(target_node, occupancy_map):
-    """
-    หาตำแหน่งที่เหมาะสมสำหรับยิง target โดยอยู่โหนดก่อนหน้าที่เจอ target
-    """
-    target_row, target_col = target_node
-    
-    # หาโหนดที่อยู่ติดกับ target ที่สามารถยิงได้
-    shooting_positions = []
-    
-    # ตรวจสอบทิศทางต่างๆ รอบ target
-    directions = [
-        (target_row - 1, target_col, 'south'),  # เหนือ target
-        (target_row + 1, target_col, 'north'),  # ใต้ target
-        (target_row, target_col - 1, 'east'),   # ตะวันตก target
-        (target_row, target_col + 1, 'west')    # ตะวันออก target
-    ]
-    
-    for row, col, direction in directions:
-        if (0 <= row < occupancy_map.height and 
-            0 <= col < occupancy_map.width and
-            not occupancy_map.is_occupied(row, col)):
-            
-            # ตรวจสอบว่าไม่มี wall ขวางระหว่าง shooting position กับ target
-            if not has_wall_between(occupancy_map, (row, col), target_node, direction):
-                shooting_positions.append((row, col))
-    
-    if shooting_positions:
-        # เลือกตำแหน่งที่ใกล้ที่สุดกับตำแหน่งปัจจุบัน
-        return shooting_positions[0]  # สามารถปรับปรุงให้เลือกตำแหน่งที่ดีที่สุดได้
-    
-    return None
-
-def has_wall_between(occupancy_map, pos1, pos2, direction):
-    """
-    ตรวจสอบว่ามี wall ขวางระหว่างสองตำแหน่งหรือไม่
-    """
-    row1, col1 = pos1
-    row2, col2 = pos2
-    
-    # ตรวจสอบ wall ในทิศทางที่เกี่ยวข้อง
-    if direction == 'south' and row1 < row2:
-        return occupancy_map.grid[row1][col1].walls['S'].is_wall()
-    elif direction == 'north' and row1 > row2:
-        return occupancy_map.grid[row1][col1].walls['N'].is_wall()
-    elif direction == 'east' and col1 < col2:
-        return occupancy_map.grid[row1][col1].walls['E'].is_wall()
-    elif direction == 'west' and col1 > col2:
-        return occupancy_map.grid[row1][col1].walls['W'].is_wall()
-    
-    return False
-
-def execute_target_shooting_mission(occupancy_map, targets, movement_controller, attitude_handler, scanner, visualizer, manager, roi_state):
-    """
-    ดำเนินการยิง target ตามลำดับ
-    """
-    global CURRENT_POSITION, CURRENT_DIRECTION, fired_targets
-    
-    print(f"\n🎯 === STARTING TARGET SHOOTING MISSION ===")
-    print(f"📍 Current position: {CURRENT_POSITION}")
-    print(f"🎯 Targets to shoot: {len(targets)}")
-    
-    for i, target in enumerate(targets):
-        print(f"\n🎯 === TARGET {i+1}/{len(targets)}: {target['color']} {target['shape']} ===")
-        
-        target_node = target['detected_from_node']
-        print(f"📍 Target detected from node: {target_node}")
-        
-        # หาตำแหน่งสำหรับยิง target
-        shooting_position = find_target_shooting_position(target_node, occupancy_map)
-        
-        if shooting_position is None:
-            print(f"❌ Cannot find suitable shooting position for target at {target_node}")
-            continue
-        
-        print(f"📍 Shooting position: {shooting_position}")
-        
-        # นำทางไปยังตำแหน่งยิง
-        print(f"🚶 Navigating to shooting position...")
-        path_to_shooting = find_path_bfs(occupancy_map, CURRENT_POSITION, shooting_position)
-        
-        if not path_to_shooting:
-            print(f"❌ No path found to shooting position {shooting_position}")
-            continue
-        
-        print(f"🛤️ Path to shooting position: {path_to_shooting}")
-        
-        # เดินไปยังตำแหน่งยิง
-        success = execute_path(path_to_shooting, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, f"Target_{i+1}_Shooting")
-        
-        if not success:
-            print(f"❌ Failed to reach shooting position for target {i+1}")
-            continue
-        
-        # เปิดการตรวจจับ target
-        print(f"🔍 Starting target detection...")
-        global is_detecting_flag
-        is_detecting_flag["v"] = True
-        
-        # รอให้ระบบตรวจจับ target
-        time.sleep(2)
-        
-        # ตรวจสอบและยิง target
-        if check_for_targets():
-            print(f"🎯 Target detected! Starting PID tracking and firing...")
-            
-            # รอให้ยิงเสร็จ
-            firing_timeout = 30  # 30 วินาที
-            start_time = time.time()
-            
-            while is_tracking_mode and (time.time() - start_time) < firing_timeout:
-                pid_tracking_and_firing(manager, roi_state)
-                time.sleep(0.1)
-            
-            if not is_tracking_mode:
-                print(f"✅ Target {i+1} shooting completed!")
-                fired_targets.add(f"target_{i+1}")
-            else:
-                print(f"⏰ Target {i+1} shooting timeout!")
-        else:
-            print(f"❌ No target detected at shooting position")
-        
-        # ปิดการตรวจจับชั่วคราว
-        is_detecting_flag["v"] = False
-        
-        print(f"✅ Target {i+1} mission completed")
-    
-    print(f"\n🎉 === TARGET SHOOTING MISSION COMPLETED ===")
-    print(f"🎯 Total targets processed: {len(targets)}")
-    print(f"🎯 Targets successfully fired: {len(fired_targets)}")
-
-def check_wall_discrepancy(occupancy_map, scanner, attitude_handler):
-    """
-    ตรวจสอบว่า wall ที่พบจริงต่างจากข้อมูลใน JSON หรือไม่
-    """
-    current_row, current_col = CURRENT_POSITION
-    
-    # ตรวจสอบ wall ในทิศทางต่างๆ
-    walls_detected = {
-        'north': False,
-        'south': False, 
-        'east': False,
-        'west': False
-    }
-    
-    # ใช้ sensor ตรวจสอบ wall (สามารถปรับปรุงให้ใช้ sensor จริงได้)
-    # สำหรับตอนนี้จะใช้ข้อมูลจาก occupancy_map
-    
-    cell = occupancy_map.grid[current_row][current_col]
-    
-    # ตรวจสอบ wall probabilities
-    if cell.walls['N'].log_odds > 2:  # probability > 0.88
-        walls_detected['north'] = True
-    if cell.walls['S'].log_odds > 2:
-        walls_detected['south'] = True
-    if cell.walls['E'].log_odds > 2:
-        walls_detected['east'] = True
-    if cell.walls['W'].log_odds > 2:
-        walls_detected['west'] = True
-    
-    return walls_detected
 
 def check_for_targets():
     """Check if any targets are detected and start tracking if found"""
@@ -3137,42 +2917,237 @@ if __name__ == '__main__':
         movement_controller = MovementController(ep_chassis)
         attitude_handler.start_monitoring(ep_chassis)
         
-        # === NEW: TARGET SHOOTING MISSION MODE ===
-        print("\n🎯 === TARGET SHOOTING MISSION MODE ===")
+        if RESUME_MODE:
+            print("🔄 Resuming exploration from previous position...")
+            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "resume_session")
+        else:
+            print("🆕 Starting new exploration...")
+            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "new_session_start")
         
-        # โหลดข้อมูลจาก JSON files
-        print("📁 Loading data from JSON files...")
+        # --- INTEGRATED EXPLORATION WITH OBJECT DETECTION ---
+        print("🚀 Starting Integrated Exploration with Object Detection...")
         
-        # โหลด occupancy map จาก JSON
-        if occupancy_map is None:
-            occupancy_map = create_occupancy_map_from_json()
-            if occupancy_map is None:
-                print("❌ Failed to load occupancy map from JSON. Exiting.")
-                exit()
+        visited_cells = set()
+        backtrack_attempts = {}  # นับจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
         
-        # โหลดข้อมูล target
-        targets = load_target_data_from_json()
-        if not targets:
-            print("❌ No targets found in JSON file. Exiting.")
-            exit()
+        for step in range(40):  # max_steps
+            try:
+                r, c = CURRENT_POSITION
+                print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
+                
+                log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
+                
+                print("   -> Resetting Yaw to ensure perfect alignment before new step...")
+                attitude_handler.correct_yaw_to_target(ep_chassis, get_compensated_target_yaw())
+                
+                # Perform side alignment and mapping
+                perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+                
+                # --- AUTOMATIC OBJECT DETECTION AFTER ALIGNMENT ---
+                # ตรวจสอบว่าข้างหน้าเป็นกำแพงหรือไม่ก่อนทำ object detection
+                print("--- Performing Scan for Mapping (Front ToF Only) ---")
+                is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
+                occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+                
+                # ถ้ากล้องไม่พร้อม ให้หยุดหุ่น ณ จุดนี้และรอให้กล้องกลับมาก่อนจึงเดินต่อ
+                if not camera_is_healthy():
+                    print("🛑 Camera unhealthy → pausing exploration and locking chassis until camera recovers...")
+                    try:
+                        movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+                    except Exception:
+                        pass
+                    # wait loop with backoff
+                    wait_start = time.time()
+                    while not camera_is_healthy():
+                        if time.time() - wait_start > 30.0:
+                            print("⚠️ Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
+                            manager.drop_and_reconnect()
+                            wait_start = time.time()
+                        time.sleep(0.2)
+                    print("✅ Camera recovered. Resuming exploration...")
+                
+                if is_front_occupied:
+                    print("🚫 Front wall detected - Skipping object detection until robot turns to new direction")
+                    print("🔍 Object detection will be performed after robot turns to clear path")
+                else:
+                    print("🔍 Object detection will be performed after robot turns to clear path")
+                
+                # Check detection timer
+                check_detection_timer()
+                
+                occupancy_map.update_node(r, c, False, 'tof')
+                visited_cells.add((r, c))
+                
+                # อัพเดทแมพทุก 3 steps เพื่อลดการใช้ thread
+                if step % 3 == 0:
+                    visualizer.update_plot(occupancy_map, CURRENT_POSITION)
+                
+                # Update IMU Drift Compensation
+                nodes_visited = len(visited_cells)
+                if nodes_visited >= IMU_COMPENSATION_START_NODE_COUNT:
+                    compensation_intervals = nodes_visited // IMU_COMPENSATION_NODE_INTERVAL
+                    new_compensation = compensation_intervals * IMU_COMPENSATION_DEG_PER_INTERVAL
+                    if new_compensation != IMU_DRIFT_COMPENSATION_DEG:
+                        IMU_DRIFT_COMPENSATION_DEG = new_compensation
+                        print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
+                
+                # Continue with normal exploration logic
+                priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
+                moved = False
+                dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+                
+                for target_dir in priority_dirs:
+                    target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
+                    
+                    if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
+                        print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
+                        movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
+                        
+                        print("    Ensuring gimbal is centered before ToF confirmation...")
+                        t_start = time.time()
+                        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
+                        t_gimbal = time.time() - t_start
+                        if t_gimbal > 2.0:
+                            print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
+                        time.sleep(0.2)  # ลดเวลารอ
+                        
+                        print("    Confirming path forward with ToF...")
+                        t_start = time.time()
+                        is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
+                        t_tof = time.time() - t_start
+                        if t_tof > 1.0:
+                            print(f"    ⚠️ ToF read took {t_tof:.2f}s (unusually long!)")
+                        
+                        occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+                        print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
+                        visualizer.update_plot(occupancy_map, CURRENT_POSITION)
+                        
+                        # <<< NEW: Double-check with ToF after rotation >>>
+                        if is_blocked:
+                            print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
+                            movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler, scanner)
+                            print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
+                            continue  # Skip this direction and try next one
+                        # <<< END OF NEW CODE >>>
+                        
+                        if occupancy_map.is_path_clear(r, c, target_r, target_c):
+                            # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
+                            print("🔍 Performing object detection after turning to new direction...")
+                            try:
+                                start_detection_mode()
+                                time.sleep(1.0)
+                                save_detected_objects_to_map(occupancy_map)
+                                
+                                # Check for targets and start PID tracking if found
+                                if check_for_targets():
+                                    print("🎯 Target detected! Starting PID tracking and firing...")
+                                    # Use existing ROI state (don't create new one)
+                                    
+                                    # PID tracking loop (detection mode stays active)
+                                    tracking_start_time = time.time()
+                                    while is_tracking_mode and (time.time() - tracking_start_time) < 30:  # 30 second timeout
+                                        if pid_tracking_and_firing(manager, roi_state):
+                                            time.sleep(0.01)  # Small delay for PID loop
+                                        else:
+                                            break
+                                    
+                                    print("🎯 PID tracking completed, resuming normal exploration...")
+                                else:
+                                    # No targets found, stop detection mode normally
+                                    stop_detection_mode()
+                                    print("🔍 Object detection completed after turn")
+                            except Exception as e:
+                                print(f"⚠️ Object detection error: {e}")
+                                stop_detection_mode()
+                                print("🔍 Object detection failed, continuing without detection...")
+                            
+                            axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
+                            t_start = time.time()
+                            movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
+                            t_move = time.time() - t_start
+                            if t_move > 15.0:
+                                print(f"    ⚠️ Movement took {t_move:.2f}s (unusually long!)")
+                            
+                            movement_controller.center_in_node_with_tof(scanner, attitude_handler)
+                            
+                            CURRENT_POSITION = (target_r, target_c)
+                            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                            
+                            moved = True
+                            break
+                        else:
+                            print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
+                
+                if not moved:
+                    print("No immediate unvisited path. Initiating backtrack...")
+                    
+                    # ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่
+                    print(f"🔍 Analyzing if current position {CURRENT_POSITION} is a dead end...")
+                    if is_dead_end(occupancy_map, CURRENT_POSITION, visited_cells):
+                        print(f"🚫 Dead end confirmed at {CURRENT_POSITION}. Marking as fully explored.")
+                        mark_cell_as_dead_end(occupancy_map, CURRENT_POSITION)
+                    else:
+                        print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
+                    
+                    print("🔍 Searching for accessible unvisited nodes...")
+                    backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                    
+                    if backtrack_path and len(backtrack_path) > 1:
+                        target_node = backtrack_path[-1]
+                        print(f"🎯 Found backtrack target: {target_node}")
+                        
+                        # ตรวจสอบจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
+                        if target_node in backtrack_attempts:
+                            backtrack_attempts[target_node] += 1
+                            print(f"🔄 Attempt #{backtrack_attempts[target_node]} to reach {target_node}")
+                            if backtrack_attempts[target_node] >= 3:  # ถ้าพยายามมากกว่า 3 ครั้ง
+                                print(f"🔄 Too many attempts to reach {target_node}. Marking as dead end.")
+                                mark_cell_as_dead_end(occupancy_map, target_node)
+                                # ลบโหนดนี้ออกจาก backtrack path และลองหาใหม่
+                                print("🔍 Searching for alternative path...")
+                                backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                                if not backtrack_path or len(backtrack_path) <= 1:
+                                    print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                                    break
+                        else:
+                            backtrack_attempts[target_node] = 1
+                            print(f"🆕 First attempt to reach {target_node}")
+                        
+                        execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                        print("Backtrack to new area complete. Resuming exploration.")
+                        continue
+                    else:
+                        print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                        break
+            
+            except Exception as e:
+                print(f"\n❌ Error during step {step+1}: {e}")
+                print("🛑 Stopping robot and waiting for camera recovery...")
+                try:
+                    movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+                except Exception:
+                    pass
+                wait_for_camera_recovery(pause_label=f"Step {step+1} Recovery")
+                print("✅ Recovery complete. Resuming from current position...")
+                continue
         
-        # โหลดตำแหน่งเริ่มต้นของ robot
-        start_pos, start_dir = load_robot_position_from_json()
-        if start_pos is not None and start_dir is not None:
-            CURRENT_POSITION = start_pos
-            CURRENT_DIRECTION = start_dir
-            print(f"📍 Robot positioned at: {CURRENT_POSITION}, facing: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]}")
         
-        # เริ่มการยิง target
-        print(f"\n🎯 Starting target shooting mission with {len(targets)} targets...")
+        print("\n🎉 === INTEGRATED EXPLORATION PHASE FINISHED ===")
         
-        # ดำเนินการยิง target
-        execute_target_shooting_mission(
-            occupancy_map, targets, movement_controller, 
-            attitude_handler, scanner, visualizer, manager, roi_state
-        )
+        print(f"\n\n--- NAVIGATION TO TARGET PHASE: From {CURRENT_POSITION} to {TARGET_DESTINATION} ---")
         
-        print("\n🎉 === TARGET SHOOTING MISSION COMPLETED ===")
+        if CURRENT_POSITION == TARGET_DESTINATION:
+            print("🎉 Robot is already at the target destination!")
+        else:
+            path_to_target = find_path_bfs(occupancy_map, CURRENT_POSITION, TARGET_DESTINATION)
+            if path_to_target and len(path_to_target) > 1:
+                print(f"✅ Path found to target: {path_to_target}")
+                execute_path(path_to_target, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Final Navigation")
+                print(f"🎉🎉 Robot has arrived at the target destination: {TARGET_DESTINATION}!")
+            else:
+                print(f"⚠️ Could not find a path from {CURRENT_POSITION} to {TARGET_DESTINATION}.")
         
     except KeyboardInterrupt: 
         print("\n⚠️ User interrupted exploration.")
