@@ -1,23 +1,98 @@
 {
   "session_info": {
-    "total_objects_detected": 1,
-    "detection_timestamp": 1759762583.0504048,
-    "grid_size": "4x4"
+    "total_objects_detected": 6,
+    "detection_timestamp": 1759772054.2542245,
+    "grid_size": "5x5"
   },
   "detected_objects": [
     {
       "color": "Red",
       "shape": "Circle",
-      "zone": "Center",
+      "zone": "Left",
       "is_target": true,
-      "timestamp": 1759762574.7405076,
+      "timestamp": 1759771902.7473638,
       "detected_from_node": [
-        3,
-        0
+        2,
+        1
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 2
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Circle",
+      "zone": "Left",
+      "is_target": true,
+      "timestamp": 1759771866.5120208,
+      "detected_from_node": [
+        4,
+        1
       ],
       "cell_position": {
         "row": 3,
         "col": 1
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759771970.4084666,
+      "detected_from_node": [
+        4,
+        3
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 3
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759771850.279397,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 1
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759771933.399889,
+      "detected_from_node": [
+        3,
+        2
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 2
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759771953.6966734,
+      "detected_from_node": [
+        4,
+        2
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 3
       }
     }
   ]
