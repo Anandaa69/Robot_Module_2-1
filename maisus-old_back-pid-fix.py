@@ -76,10 +76,10 @@ TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.5
 TOF_FRONT_CM = 17.0  # ระยะเป้าหมายจากหน้า robot ถึงผนัง (cm)
 
-GRID = 4
+GRID = 5
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -777,11 +777,16 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                     except queue.Empty:
                         break
                 
+                # Wait for gimbal to settle before reconnection
+                if gimbal_moving:
+                    print("⚠️ Waiting for gimbal to settle before reconnection...")
+                    time.sleep(0.5)
+                
                 # Attempt reconnection with timeout protection
                 manager.drop_and_reconnect()
                 fail = 0
                 last_success_time = time.time()
-                time.sleep(0.3)  # ลด sleep time
+                time.sleep(0.5)  # Increase sleep time for stability
                 
                 # Reset frame counter after reconnection
                 frame_count = 0
@@ -789,18 +794,18 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 
             except Exception as reconnect_error:
                 print(f"⚠️ Reconnect error: {reconnect_error}")
-                time.sleep(0.2)
+                time.sleep(0.3)
                 # Increment fail counter even on reconnect error
                 fail += 1
                 
         # Additional protection: if too many consecutive failures, increase sleep time
         if fail >= 5:
             print("⚠️ High failure rate detected, increasing sleep time for stability")
-            time.sleep(0.1)
+            time.sleep(0.2)
             fail = max(0, fail - 1)  # Gradually reduce fail counter
             
-        # Increase sleep time during gimbal movement to prevent conflicts
-        sleep_time = 0.05 if gimbal_moving else 0.03  # 20 FPS / 33 FPS
+        # Optimize sleep time for stable 30 FPS
+        sleep_time = 0.04 if gimbal_moving else 0.033  # 25 FPS / 30 FPS
         time.sleep(sleep_time)
     print("🛑 Capture thread stopped")
 
@@ -1028,6 +1033,26 @@ def pid_tracking_and_firing(manager, roi_state):
     if not is_tracking_mode:
         return False
     
+    # Check gimbal limits before proceeding
+    try:
+        with gimbal_angle_lock:
+            current_pitch, current_yaw = gimbal_angles[0], gimbal_angles[1]
+            # Check if gimbal is at extreme limits
+            if abs(current_yaw) > 90.0 or abs(current_pitch) > 25.0:
+                print(f"⚠️ Gimbal at extreme limits: pitch={current_pitch:.1f}°, yaw={current_yaw:.1f}°")
+                print("🔄 Returning gimbal to safe position...")
+                try:
+                    gimbal = manager.get_gimbal()
+                    if gimbal is not None:
+                        gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
+                        time.sleep(0.5)
+                        print("✅ Gimbal returned to safe position")
+                except Exception as e:
+                    print(f"⚠️ Error returning gimbal to safe position: {e}")
+                return False  # Stop tracking
+    except Exception as e:
+        print(f"⚠️ Error checking gimbal limits: {e}")
+    
     # PID states (simplified for real-time tracking)
     
     gimbal = manager.get_gimbal()
@@ -1113,9 +1138,26 @@ def pid_tracking_and_firing(manager, roi_state):
                     # Threshold exceeded, start recovery
                     print(f"🎯 Target missing threshold exceeded, starting recovery...")
                     target_missing_frames = 0
+                    
+                    # Check if we've been in recovery too long
+                    if target_lost_countdown > 0:
+                        elapsed = time.time() - target_lost_start_time
+                        if elapsed > TARGET_LOST_TIMEOUT:
+                            print(f"🎯 Recovery timeout reached ({TARGET_LOST_TIMEOUT}s), stopping tracking")
+                            return False  # Stop tracking completely
+                    else:
+                        target_lost_countdown = TARGET_LOST_TIMEOUT
+                        target_lost_start_time = time.time()
+                        print(f"🎯 Target lost! Starting recovery...")
+                        print(f"🎯 Searching for target... {target_lost_countdown:.1f}s remaining")
             else:
                 # No current target, start recovery immediately
                 target_missing_frames = 0
+                if target_lost_countdown == 0:
+                    target_lost_countdown = TARGET_LOST_TIMEOUT
+                    target_lost_start_time = time.time()
+                    print(f"🎯 Target lost! Starting recovery...")
+                    print(f"🎯 Searching for target... {target_lost_countdown:.1f}s remaining")
     
     # Only work when there's a target
     if target_box is not None:
@@ -1200,7 +1242,7 @@ def pid_tracking_and_firing(manager, roi_state):
                         time.sleep(0.2)
                         # Then move to front position
                         gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
-                        time.sleep(0.5)
+                        time.sleep(0.8)  # เพิ่มเวลารอให้ camera thread settle
                         print("✅ Gimbal returned to front position")
                     except Exception as e:
                         print(f"⚠️ Error returning gimbal to front: {e}")
@@ -1241,17 +1283,17 @@ def pid_tracking_and_firing(manager, roi_state):
             if last_target_error != (0.0, 0.0):
                 err_x, err_y = last_target_error
                 
-                # Reduce error by half to avoid overshooting
-                recovery_err_x = err_x * 0.5
-                recovery_err_y = err_y * 0.5
+                # Reduce error to avoid overshooting
+                recovery_err_x = err_x * 0.3  # ลดจาก 0.5 เป็น 0.3
+                recovery_err_y = err_y * 0.3  # ลดจาก 0.5 เป็น 0.3
                 
-                # Convert to gimbal speeds
+                # Convert to gimbal speeds with stricter limits
                 u_x = PID_KP * recovery_err_x
                 u_y = PID_KP * recovery_err_y
                 
-                # Clamp
-                u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
-                u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
+                # Clamp with stricter limits for recovery
+                u_x = float(np.clip(u_x, -30, 30))  # ลดจาก MAX_YAW_SPEED เป็น 30
+                u_y = float(np.clip(u_y, -30, 30))  # ลดจาก MAX_PITCH_SPEED เป็น 30
                 
                 try:
                     gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
@@ -1298,7 +1340,7 @@ def pid_tracking_and_firing(manager, roi_state):
                     gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                     time.sleep(0.2)
                     gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
-                    time.sleep(0.5)
+                    time.sleep(0.8)  # เพิ่มเวลารอให้ camera thread settle
                     print("✅ Gimbal returned to front position")
                 except Exception as e:
                     print(f"⚠️ Error returning gimbal to front: {e}")
@@ -1877,7 +1919,7 @@ class MovementController:
             try:
                 print("   -> Adjusting gimbal to match new robot direction...")
                 scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal settle
+                time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                 print("   -> Gimbal adjusted to match robot direction")
             except Exception as e:
                 print(f"⚠️ Gimbal centering error: {e}")
@@ -1978,7 +2020,7 @@ class EnvironmentScanner:
         # [CRITICAL] Set the global lock at the very beginning
         self.is_performing_full_scan = True
         try:
-            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.15)
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.5)
             
             readings = {}
             readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
@@ -2281,7 +2323,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             print(f"   -> [{path_name}] Quick ToF check to ({next_r},{next_c})...")
             try:
                 scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal settle
+                time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
             except Exception as e:
                 print(f"⚠️ Gimbal movement error during {path_name}: {e}")
                 time.sleep(0.3)  # รอให้ gimbal settle หลัง error
@@ -2339,11 +2381,11 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
                 print("🎯 Target detected! Starting PID tracking and firing...")
                 # Use existing ROI state (don't create new one)
                 
-                # PID tracking loop (detection mode stays active) - optimized for 30 FPS
+                # PID tracking loop (detection mode stays active) - optimized for stable tracking
                 tracking_start_time = time.time()
                 while is_tracking_mode and (time.time() - tracking_start_time) < 30:  # 30 second timeout
                     if pid_tracking_and_firing(manager, roi_state):
-                        time.sleep(0.033)  # ~30 FPS delay for smooth PID tracking
+                        time.sleep(0.05)  # Stable delay for smooth PID tracking
                     else:
                         break
                 
@@ -2360,7 +2402,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         # เช็คเส้นทางด้วย ToF ก่อนเดินไปโหนดสุดท้าย
         print(f"   -> [{path_name}] Final confirmation to unvisited node ({target_r},{target_c}) with ToF...")
         scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.2)
+        time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
         
         is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
         occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
@@ -2482,7 +2524,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # Ensure the gimbal is facing forward before checking the path and moving.
                 print("    Ensuring gimbal is centered before ToF confirmation...")
                 scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
-                time.sleep(0.2)  # ลดเวลารอ
+                time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                 # <<< END OF NEW CODE >>>
                 
                 print("    Confirming path forward with ToF...")
@@ -2859,7 +2901,7 @@ if __name__ == '__main__':
         print(" GIMBAL: Centering gimbal...")
         try:
             ep_gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-            time.sleep(0.5)  # Wait for gimbal to center
+            time.sleep(0.8)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
         except Exception as e:
             print(f"⚠️ Gimbal centering error: {e}")
             print("🔄 Continuing without gimbal centering...")
@@ -2958,6 +3000,7 @@ if __name__ == '__main__':
                         print("    Ensuring gimbal is centered before ToF confirmation...")
                         t_start = time.time()
                         scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                         t_gimbal = time.time() - t_start
                         if t_gimbal > 2.0:
                             print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
