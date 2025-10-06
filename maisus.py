@@ -67,7 +67,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.5     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.3    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -75,10 +75,10 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.15
 
-GRID = 6
+GRID = 5
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -214,6 +214,7 @@ def save_all_data(occupancy_map):
 
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
+camera_health_lock = threading.Lock()  # สำหรับ thread safety
 
 def camera_is_healthy(timeout=3.0) -> bool:
     """
@@ -226,7 +227,9 @@ def camera_is_healthy(timeout=3.0) -> bool:
             return False
     except Exception:
         return False
-    return (time.time() - last_frame_received_ts) <= timeout
+    
+    with camera_health_lock:
+        return (time.time() - last_frame_received_ts) <= timeout
 
 def wait_for_camera_recovery(pause_label="Runtime"):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
@@ -686,6 +689,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
     fail = 0
     frame_count = 0
     last_success_time = time.time()
+    consecutive_errors = 0
     
     while not stop_event.is_set():
         if not manager.connected.is_set():
@@ -698,7 +702,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             continue
             
         try:
-            frame = cam.read_cv2_image(timeout=1.5)
+            frame = cam.read_cv2_image(timeout=2.0)  # เพิ่ม timeout จาก 1.5 เป็น 2.0
             if frame is not None and frame.size > 0:
                 # Clear queue if it's full to prevent memory buildup
                 if q.full():
@@ -711,21 +715,27 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 # mark last healthy frame timestamp
                 try:
                     global last_frame_received_ts
-                    last_frame_received_ts = time.time()
+                    with camera_health_lock:
+                        last_frame_received_ts = time.time()
                 except Exception:
                     pass
                 frame_count += 1
                 last_success_time = time.time()
                 fail = 0
+                consecutive_errors = 0
             else:
                 fail += 1
+                consecutive_errors += 1
                 
         except Exception as e:
-            print(f"⚠️ Camera read error: {e}")
+            # แสดง error detail เฉพาะเมื่อเกิดติดกันหรือทุก 10 ครั้ง
+            consecutive_errors += 1
+            if consecutive_errors <= 3 or consecutive_errors % 10 == 0:
+                print(f"⚠️ Camera read error #{consecutive_errors}: {str(e)[:100]}")
             fail += 1
 
-        # Tolerant reconnection policy (match fire_target.py behavior)
-        if fail >= 10:  # ลดจาก 30 เป็น 10 เหมือน fire_target.py
+        # More tolerant reconnection policy - เพิ่ม threshold จาก 10 เป็น 20
+        if fail >= 20:
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
@@ -735,11 +745,12 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             except queue.Empty:
                 pass
             fail = 0
+            consecutive_errors = 0
             # Short sleep to allow reconnect path to proceed
-            time.sleep(0.2)
+            time.sleep(0.5)  # เพิ่ม sleep time จาก 0.2 เป็น 0.5
             
-        # Tight loop for responsiveness (as in fire_target)
-        time.sleep(0.005)
+        # เพิ่ม sleep time เพื่อลด CPU usage
+        time.sleep(0.01)  # เพิ่มจาก 0.005 เป็น 0.01
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
@@ -757,7 +768,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             continue
             
         try:
-            frame_to_process = q.get(timeout=0.3)  # Reduced timeout
+            frame_to_process = q.get(timeout=0.5)  # เพิ่ม timeout จาก 0.3 เป็น 0.5
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
@@ -784,9 +795,9 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
                     if gimbal:
                         # Test pitch movement
                         gimbal.moveto(pitch=-15, yaw=0, pitch_speed=100).wait_for_completed()
-                        time.sleep(0.5)
+                        time.sleep(0.2)
                         gimbal.moveto(pitch=15, yaw=0, pitch_speed=100).wait_for_completed()
-                        time.sleep(0.5)
+                        time.sleep(0.2)
                         gimbal.moveto(pitch=0, yaw=0, pitch_speed=100).wait_for_completed()
                         print(f"🎯 TEST: Gimbal pitch test completed")
                 except Exception as e:
@@ -837,8 +848,15 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             time.sleep(0.1)  # Sleep when no frames to process
             continue
         except Exception as e:
-            print(f"⚠️ Processing error: {e}")
-            time.sleep(0.1)  # Increased sleep on error
+            # แสดง error เฉพาะเมื่อเกิดติดกันหรือทุก 5 ครั้ง
+            if not hasattr(processing_thread_func, 'error_count'):
+                processing_thread_func.error_count = 0
+            processing_thread_func.error_count += 1
+            
+            if processing_thread_func.error_count <= 3 or processing_thread_func.error_count % 5 == 0:
+                print(f"⚠️ Processing error #{processing_thread_func.error_count}: {str(e)[:100]}")
+            
+            time.sleep(0.2)  # เพิ่ม sleep time เมื่อเกิด error
             # Clear queue to prevent buildup
             try:
                 while True: 
@@ -1467,7 +1485,7 @@ class MovementController:
             yaw_correction = self._calculate_yaw_correction(attitude_handler, get_compensated_target_yaw()) # MODIFIED
             self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=1)
             print(f"Moving... Dist: {relative_position:.3f}/{target_distance:.2f} m", end='\r')
-        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.5)
+        self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.25)
 
     def adjust_position_to_wall(self, sensor_adaptor, attitude_handler, side, sensor_config, target_distance_cm, direction_multiplier):
         compensated_yaw = get_compensated_target_yaw() # MODIFIED
@@ -1567,7 +1585,7 @@ class MovementController:
         
         # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
         print("   -> Waiting for robot rotation to complete...")
-        time.sleep(0.5)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
+        time.sleep(0.2)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
         
         # ปรับ gimbal ให้ตรงกับทิศทางใหม่หลังจากหุ่นหมุนเสร็จ
         if scanner and scanner.gimbal:
@@ -1933,7 +1951,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         print("🔍 Performing object detection before moving to unvisited node...")
         try:
             start_detection_mode()
-            time.sleep(1.0)
+            time.sleep(0.5)
             save_detected_objects_to_map(occupancy_map)
             
             # Check for targets and start PID tracking if found
@@ -2107,7 +2125,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                     print("🔍 Performing object detection after turning to new direction...")
                     try:
                         start_detection_mode()
-                        time.sleep(1.0)
+                        time.sleep(0.5)
                         save_detected_objects_to_map(occupancy_map)
                         
                         # Check for targets and start PID tracking if found
@@ -2281,7 +2299,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None

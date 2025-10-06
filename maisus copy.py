@@ -67,7 +67,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.5     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.3    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -75,10 +75,10 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.15
 
-GRID = 6
+GRID = 5
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -319,25 +319,18 @@ object_lock = threading.Lock()
 
 def sub_angle_cb(angle_info):
     global gimbal_angles
-    
-    # Check if angle_info is valid
-    if not angle_info or len(angle_info) < 2:
-        print(f"❌ ERROR: Invalid angle_info received: {angle_info}")
-        return
-    
     with gimbal_angle_lock:
         gimbal_angles = tuple(angle_info)
-    
     # Debug: Print gimbal angles when in tracking mode
     if is_tracking_mode:
-        print(f"🎯 Tracking mode - Gimbal angles: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}°")
+        print(f"🎯 Gimbal angles: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}°")
     
-    # Debug: Print gimbal angles every 20 calls (about 1 second at 20Hz)
+    # Debug: Print gimbal angles every 50 calls (about 1 second at 50Hz)
     if not hasattr(sub_angle_cb, 'call_count'):
         sub_angle_cb.call_count = 0
     sub_angle_cb.call_count += 1
-    if sub_angle_cb.call_count % 20 == 0:
-        print(f"🎯 Gimbal callback summary: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
+    if sub_angle_cb.call_count % 50 == 0:
+        print(f"🎯 Gimbal callback: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -621,42 +614,9 @@ class RMConnection:
             rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
             # subscribe angles
             try:
-                print("🔄 Attempting to subscribe to gimbal angles at 20Hz...")
-                rb.gimbal.sub_angle(freq=20, callback=sub_angle_cb)  # Changed from 50Hz to 20Hz
-                print("✅ Gimbal angle subscription successful (20Hz)")
-                
-                # Test callback by checking if it's being called
-                print("🔄 Waiting for first callback...")
-                time.sleep(1.0)  # Wait longer for first callback
-                
-                with gimbal_angle_lock:
-                    print(f"🎯 Current gimbal_angles after subscription: {gimbal_angles}")
-                    if gimbal_angles != (0.0, 0.0, 0.0, 0.0):
-                        print(f"✅ Gimbal callback working: {gimbal_angles}")
-                    else:
-                        print("⚠️ Gimbal callback may not be working - angles still at default")
-                        print("⚠️ This could be why ROI is not adjusting properly")
-                        
-                        # Try alternative subscription methods
-                        print("🔄 Trying alternative subscription methods...")
-                        try:
-                            # Try with different frequency
-                            rb.gimbal.unsub_angle()
-                            time.sleep(0.1)
-                            rb.gimbal.sub_angle(freq=10, callback=sub_angle_cb)
-                            print("✅ Re-subscribed at 10Hz")
-                            time.sleep(0.5)
-                            with gimbal_angle_lock:
-                                if gimbal_angles != (0.0, 0.0, 0.0, 0.0):
-                                    print(f"✅ Alternative subscription working: {gimbal_angles}")
-                                else:
-                                    print("❌ Alternative subscription also failed")
-                        except Exception as e2:
-                            print(f"❌ Alternative subscription failed: {e2}")
-                            
+                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
             except Exception as e:
-                print("❌ Gimbal sub_angle error:", e)
-                print("❌ This is likely why gimbal_angles[0] is not updating!")
+                print("Gimbal sub_angle error:", e)
             self._robot = rb
             self.connected.set()
             print("✅ RoboMaster connected & camera streaming")
@@ -687,10 +647,6 @@ class RMConnection:
         with self._lock:
             self._safe_close()
 
-    def get_robot(self):
-        with self._lock:
-            return self._robot
-
     def get_camera(self):
         with self._lock:
             return None if self._robot is None else self._robot.camera
@@ -702,6 +658,10 @@ class RMConnection:
     def get_blaster(self):
         with self._lock:
             return None if self._robot is None else self._robot.blaster
+
+    def get_robot(self):
+        with self._lock:
+            return self._robot
 
     def close(self):
         with self._lock:
@@ -791,8 +751,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
     processing_count = 0
     last_cleanup_time = time.time()
 
-    try:
-        while not stop_event.is_set():
+    while not stop_event.is_set():
         if not is_detecting_func():
             time.sleep(0.2)  # Increased sleep when not detecting
             continue
@@ -802,184 +761,36 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
-            # Avoid using thread-shared gimbal_angles, get fresh data directly
-            pitch_deg = 0.0  # Default to center position
+            with gimbal_angle_lock:
+                pitch_deg = gimbal_angles[0]  # + ขึ้น, - ลง (ตาม SDK)
+            # ถ้าก้มลง (pitch < 0) => ขยับ ROI_Y ขึ้น
+            roi_y_dynamic = int(ROI_Y0 - (max(0.0, -pitch_deg) * ROI_SHIFT_PER_DEG))
+            roi_y_dynamic = max(ROI_Y_MIN, min(ROI_Y_MAX, roi_y_dynamic))
             
-            # Get gimbal position directly in this thread (avoid threading issues)
-            try:
-                gimbal = manager.get_gimbal()
-                if gimbal:
-                    # Try different methods to get current gimbal position
-                    # Method 1: Try to get gimbal status
-                    try:
-                        if hasattr(gimbal, 'get_status'):
-                            status = gimbal.get_status()
-                            if status and len(status) >= 2:
-                                pitch_deg = status[0]  # pitch
-                                if processing_count % 30 == 0:
-                                    print(f"🔄 Using gimbal status: pitch={pitch_deg:.1f}°")
-                    except Exception as e:
-                        if processing_count % 30 == 0:
-                            print(f"⚠️ Gimbal status method failed: {e}")
-                    
-                    # Method 2: Try to get gimbal info
-                    try:
-                        if hasattr(gimbal, 'get_info'):
-                            info = gimbal.get_info()
-                            if info and len(info) >= 2:
-                                pitch_deg = info[0]  # pitch
-                                if processing_count % 30 == 0:
-                                    print(f"🔄 Using gimbal info: pitch={pitch_deg:.1f}°")
-                    except Exception as e:
-                        if processing_count % 30 == 0:
-                            print(f"⚠️ Gimbal info method failed: {e}")
-                    
-                    # Method 3: Try to get gimbal position
-                    try:
-                        if hasattr(gimbal, 'get_position'):
-                            pos = gimbal.get_position()
-                            if pos and len(pos) >= 2:
-                                pitch_deg = pos[0]  # pitch
-                                if processing_count % 30 == 0:
-                                    print(f"🔄 Using gimbal position: pitch={pitch_deg:.1f}°")
-                    except Exception as e:
-                        if processing_count % 30 == 0:
-                            print(f"⚠️ Gimbal position method failed: {e}")
-                    
-                    # Method 4: Try to get gimbal angle
-                    try:
-                        if hasattr(gimbal, 'get_angle'):
-                            angle = gimbal.get_angle()
-                            if angle and len(angle) >= 2:
-                                pitch_deg = angle[0]  # pitch
-                                if processing_count % 30 == 0:
-                                    print(f"🔄 Using gimbal angle: pitch={pitch_deg:.1f}°")
-                    except Exception as e:
-                        if processing_count % 30 == 0:
-                            print(f"⚠️ Gimbal angle method failed: {e}")
-                    
-                    # Method 5: Fallback to callback value (last resort)
-                    if pitch_deg == 0.0:  # If no other method worked
-                        with gimbal_angle_lock:
-                            pitch_deg = gimbal_angles[0]
-                            if processing_count % 30 == 0:
-                                print(f"🔄 Using callback fallback: pitch={pitch_deg:.1f}°")
-                            
-            except Exception as e:
-                if processing_count % 30 == 0:
-                    print(f"❌ Failed to get gimbal position: {e}")
-                # Final fallback to callback
-                with gimbal_angle_lock:
-                    pitch_deg = gimbal_angles[0]
-            
-            # Debug: Always print pitch value to track changes
-            if processing_count % 10 == 0:  # Print every 10 frames for more frequent updates
-                print(f"🎯 Current pitch: {pitch_deg:.1f}° (frame #{processing_count})")
-                with gimbal_angle_lock:
-                    print(f"🎯 Callback gimbal_angles: {gimbal_angles}")
-            
-            # Check if pitch is stuck at the same value (indicates stale data)
-            if not hasattr(processing_thread_func, 'last_pitch'):
-                processing_thread_func.last_pitch = pitch_deg
-                processing_thread_func.pitch_stuck_count = 0
-            
-            if abs(pitch_deg - processing_thread_func.last_pitch) < 0.1:
-                processing_thread_func.pitch_stuck_count += 1
-                if processing_thread_func.pitch_stuck_count > 50:  # Stuck for 50 frames
-                    print(f"⚠️ WARNING: Pitch stuck at {pitch_deg:.1f}° for {processing_thread_func.pitch_stuck_count} frames!")
-                    print(f"⚠️ This suggests gimbal data is not updating properly")
-            else:
-                processing_thread_func.pitch_stuck_count = 0
-                processing_thread_func.last_pitch = pitch_deg
-            
-            # ROI adjustment is now handled in PID function
-            # Use default ROI position for now
-            roi_y_dynamic = ROI_Y0
+            # Debug: Print ROI adjustment when it changes significantly
+            if abs(roi_y_dynamic - ROI_Y0) > 2:
+                print(f"🎯 ROI adjusted: pitch={pitch_deg:.1f}°, ROI_Y: {ROI_Y0} -> {roi_y_dynamic}")
             
             # Debug: Print pitch info every 30 frames
             if processing_count % 30 == 0:
-                print(f"🎯 Processing thread: pitch={pitch_deg:.1f}°, ROI_Y0={ROI_Y0}, roi_y_dynamic={roi_y_dynamic}")
-                print(f"🎯 Note: ROI adjustment is now handled in PID function")
+                print(f"🎯 Pitch info: pitch={pitch_deg:.1f}°, ROI_Y0={ROI_Y0}, roi_y_dynamic={roi_y_dynamic}")
             
             # Debug: Test ROI adjustment by forcing gimbal movement (TEST ONLY)
             if processing_count % 100 == 0 and is_tracking_mode:
-                print(f"🎯 TEST: Testing gimbal position update...")
+                print(f"🎯 TEST: Forcing gimbal pitch test...")
                 try:
                     # Get gimbal from manager
                     gimbal = manager.get_gimbal()
                     if gimbal:
-                        # Test pitch movement and check if direct methods update
-                        print(f"🎯 TEST: Current pitch before movement: {pitch_deg:.1f}°")
-                        
-                        # Move gimbal to test position
-                        print(f"🎯 TEST: Moving gimbal to pitch=-15°")
-                        try:
-                            gimbal.moveto(pitch=-15, yaw=0, pitch_speed=100).wait_for_completed()
-                            print(f"🎯 TEST: Gimbal movement command completed")
-                        except Exception as e:
-                            print(f"🎯 TEST: Gimbal movement failed: {e}")
-                        
-                        time.sleep(1.0)  # Wait for movement to complete
-                        
-                        # Check if direct methods can get updated position
-                        new_pitch = 0.0
-                        try:
-                            if hasattr(gimbal, 'get_status'):
-                                status = gimbal.get_status()
-                                if status and len(status) >= 2:
-                                    new_pitch = status[0]
-                                    print(f"🎯 TEST: Direct status after movement: pitch={new_pitch:.1f}°")
-                        except Exception as e:
-                            print(f"🎯 TEST: Direct status failed: {e}")
-                        
-                        if abs(new_pitch - pitch_deg) > 1.0:
-                            print(f"✅ TEST: Direct method is updating! {pitch_deg:.1f}° -> {new_pitch:.1f}°")
-                        else:
-                            print(f"❌ TEST: Direct method NOT updating! Still {new_pitch:.1f}°")
-                            print(f"❌ TEST: This suggests gimbal position methods are not working!")
-                        
-                        # Move back to original position
-                        print(f"🎯 TEST: Moving gimbal back to pitch=0°")
-                        try:
-                            gimbal.moveto(pitch=0, yaw=0, pitch_speed=100).wait_for_completed()
-                            print(f"🎯 TEST: Gimbal return movement completed")
-                        except Exception as e:
-                            print(f"🎯 TEST: Gimbal return movement failed: {e}")
-                        
-                        time.sleep(1.0)
-                        
-                        # Check final position
-                        try:
-                            if hasattr(gimbal, 'get_status'):
-                                status = gimbal.get_status()
-                                if status and len(status) >= 2:
-                                    final_pitch = status[0]
-                                    print(f"🎯 TEST: Final direct pitch: {final_pitch:.1f}°")
-                        except Exception as e:
-                            print(f"🎯 TEST: Final direct check failed: {e}")
-                        
-                        print(f"🎯 TEST: Gimbal position test completed")
+                        # Test pitch movement
+                        gimbal.moveto(pitch=-15, yaw=0, pitch_speed=100).wait_for_completed()
+                        time.sleep(0.5)
+                        gimbal.moveto(pitch=15, yaw=0, pitch_speed=100).wait_for_completed()
+                        time.sleep(0.5)
+                        gimbal.moveto(pitch=0, yaw=0, pitch_speed=100).wait_for_completed()
+                        print(f"🎯 TEST: Gimbal pitch test completed")
                 except Exception as e:
                     print(f"🎯 TEST: Gimbal test error: {e}")
-            
-            # Debug: Check if pitch is stuck at any value
-            if processing_count % 200 == 0:  # Check every 200 frames
-                if processing_thread_func.pitch_stuck_count > 100:  # Stuck for 100 frames
-                    print(f"⚠️ WARNING: Pitch appears to be stuck at {pitch_deg:.1f}°")
-                    print(f"⚠️ This may indicate gimbal callback is not working properly")
-                    # Try to re-subscribe gimbal angles
-                    try:
-                        gimbal = manager.get_gimbal()
-                        if gimbal:
-                            print(f"🔄 Attempting to re-subscribe gimbal angles at 20Hz...")
-                            gimbal.unsub_angle()
-                            time.sleep(0.2)
-                            gimbal.sub_angle(freq=20, callback=sub_angle_cb)
-                            print(f"✅ Gimbal re-subscription completed (20Hz)")
-                            # Reset stuck counter
-                            processing_thread_func.pitch_stuck_count = 0
-                    except Exception as e:
-                        print(f"❌ Gimbal re-subscription failed: {e}")
 
             ROI_X, ROI_W = roi_state["x"], roi_state["w"]
             ROI_H = roi_state["h"]
@@ -1034,10 +845,8 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
                     q.get_nowait()
             except queue.Empty:
                 pass
-    except Exception as e:
-        print(f"❌ Processing thread error: {e}")
-    finally:
-        print("🛑 Processing thread stopped.")
+
+    print("🛑 Processing thread stopped.")
 
 def start_detection_mode():
     """Start detection mode for 1 second"""
@@ -1181,27 +990,6 @@ def pid_tracking_and_firing(manager, roi_state):
             gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
         except Exception as e:
             print("drive_speed error:", e)
-        
-        # NEW: Use PID error to estimate gimbal position and adjust ROI
-        # Convert pixel error to degrees
-        err_x_deg = err_x / PIXELS_PER_DEG_V
-        err_y_deg = err_y / PIXELS_PER_DEG_V
-        
-        # Estimate current gimbal pitch based on PID error
-        # If PID is trying to move down (err_y > 0), gimbal is probably looking up
-        # If PID is trying to move up (err_y < 0), gimbal is probably looking down
-        estimated_pitch = -err_y_deg  # Reverse the error to get estimated position
-        
-        # Update ROI based on estimated pitch
-        roi_y_dynamic = int(ROI_Y0 - (max(0.0, -estimated_pitch) * ROI_SHIFT_PER_DEG))
-        roi_y_dynamic = max(ROI_Y_MIN, min(ROI_Y_MAX, roi_y_dynamic))
-        
-        # Update ROI state
-        roi_state["y"] = roi_y_dynamic
-        
-        # Debug: Print PID-based ROI adjustment
-        if abs(roi_y_dynamic - ROI_Y0) > 2:
-            print(f"🎯 PID-based ROI: err_y={err_y_deg:.1f}°, est_pitch={estimated_pitch:.1f}°, ROI_Y: {ROI_Y0} -> {roi_y_dynamic}")
         
         # Check lock for firing
         locked = (abs(err_x) <= LOCK_TOL_X) and (abs(err_y) <= LOCK_TOL_Y)
@@ -2462,15 +2250,8 @@ if __name__ == '__main__':
                               args=(tracker, frame_queue, TARGET_SHAPE, TARGET_COLOR, roi_state, is_detecting),
                               daemon=True)
     
-    # Start threads with error handling
-    try:
-        cap_t.start()
-        proc_t.start()
-        print("✅ Object detection threads started successfully")
-    except Exception as e:
-        print(f"❌ Failed to start threads: {e}")
-        stop_event.set()
-        exit()
+    cap_t.start()
+    proc_t.start()
     
     print("✅ Object Detection System initialized (Camera ON, Detection OFF)")
     
@@ -2623,7 +2404,7 @@ if __name__ == '__main__':
     try:
         visualizer = RealTimeVisualizer(grid_size=GRID, target_dest=TARGET_DESTINATION)
         
-        # NEW: Get robot instance from manager instead of creating new one
+        # +++ NEW CODE: รอให้ manager เชื่อมต่อสำเร็จก่อน +++
         print("🤖 Waiting for robot connection from manager...")
         # รอให้ manager ทำการเชื่อมต่อให้สำเร็จก่อน (timeout 15 วินาที)
         if not manager.connected.wait(timeout=15.0):
@@ -2634,12 +2415,13 @@ if __name__ == '__main__':
             exit()
 
         print("✅ Robot connected via manager.")
-        ep_robot = manager.get_robot()  # ดึง instance ของ robot มาจาก manager
+        ep_robot = manager.get_robot() # <-- ดึง instance ของ robot มาจาก manager
         if ep_robot is None:
             print("❌ CRITICAL: Failed to get robot instance from manager. Exiting.")
             stop_event.set()
             exit()
-        
+        # +++ END OF NEW CODE +++
+
         # ไม่ต้อง initialize อีกแล้ว เพราะ manager ทำให้แล้ว
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
@@ -2904,16 +2686,10 @@ if __name__ == '__main__':
         
         # Wait for threads to finish
         try:
-            if 'cap_t' in locals():
-                cap_t.join(timeout=2.0)
-            if 'proc_t' in locals():
-                proc_t.join(timeout=2.0)
-            if 'display_t' in locals() and display_t is not None:
-                display_t.join(timeout=2.0)
-            if 'reconn' in locals():
-                reconn.join(timeout=2.0)
-        except Exception as e:
-            print(f"⚠️ Thread cleanup error: {e}")
+            cap_t.join(timeout=2.0)
+            proc_t.join(timeout=2.0)
+            display_t.join(timeout=2.0)
+        except Exception:
             pass
         
         # Close camera display
