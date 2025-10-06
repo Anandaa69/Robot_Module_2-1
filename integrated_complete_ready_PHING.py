@@ -44,10 +44,10 @@ TOF_ADJUST_SPEED = 0.1             # ความเร็วในการข�
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
-GRID = 5
+GRID = 3
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (1,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  0  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -57,8 +57,8 @@ ROBOT_FACE = 1  # 1,3,5.. = X axis, 2,4,6.. = Y axis
 
 # --- NEW: IMU Drift Compensation Parameters ---
 IMU_COMPENSATION_START_NODE_COUNT = 7      # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
-IMU_COMPENSATION_NODE_INTERVAL = 15      # เพิ่มค่าชดเชยทุกๆ N โหนด
-IMU_COMPENSATION_DEG_PER_INTERVAL = -1.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
+IMU_COMPENSATION_NODE_INTERVAL = 10      # เพิ่มค่าชดเชยทุกๆ N โหนด
+IMU_COMPENSATION_DEG_PER_INTERVAL = -2.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
 IMU_DRIFT_COMPENSATION_DEG = 0.0           # ตัวแปรเก็บค่าชดเชยปัจจุบัน
 
 # --- Occupancy Grid Parameters ---
@@ -79,7 +79,7 @@ OCCUPANCY_THRESHOLD = 0.7
 FREE_THRESHOLD = 0.3
 
 # --- Visualization Configuration ---
-MAP_FIGURE_SIZE = (6, 4)  # (width, height) ปรับได้ตามต้องการ
+MAP_FIGURE_SIZE = (10, 8)  # (width, height) ปรับได้ตามต้องการ
 
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
@@ -175,10 +175,10 @@ def save_all_data(occupancy_map):
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
 
-def camera_is_healthy(timeout=3.0) -> bool:
+def camera_is_healthy(timeout=2.0) -> bool:
     """
     ถือว่ากล้องพร้อมใช้งานเมื่อเชื่อมต่ออยู่และมีเฟรมล่าสุดในไม่กี่วินาทีนี้
-    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 3.0 วินาที)
+    timeout: เวลาที่ยอมให้เฟรมล่าสุดเก่าได้ (default 2.0 วินาที - เพิ่มจาก 0.5)
     """
     try:
         # ใช้ตัวแปร global manager ที่ถูกประกาศตอน initialize
@@ -186,26 +186,47 @@ def camera_is_healthy(timeout=3.0) -> bool:
             return False
     except Exception:
         return False
+    # ถ้ายังไม่เคยได้ frame (last_frame_received_ts = 0) ให้ถือว่า healthy หากเชื่อมต่ออยู่
+    if last_frame_received_ts == 0:
+        return True
     return (time.time() - last_frame_received_ts) <= timeout
 
-def wait_for_camera_recovery(pause_label="Runtime"):
+def wait_for_camera_recovery(pause_label="Runtime", max_wait=120.0):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
     print(f"🛑 {pause_label}: Camera unhealthy → locking chassis and waiting...")
     try:
         movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     except Exception:
         pass
+    
+    recovery_start = time.time()
     wait_start = time.time()
+    reconnect_count = 0
+    
     while not camera_is_healthy():
+        elapsed = time.time() - recovery_start
+        if elapsed > max_wait:
+            print(f"❌ {pause_label}: Camera recovery failed after {max_wait}s. Giving up.")
+            return False
+            
         if time.time() - wait_start > 30.0:
-            print(f"⚠️ {pause_label}: Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
+            reconnect_count += 1
+            print(f"⚠️ {pause_label}: Camera recovery timeout (30s). Forcing reconnect #{reconnect_count}...")
             try:
                 manager.drop_and_reconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"⚠️ Reconnect error: {e}")
             wait_start = time.time()
-        time.sleep(0.2)
-    print(f"✅ {pause_label}: Camera recovered. Resuming...")
+            time.sleep(2.0)  # ให้เวลากล้องเชื่อมต่อใหม่
+        
+        # แสดงสถานะการรอทุก 5 วินาที
+        if int(elapsed) % 5 == 0 and elapsed > 0:
+            print(f"⏳ {pause_label}: Waiting for camera... ({elapsed:.0f}s elapsed)")
+        
+        time.sleep(0.5)
+    
+    print(f"✅ {pause_label}: Camera recovered after {time.time() - recovery_start:.1f}s. Resuming...")
+    return True
 
 # =============================================================================
 # ===== OBJECT DETECTION CONFIGURATION =======================================
@@ -632,6 +653,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
     fail = 0
     frame_count = 0
     last_success_time = time.time()
+    consecutive_errors = 0
     
     while not stop_event.is_set():
         if not manager.connected.is_set():
@@ -644,7 +666,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             continue
             
         try:
-            frame = cam.read_cv2_image(timeout=1.5)
+            frame = cam.read_cv2_image(timeout=2.0)  # เพิ่ม timeout จาก 1.0 เป็น 2.0
             if frame is not None and frame.size > 0:
                 # Clear queue if it's full to prevent memory buildup
                 if q.full():
@@ -663,16 +685,21 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 frame_count += 1
                 last_success_time = time.time()
                 fail = 0
+                consecutive_errors = 0
             else:
                 fail += 1
+                consecutive_errors += 1
                 
         except Exception as e:
-            print(f"⚠️ Camera read error: {e}")
+            # แสดง error detail เฉพาะเมื่อเกิดติดกัน
+            consecutive_errors += 1
+            if consecutive_errors <= 3 or consecutive_errors % 10 == 0:
+                print(f"⚠️ Camera read error #{consecutive_errors}: {str(e)[:100]}")
             fail += 1
 
-        # Tolerant reconnection policy (match fire_target.py behavior)
+        # More tolerant reconnection policy - ลด threshold จาก 20 เป็น 30
         if fail >= 30:
-            print("⚠️ Too many camera errors → drop & reconnect")
+            print(f"⚠️ Too many camera errors ({fail}) → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
             try:
@@ -681,11 +708,12 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             except queue.Empty:
                 pass
             fail = 0
-            # Short sleep to allow reconnect path to proceed
-            time.sleep(0.2)
+            consecutive_errors = 0
+            # Longer sleep to allow reconnect
+            time.sleep(1.0)
             
-        # Tight loop for responsiveness (as in fire_target)
-        time.sleep(0.005)
+        # Tight loop for responsiveness
+        time.sleep(0.01)  # เพิ่มเล็กน้อยจาก 0.005 เป็น 0.01 เพื่อลด CPU load
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
@@ -695,7 +723,6 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
     global processed_output
     print("🧠 Processing thread started.")
     processing_count = 0
-    last_cleanup_time = time.time()
 
     while not stop_event.is_set():
         if not is_detecting_func():
@@ -744,14 +771,6 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
 
             with output_lock:
                 processed_output = {"details": detailed_results}
-            
-            # Periodic cleanup to prevent memory buildup
-            if time.time() - last_cleanup_time > 30.0:  # Every 30 seconds
-                processing_count = 0
-                last_cleanup_time = time.time()
-                # Force garbage collection
-                import gc
-                gc.collect()
 
         except queue.Empty:
             time.sleep(0.1)  # Sleep when no frames to process
@@ -790,6 +809,257 @@ def check_detection_timer():
             return True
     return False
 
+def calculate_target_node_from_gimbal(current_pos, robot_direction, gimbal_yaw):
+    """
+    คำนวณว่าวัตถุที่เจอผ่าน gimbal อยู่โหนดไหน
+    
+    Args:
+        current_pos: (row, col) ตำแหน่งปัจจุบันของหุ่น
+        robot_direction: 0=North, 1=East, 2=South, 3=West
+        gimbal_yaw: -90=Left, 0=Front, +90=Right
+    
+    Returns:
+        (target_row, target_col, target_direction)
+    """
+    r, c = current_pos
+    
+    # Direction offset vectors: [North, East, South, West]
+    dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
+    
+    # คำนวณทิศที่กล้องหัน (absolute direction)
+    if gimbal_yaw == 0:  # Front
+        target_dir = robot_direction
+    elif gimbal_yaw == -90:  # Left (counterclockwise)
+        target_dir = (robot_direction - 1 + 4) % 4
+    elif gimbal_yaw == 90:  # Right (clockwise)
+        target_dir = (robot_direction + 1) % 4
+    else:
+        target_dir = robot_direction  # fallback
+    
+    # คำนวณตำแหน่งโหนดเป้าหมาย
+    dr, dc = dir_vectors[target_dir]
+    target_pos = (r + dr, c + dc)
+    
+    return target_pos, target_dir
+
+def adjust_zone_for_absolute_direction(detected_zone, absolute_direction):
+    """
+    แปลง zone (Left/Center/Right) จาก camera view เป็น absolute position
+    
+    Args:
+        detected_zone: "Left", "Center", "Right" จากกล้อง
+        absolute_direction: 0=North, 1=East, 2=South, 3=West (ทิศที่กล้องหัน)
+    
+    Returns:
+        adjusted_zone: zone ที่แปลงเป็น absolute position แล้ว
+    """
+    # Zone system: "Left" = West side, "Right" = East side of cell
+    # Center = center of cell (ไม่เปลี่ยนแปลง)
+    
+    if detected_zone == "Center":
+        return "Center"
+    
+    # แปลงตามทิศที่กล้องหัน
+    if absolute_direction == 0:  # Facing North
+        # Robot's left = West, right = East
+        return detected_zone  # No swap needed
+        
+    elif absolute_direction == 1:  # Facing East  
+        # Robot's left = North, right = South
+        # ไม่มี North/South zone ในระบบ grid → เก็บตามที่เห็น
+        return detected_zone
+        
+    elif absolute_direction == 2:  # Facing South (opposite of North)
+        # Robot's left = East, right = West → ต้อง swap
+        if detected_zone == "Left":
+            return "Right"
+        elif detected_zone == "Right":
+            return "Left"
+            
+    elif absolute_direction == 3:  # Facing West
+        # Robot's left = South, right = North
+        # ไม่มี North/South zone ในระบบ grid → เก็บตามที่เห็น
+        return detected_zone
+    
+    return detected_zone  # fallback
+
+def scan_all_directions_with_gimbal(scanner, occupancy_map):
+    """
+    Pan gimbal 3 ทิศทาง (-90°, 0°, +90°) และ detect objects
+    บันทึกวัตถุไปยังโหนดที่ถูกต้องตามทิศที่ gimbal หัน
+    พร้อม distance filtering เพื่อป้องกันการเห็นวัตถุจากโหนดถัดไป
+    
+    Args:
+        scanner: EnvironmentScanner object
+        occupancy_map: OccupancyGridMap object
+    
+    Returns:
+        total_objects_detected: จำนวนวัตถุทั้งหมดที่เจอ
+    """
+    global processed_output, CURRENT_POSITION, CURRENT_DIRECTION
+    
+    print("\n🔍 === Starting 3-Direction Gimbal Scan ===")
+    
+    # กำหนดมุมที่จะ scan: ซ้าย, หน้า, ขวา
+    SCAN_ANGLES = [-90, 0, 90]
+    SCAN_NAMES = ["Left", "Front", "Right"]
+    STABILIZE_TIME = 0.4  # เวลารอให้กล้อง stabilize
+    DETECT_TIME = 0.8     # เวลาในการ detect (ลดจาก 1.0 เพื่อลด duplicate)
+    
+    # Distance filtering thresholds (cm)
+    # โหนดในกริดกว้างประมาณ 60cm, ดังนั้น:
+    # - ถ้า ToF < 50cm → วัตถุอยู่ในโหนดข้างหน้าแน่นอน
+    # - ถ้า ToF 50-70cm → วัตถุอาจอยู่ขอบโหนดหรือโหนดถัดไป
+    # - ถ้า ToF > 70cm → วัตถุอยู่โหนดถัดไปแน่นอน
+    MAX_DETECTION_DISTANCE = 70.0  # ระยะสูงสุดที่ยอมรับว่าวัตถุอยู่ในโหนดเป้าหมาย
+    MIN_DETECTION_DISTANCE = 8.0   # ระยะต่ำสุด (ป้องกัน sensor error/วัตถุชนหุ่น)
+    
+    all_detected = {}  # dict: {node_position: [objects]}
+    total_objects = 0
+    
+    for angle, name in zip(SCAN_ANGLES, SCAN_NAMES):
+        print(f"\n📹 Scanning {name} (Gimbal {angle:+d}°)...")
+        
+        # หมุน gimbal
+        try:
+            scanner.gimbal.moveto(pitch=0, yaw=angle, yaw_speed=SPEED_ROTATE).wait_for_completed(timeout=5.0)
+            time.sleep(STABILIZE_TIME)
+        except Exception as e:
+            print(f"⚠️ Gimbal move error at {angle}°: {e}")
+            continue
+        
+        # อ่านระยะจาก ToF สำหรับ distance filtering
+        try:
+            if angle == 0:
+                # Gimbal หันหน้า → ใช้ ToF ตรง
+                tof_distance = scanner.last_tof_distance_cm
+            else:
+                # Gimbal หันข้าง → อ่าน side ToF (ถ้ามี) หรือใช้ค่าประมาณ
+                # เนื่องจาก ToF หันหน้าเสมอ เมื่อ gimbal หันข้างค่าอาจไม่ตรง
+                # ให้ใช้ค่าเฉลี่ยหรือ fallback
+                tof_distance = scanner.last_tof_distance_cm
+        except Exception:
+            tof_distance = 50.0  # fallback ถ้าอ่านไม่ได้
+        
+        print(f"   📏 ToF distance: {tof_distance:.1f} cm")
+        
+        # เช็คว่ากล้อง healthy ไหม
+        if not camera_is_healthy(timeout=3.0):
+            print(f"⚠️ Camera unhealthy at {name} direction, skipping...")
+            continue
+        
+        # ล้างข้อมูล detection เก่า
+        with output_lock:
+            processed_output["details"] = []
+        
+        # เริ่ม detection
+        start_detection_mode()
+        time.sleep(DETECT_TIME)
+        
+        # ดึงผลลัพธ์
+        with output_lock:
+            objects = processed_output["details"].copy()
+        
+        stop_detection_mode()
+        
+        if objects:
+            # คำนวณว่าวัตถุที่เจออยู่โหนดไหน
+            target_node, target_direction = calculate_target_node_from_gimbal(
+                CURRENT_POSITION, CURRENT_DIRECTION, angle
+            )
+            
+            print(f"   📦 Detected {len(objects)} object(s) at {name}")
+            print(f"   📍 Target node: {target_node}, Direction: {['N','E','S','W'][target_direction]}")
+            
+            # Distance filtering: กรองวัตถุที่อยู่ไกลเกินไป
+            distance_valid = True
+            distance_warning = ""
+            
+            if angle == 0:  # เช็คระยะเฉพาะตอนหันหน้า (ToF แม่นยำ)
+                if tof_distance > MAX_DETECTION_DISTANCE:
+                    distance_valid = False
+                    distance_warning = f" (TOO FAR: {tof_distance:.1f}cm > {MAX_DETECTION_DISTANCE}cm)"
+                    print(f"   ⚠️ Distance too far{distance_warning} - Objects likely from next node, SKIPPING")
+                elif tof_distance < MIN_DETECTION_DISTANCE:
+                    distance_valid = False
+                    distance_warning = f" (TOO CLOSE: {tof_distance:.1f}cm < {MIN_DETECTION_DISTANCE}cm)"
+                    print(f"   ⚠️ Distance too close{distance_warning} - Possible sensor error, SKIPPING")
+                else:
+                    print(f"   ✅ Distance valid ({tof_distance:.1f}cm) - Objects in target node")
+            else:
+                # Gimbal หันข้าง: ไม่ใช้ distance filtering (ToF วัดไม่ตรง)
+                print(f"   ℹ️ Side scan - Distance filtering disabled")
+            
+            if not distance_valid:
+                # ระยะไม่ผ่าน → skip objects ทั้งหมดในทิศนี้
+                continue
+            
+            # แปลง zone ของแต่ละวัตถุตามทิศที่แท้จริง
+            adjusted_objects = []
+            for obj in objects:
+                adjusted_obj = obj.copy()
+                adjusted_obj['zone'] = adjust_zone_for_absolute_direction(
+                    obj['zone'], target_direction
+                )
+                adjusted_objects.append(adjusted_obj)
+                
+                # แสดงข้อมูลวัตถุ
+                zone_info = f"in {adjusted_obj['zone']} zone"
+                if adjusted_obj['zone'] == 'Left':
+                    zone_info += " (West wall)"
+                elif adjusted_obj['zone'] == 'Right':
+                    zone_info += " (East wall)"
+                elif adjusted_obj['zone'] == 'Center':
+                    zone_info += " (center)"
+                
+                target_mark = " ⭐TARGET!" if adjusted_obj.get('is_target', False) else ""
+                print(f"      • {adjusted_obj['color']} {adjusted_obj['shape']} {zone_info}{target_mark}")
+            
+            # เก็บรวมไว้ (เช็ค duplicate ในแต่ละ scan)
+            if target_node not in all_detected:
+                all_detected[target_node] = []
+            
+            # ตรวจสอบว่ามีวัตถุซ้ำในรายการที่จะบันทึกหรือไม่
+            for adj_obj in adjusted_objects:
+                is_duplicate_in_scan = False
+                for existing in all_detected[target_node]:
+                    if (existing['color'] == adj_obj['color'] and 
+                        existing['shape'] == adj_obj['shape'] and 
+                        existing['zone'] == adj_obj['zone']):
+                        # พบวัตถุซ้ำในการ scan ครั้งนี้
+                        is_duplicate_in_scan = True
+                        print(f"      ⚠️ Duplicate in current scan, skipping")
+                        break
+                
+                if not is_duplicate_in_scan:
+                    all_detected[target_node].append(adj_obj)
+                    total_objects += 1
+        else:
+            print(f"   📭 No objects detected at {name}")
+    
+    # กลับ gimbal ไปตำแหน่งกลาง
+    print("\n🔄 Returning gimbal to center...")
+    try:
+        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(timeout=5.0)
+        time.sleep(0.2)
+    except Exception as e:
+        print(f"⚠️ Gimbal return error: {e}")
+    
+    # บันทึกวัตถุทั้งหมดลงแผนที่
+    if all_detected:
+        print(f"\n💾 Saving {total_objects} object(s) to map...")
+        for node_pos, objects_list in all_detected.items():
+            # ตรวจสอบว่าโหนดอยู่ในขอบเขตของแผนที่
+            r, c = node_pos
+            if 0 <= r < occupancy_map.height and 0 <= c < occupancy_map.width:
+                occupancy_map.save_objects_to_map(objects_list, node_pos, CURRENT_DIRECTION)
+                print(f"   ✅ Saved {len(objects_list)} object(s) to node {node_pos}")
+            else:
+                print(f"   ⚠️ Node {node_pos} is out of map bounds, skipping...")
+    
+    print(f"\n🔍 === Gimbal Scan Complete: {total_objects} total objects detected ===\n")
+    return total_objects
+
 def save_detected_objects_to_map(occupancy_map):
     """Save detected objects to map with position details in the next cell"""
     global processed_output, CURRENT_POSITION, CURRENT_DIRECTION
@@ -803,33 +1073,36 @@ def save_detected_objects_to_map(occupancy_map):
         next_r, next_c = CURRENT_POSITION[0] + dir_vectors[CURRENT_DIRECTION][0], CURRENT_POSITION[1] + dir_vectors[CURRENT_DIRECTION][1]
         
         # Adjust object zones based on robot's facing direction
+        # Zone system: "Left" = West side of cell, "Right" = East side of cell
+        # Camera detection: "Left"/"Right" relative to robot's view
         adjusted_objects = []
         for obj in objects:
             adjusted_obj = obj.copy()
             
-            # Adjust zone based on robot's facing direction
-            # If robot faces East and sees object in Right zone, 
-            # the object is actually in the Left zone of the next cell
-            if CURRENT_DIRECTION == 1:  # Facing East
-                if obj['zone'] == 'Right':
-                    adjusted_obj['zone'] = 'Left'
-                elif obj['zone'] == 'Left':
+            # Convert robot's relative view to absolute cell position
+            # Direction: 0=North(↑), 1=East(→), 2=South(↓), 3=West(←)
+            
+            if CURRENT_DIRECTION == 0:  # Facing North
+                # Robot's left = West (cell's "Left"), Robot's right = East (cell's "Right")
+                pass  # No swap needed
+                
+            elif CURRENT_DIRECTION == 1:  # Facing East
+                # Robot's left = North, Robot's right = South
+                # North/South don't have Left/Right in grid, keep as detected
+                pass  # No swap needed
+                
+            elif CURRENT_DIRECTION == 2:  # Facing South (opposite of North)
+                # Robot's left = East (cell's "Right"), Robot's right = West (cell's "Left")
+                if obj['zone'] == 'Left':
                     adjusted_obj['zone'] = 'Right'
+                elif obj['zone'] == 'Right':
+                    adjusted_obj['zone'] = 'Left'
+                # Need to swap for South direction
+                
             elif CURRENT_DIRECTION == 3:  # Facing West
-                if obj['zone'] == 'Right':
-                    adjusted_obj['zone'] = 'Left'
-                elif obj['zone'] == 'Left':
-                    adjusted_obj['zone'] = 'Right'
-            elif CURRENT_DIRECTION == 0:  # Facing North
-                if obj['zone'] == 'Right':
-                    adjusted_obj['zone'] = 'Left'
-                elif obj['zone'] == 'Left':
-                    adjusted_obj['zone'] = 'Right'
-            elif CURRENT_DIRECTION == 2:  # Facing South
-                if obj['zone'] == 'Right':
-                    adjusted_obj['zone'] = 'Left'
-                elif obj['zone'] == 'Left':
-                    adjusted_obj['zone'] = 'Right'
+                # Robot's left = South, Robot's right = North
+                # North/South don't have Left/Right in grid, keep as detected
+                pass  # No swap needed
             
             adjusted_objects.append(adjusted_obj)
         
@@ -942,14 +1215,17 @@ class OccupancyGridMap:
         return True
 
     def save_objects_to_map(self, objects, position, direction):
-        """Save detected objects to the map at specified position"""
+        """Save detected objects to the map at specified position (with duplicate checking)"""
         r, c = position
         if 0 <= r < self.height and 0 <= c < self.width:
             # Add objects to the cell
             if not hasattr(self.grid[r][c], 'objects'):
                 self.grid[r][c].objects = []
             
-            # Add each object with zone information
+            new_objects_added = 0
+            duplicates_skipped = 0
+            
+            # Add each object with zone information (check for duplicates)
             for obj in objects:
                 obj_data = {
                     'color': obj.get('color', 'unknown'),
@@ -958,9 +1234,26 @@ class OccupancyGridMap:
                     'is_target': obj.get('is_target', False),
                     'timestamp': time.time()
                 }
-                self.grid[r][c].objects.append(obj_data)
+                
+                # ตรวจสอบว่ามีวัตถุที่คล้ายกันอยู่แล้วหรือไม่
+                is_duplicate = False
+                for existing_obj in self.grid[r][c].objects:
+                    if (existing_obj['color'] == obj_data['color'] and 
+                        existing_obj['shape'] == obj_data['shape'] and 
+                        existing_obj['zone'] == obj_data['zone']):
+                        # พบวัตถุที่ซ้ำ (สี, รูปร่าง, zone เดียวกัน)
+                        is_duplicate = True
+                        duplicates_skipped += 1
+                        break
+                
+                if not is_duplicate:
+                    self.grid[r][c].objects.append(obj_data)
+                    new_objects_added += 1
             
-            print(f"📦 Saved {len(objects)} objects to cell ({r}, {c})")
+            if new_objects_added > 0:
+                print(f"📦 Saved {new_objects_added} new object(s) to cell ({r}, {c})")
+            if duplicates_skipped > 0:
+                print(f"⚠️ Skipped {duplicates_skipped} duplicate object(s) at cell ({r}, {c})")
 
 class RealTimeVisualizer:
     def __init__(self, grid_size, target_dest=None):
@@ -1159,7 +1452,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=0.5, Ki=0.1, Kd=25, setpoint=target_distance)
+        pid = PID(Kp=0.5, Ki=0.1, Kd=32, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -1171,7 +1464,7 @@ class MovementController:
                 print("\n✅ Move complete!"); break
             output = pid.compute(relative_position, dt)
             ramp_multiplier = min(1.0, 0.1 + ((now - start_time) / 1.0) * 0.9)
-            speed = max(-1.0, min(1.0, output * ramp_multiplier))
+            speed = max(-0.7, min(0.7, output * ramp_multiplier))
             yaw_correction = self._calculate_yaw_correction(attitude_handler, get_compensated_target_yaw()) # MODIFIED
             self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=1)
             print(f"Moving... Dist: {relative_position:.3f}/{target_distance:.2f} m", end='\r')
@@ -1299,8 +1592,12 @@ class EnvironmentScanner:
         # --- [NEW] Global Activity Lock ---
         self.is_performing_full_scan = False
 
-        # ลดความถี่การอ่าน ToF เพื่อลด error
-        self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
+        # ลดความถี่การอ่าน ToF เพื่อลด error และป้องกัน timeout
+        try:
+            self.tof_sensor.sub_distance(freq=5, callback=self._tof_data_handler)
+        except Exception as e:
+            print(f"⚠️ Warning: ToF subscription error: {e}")
+            print("   Continuing without ToF subscription...")
         
         self.side_sensors = {
             "Left":  { "sharp_id": 1, "sharp_port": 1, "ir_id": 1, "ir_port": 2 },
@@ -1325,7 +1622,7 @@ class EnvironmentScanner:
             # เงียบ error เพื่อไม่ให้รบกวนการทำงาน
             pass
 
-    def _get_stable_reading_cm(self, side, duration=0.2):
+    def _get_stable_reading_cm(self, side, duration=0.35):
         sensor_info = self.side_sensors.get(side)
         if not sensor_info: return None, None
         readings = []
@@ -1333,8 +1630,8 @@ class EnvironmentScanner:
         while time.time() - start_time < duration:
             adc = self.sensor_adaptor.get_adc(id=sensor_info["sharp_id"], port=sensor_info["sharp_port"])
             readings.append(convert_adc_to_cm(adc))
-            time.sleep(0.04)
-        if len(readings) < 2: return None, None
+            time.sleep(0.05)
+        if len(readings) < 5: return None, None
         return statistics.mean(readings), statistics.stdev(readings)
 
     def get_sensor_readings(self):
@@ -1345,7 +1642,13 @@ class EnvironmentScanner:
         # [CRITICAL] Set the global lock at the very beginning
         self.is_performing_full_scan = True
         try:
-            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.15)
+            # Center gimbal with error handling
+            try:
+                self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(timeout=5.0)
+                time.sleep(0.2)
+            except Exception as e:
+                print(f"⚠️ Warning: Gimbal center error: {e}")
+                time.sleep(0.3)
             
             readings = {}
             readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
@@ -1376,23 +1679,37 @@ class EnvironmentScanner:
                     try:
                         self.is_gimbal_centered = False
                         t_start = time.time()
-                        self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        try:
+                            self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed(timeout=5.0)
+                        except Exception as gimbal_err:
+                            print(f"    ⚠️ Gimbal move error: {gimbal_err}")
                         t_gimbal = time.time() - t_start
-                        if t_gimbal > 2.0:
+                        if t_gimbal > 3.0:
                             print(f"    ⚠️ Gimbal move took {t_gimbal:.2f}s (unusually long!)")
-                        time.sleep(0.08)  # ลดเวลารอ (เดิม 0.15)
+                        time.sleep(0.4)  # เพิ่มเป็น 0.4 เพื่อให้กล้องมีเวลา stabilize มากขึ้น
                         
-                        # อ่าน ToF เพียงครั้งเดียว (เร็วที่สุด)
-                        tof_confirm_dist_cm = self.side_tof_reading_cm
-                        print(f"    -> ToF reading at {target_gimbal_yaw}°: {tof_confirm_dist_cm:.1f} cm")
+                        # อ่านค่า ToF หลายครั้งเพื่อความแม่นยำ (ลดจาก 3 เป็น 2 ครั้ง)
+                        tof_readings = []
+                        for i in range(2):  # อ่าน 2 ครั้ง
+                            tof_readings.append(self.side_tof_reading_cm)
+                            if i < 1:  # ไม่ sleep ครั้งสุดท้าย
+                                time.sleep(0.1)  # เพิ่มกลับเป็น 0.1
+                        
+                        # ใช้ค่าเฉลี่ยของการอ่าน
+                        tof_confirm_dist_cm = sum(tof_readings) / len(tof_readings)
+                        print(f"    -> ToF readings at {target_gimbal_yaw}°: {[f'{r:.1f}' for r in tof_readings]} cm")
+                        print(f"    -> Average ToF reading: {tof_confirm_dist_cm:.2f} cm.")
                         
                         is_wall = (tof_confirm_dist_cm < self.tof_wall_threshold_cm)
                         print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
                     
                     finally:
-                        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        try:
+                            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(timeout=5.0)
+                        except Exception as gimbal_err:
+                            print(f"    ⚠️ Gimbal return to center error: {gimbal_err}")
                         self.is_gimbal_centered = True
-                        time.sleep(0.05)  # ลดเวลา (เดิม 0.1)
+                        time.sleep(0.2)  # เพิ่มเวลาให้กล้อง stabilize
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -1504,6 +1821,34 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
+            
+            print(f"   -> [{path_name}] Performing side alignment at new position {CURRENT_POSITION}")
+            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+            
+            # --- OBJECT DETECTION AFTER BACKTRACK MOVEMENT ---
+            # ถ้ากล้องไม่พร้อมหลัง backtrack ให้หยุดและรอเช่นกัน
+            if not camera_is_healthy():
+                print(f"🛑 [{path_name}] Camera unhealthy → locking chassis and waiting...")
+                try:
+                    movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+                except Exception:
+                    pass
+                wait_start = time.time()
+                while not camera_is_healthy():
+                    if time.time() - wait_start > 30.0:
+                        print(f"⚠️ [{path_name}] Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
+                        manager.drop_and_reconnect()
+                        wait_start = time.time()
+                    time.sleep(0.2)
+                print(f"✅ [{path_name}] Camera recovered. Continuing...")
+            
+            # ใช้ Gimbal Scan เพื่อสแกนทั้ง 3 ทิศทาง
+            print(f"🔍 [{path_name}] Performing 3-direction gimbal scan at new position...")
+            if camera_is_healthy():
+                scan_all_directions_with_gimbal(scanner, occupancy_map)
+                print(f"🔍 [{path_name}] Gimbal scan completed at new position")
+            else:
+                print(f"📹 [{path_name}] Camera not ready - Skipping gimbal scan")
 
     print(f"✅ {path_name} complete.")
 
@@ -1548,7 +1893,8 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
     
     for step in range(max_steps):
         if not camera_is_healthy():
-            wait_for_camera_recovery(pause_label=f"Step {step+1}")
+            if not wait_for_camera_recovery(pause_label=f"Step {step+1}", max_wait=90.0):
+                print(f"⚠️ Step {step+1}: Camera recovery failed, continuing anyway...")
 
         r, c = CURRENT_POSITION
         print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
@@ -1599,6 +1945,12 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 time.sleep(0.1)
                 # <<< END OF NEW CODE >>>
                 
+                # Check camera health before ToF confirmation
+                if not camera_is_healthy(timeout=3.0):
+                    print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
+                    if not wait_for_camera_recovery(pause_label="Path Confirmation (explore_with_ogm)", max_wait=60.0):
+                        print("⚠️ Camera recovery failed, but continuing...")
+                
                 print("    Confirming path forward with ToF...")
                 is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
                 
@@ -1615,13 +1967,11 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # <<< END OF NEW CODE >>>
                 
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                    # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
-                    print("🔍 Performing object detection after turning to new direction...")
-                    start_detection_mode()
-                    time.sleep(1.0)
-                    save_detected_objects_to_map(occupancy_map)
-                    stop_detection_mode()
-                    print("🔍 Object detection completed after turn")
+                    # Check camera health before moving
+                    if not camera_is_healthy(timeout=3.0):
+                        print("🛑 Camera unhealthy before movement → waiting for recovery...")
+                        if not wait_for_camera_recovery(pause_label="Before Movement", max_wait=60.0):
+                            print("⚠️ Camera recovery failed, but continuing with movement...")
                     
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -1760,7 +2110,12 @@ if __name__ == '__main__':
                         continue
                         
                 except queue.Empty:
-                    # ลบการเช็ค 5-second timeout เพราะ capture thread จัดการเองแล้ว
+                    # Check if we're getting frames regularly
+                    if time.time() - last_frame_time > 5.0 and frame_count > 0:
+                        print("⚠️ No frames received for 5 seconds, checking camera connection...")
+                        if not manager.connected.is_set():
+                            print("📹 Camera disconnected, attempting reconnect...")
+                            manager.connect()
                     time.sleep(0.1)
                     continue
                 except Exception as e:
@@ -1937,11 +2292,13 @@ if __name__ == '__main__':
                         time.sleep(0.2)
                     print("✅ Camera recovered. Resuming exploration...")
                 
-                if is_front_occupied:
-                    print("🚫 Front wall detected - Skipping object detection until robot turns to new direction")
-                    print("🔍 Object detection will be performed after robot turns to clear path")
+                # ใช้ Gimbal Scan เพื่อสแกนทั้ง 3 ทิศทาง (ซ้าย, หน้า, ขวา)
+                print("🔍 Starting 3-direction gimbal scan after alignment...")
+                if camera_is_healthy():
+                    scan_all_directions_with_gimbal(scanner, occupancy_map)
+                    print("🔍 Gimbal scan completed")
                 else:
-                    print("🔍 Object detection will be performed after robot turns to clear path")
+                    print("📹 Camera not ready - Skipping gimbal scan")
                 
                 # Check detection timer
                 check_detection_timer()
@@ -1982,6 +2339,12 @@ if __name__ == '__main__':
                             print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
                         time.sleep(0.1)
                         
+                        # Check camera health before ToF confirmation
+                        if not camera_is_healthy(timeout=3.0):
+                            print("🛑 Camera unhealthy before path confirmation → waiting for recovery...")
+                            if not wait_for_camera_recovery(pause_label="Path Confirmation", max_wait=60.0):
+                                print("⚠️ Camera recovery failed, but continuing with exploration...")
+                        
                         print("    Confirming path forward with ToF...")
                         t_start = time.time()
                         is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
@@ -2002,13 +2365,11 @@ if __name__ == '__main__':
                         # <<< END OF NEW CODE >>>
                         
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
-                            # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
-                            print("🔍 Performing object detection after turning to new direction...")
-                            start_detection_mode()
-                            time.sleep(1.0)
-                            save_detected_objects_to_map(occupancy_map)
-                            stop_detection_mode()
-                            print("🔍 Object detection completed after turn")
+                            # Check camera health before moving
+                            if not camera_is_healthy(timeout=3.0):
+                                print("🛑 Camera unhealthy before movement → waiting for recovery...")
+                                if not wait_for_camera_recovery(pause_label="Before Movement", max_wait=60.0):
+                                    print("⚠️ Camera recovery failed, but continuing with movement...")
                             
                             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                             t_start = time.time()
@@ -2021,6 +2382,31 @@ if __name__ == '__main__':
                             
                             CURRENT_POSITION = (target_r, target_c)
                             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                            
+                            # --- OBJECT DETECTION AFTER MOVING TO NEW POSITION ---
+                            # ถ้ากล้องไม่พร้อมหลังการเคลื่อนที่ ให้หยุดและรอเหมือนเดิม
+                            if not camera_is_healthy():
+                                print("🛑 Camera unhealthy after move → locking chassis and waiting...")
+                                try:
+                                    movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
+                                except Exception:
+                                    pass
+                                wait_start = time.time()
+                                while not camera_is_healthy():
+                                    if time.time() - wait_start > 30.0:
+                                        print("⚠️ Camera recovery timeout (30s). Forcing reconnect and continuing wait...")
+                                        manager.drop_and_reconnect()
+                                        wait_start = time.time()
+                                    time.sleep(0.2)
+                                print("✅ Camera recovered. Continuing...")
+
+                            # ใช้ Gimbal Scan เพื่อสแกนทั้ง 3 ทิศทาง
+                            print("🔍 Performing 3-direction gimbal scan at new position...")
+                            if camera_is_healthy():
+                                scan_all_directions_with_gimbal(scanner, occupancy_map)
+                                print("🔍 Gimbal scan completed at new position")
+                            else:
+                                print("📹 Camera not ready - Skipping gimbal scan")
                             
                             moved = True
                             break
@@ -2046,8 +2432,10 @@ if __name__ == '__main__':
                     movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
                 except Exception:
                     pass
-                wait_for_camera_recovery(pause_label=f"Step {step+1} Recovery")
-                print("✅ Recovery complete. Resuming from current position...")
+                if wait_for_camera_recovery(pause_label=f"Step {step+1} Recovery", max_wait=90.0):
+                    print("✅ Recovery complete. Resuming from current position...")
+                else:
+                    print("⚠️ Recovery failed. Resuming anyway from current position...")
                 continue
         
         
