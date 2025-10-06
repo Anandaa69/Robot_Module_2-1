@@ -30,7 +30,7 @@ import cv2
 SHOW_WINDOW = True
 
 # Data folder
-DATA_FOLDER = r"./Assignment/dude/James_path"
+DATA_FOLDER = r"./Assignment/dude/data"
 
 # --- NEW: Sharp Sensor Configuration ---
 LEFT_SHARP_SENSOR_ID = 1
@@ -62,7 +62,7 @@ TOF_ADJUST_SPEED = 0.1; TOF_CALIBRATION_SLOPE = 0.0894; TOF_CALIBRATION_Y_INTERC
 
 # Camera Configuration
 FRAME_W, FRAME_H = 960, 540; VERTICAL_FOV_DEG = 54.0; PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
-PITCH_BIAS_DEG = 2.5; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
+PITCH_BIAS_DEG = 2; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 
 # ROI Configuration
 ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
@@ -323,7 +323,7 @@ class MovementController:
     
     def move_forward_one_grid(self, axis, target_yaw):
         self.attitude_handler.correct_yaw_to_target(self.chassis, target_yaw)
-        pid = PID(Kp=0.5, Ki=0.15, Kd=0.2, setpoint=0.6)
+        pid = PID(Kp=1.2, Ki=0.15, Kd=13, setpoint=0.6)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving 0.6m, AXIS '{axis}'")
