@@ -43,13 +43,12 @@ SHARP_STDEV_THRESHOLD = 0.2     # ค่าเบี่ยงเบนมาต�
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
-TOF_TIME_CHECK = 0.15
 
-GRID = 5
+GRID = 4
 
 # --- Logical state for the grid map (from map_suay.py) ---
 CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
+CURRENT_DIRECTION =  0  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -808,9 +807,6 @@ def save_detected_objects_to_map(occupancy_map):
         for obj in objects:
             adjusted_obj = obj.copy()
             
-            # เพิ่มข้อมูลว่า object นี้เจอที่โหนดไหน
-            adjusted_obj['detected_from_node'] = list(CURRENT_POSITION)
-            
             # Adjust zone based on robot's facing direction
             # If robot faces East and sees object in Right zone, 
             # the object is actually in the Left zone of the next cell
@@ -856,8 +852,7 @@ def save_detected_objects_to_map(occupancy_map):
             elif obj['zone'] == 'Center':
                 zone_info += " (in center of cell)"
             
-            detected_from_info = f"detected from ({obj['detected_from_node'][0]},{obj['detected_from_node'][1]})" if obj['detected_from_node'] else "detected from unknown"
-            print(f"   📦 Object: {obj['color']} {obj['shape']} {zone_info} {detected_from_info} {'(TARGET!)' if obj['is_target'] else ''}")
+            print(f"   📦 Object: {obj['color']} {obj['shape']} {zone_info} {'(TARGET!)' if obj['is_target'] else ''}")
     else:
         print("📭 No objects detected")
 
@@ -961,8 +956,7 @@ class OccupancyGridMap:
                     'shape': obj.get('shape', 'unknown'),
                     'zone': obj.get('zone', 'unknown'),
                     'is_target': obj.get('is_target', False),
-                    'timestamp': time.time(),
-                    'detected_from_node': obj.get('detected_from_node', [])
+                    'timestamp': time.time()
                 }
                 self.grid[r][c].objects.append(obj_data)
             
@@ -976,36 +970,8 @@ class RealTimeVisualizer:
         self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
         self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000", "wall_prob": "#000080"}
         self.obj_color_map = {'Red': '#FF0000', 'Green': '#00FF00', 'Blue': '#0080FF', 'Yellow': '#FFFF00', 'Unknown': '#808080'}
-        # เพิ่มตัวควบคุมความถี่การวาดกราฟ
-        self.update_counter = 0
-        self.update_interval = 3  # อัปเดตทุก 3 โหนด
 
     def update_plot(self, occupancy_map, robot_pos, path=None):
-        # เพิ่มตัวนับและข้ามการวาดบางครั้ง
-        self.update_counter += 1
-        if self.update_counter % self.update_interval != 0:
-            # วาดเฉพาะหุ่นยนต์และเส้นทาง
-            self.ax.clear()
-            self.ax.set_title("Real-time Hybrid Belief Map (Nodes & Walls)")
-            self.ax.set_xticks([]); self.ax.set_yticks([])
-            self.ax.set_xlim(-0.5, self.grid_size - 0.5)
-            self.ax.set_ylim(self.grid_size - 0.5, -0.5)
-            # วาดเฉพาะกริดพื้นฐาน
-            for r in range(self.grid_size):
-                for c in range(self.grid_size):
-                    prob = occupancy_map.grid[r][c].get_node_probability()
-                    if prob > OCCUPANCY_THRESHOLD: color = '#8B0000'
-                    elif prob < FREE_THRESHOLD: color = '#D3D3D3'
-                    else: color = '#90EE90'
-                    self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=color, edgecolor='k', lw=0.5))
-                    # ไม่แสดงตัวเลขความน่าจะเป็นเพื่อประหยัดเวลา
-            # วาดหุ่นยนต์และเส้นทาง
-            self.ax.plot(robot_pos[1], robot_pos[0], 'o', color=self.colors['robot'], markersize=12, markeredgecolor='white', markeredgewidth=2)
-            if path: self.ax.plot([p[1] for p in path], [p[0] for p in path], color=self.colors['path'], linewidth=3, alpha=0.7)
-            plt.draw(); plt.pause(0.01)
-            return
-        
-        # วาดเต็มรูปแบบทุก 3 โหนด
         self.ax.clear()
         self.ax.set_title("Real-time Hybrid Belief Map (Nodes & Walls)")
         self.ax.set_xticks([]); self.ax.set_yticks([])
@@ -1018,9 +984,7 @@ class RealTimeVisualizer:
                 elif prob < FREE_THRESHOLD: color = '#D3D3D3'
                 else: color = '#90EE90'
                 self.ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=color, edgecolor='k', lw=0.5))
-                # แสดงตัวเลขเฉพาะเซลล์ที่สำคัญ
-                if abs(prob - 0.5) > 0.1:  # เฉพาะเซลล์ที่มีความน่าจะเป็นชัดเจน
-                    self.ax.text(c, r, f"{prob:.2f}", ha="center", va="center", color="black", fontsize=8)
+                self.ax.text(c, r, f"{prob:.2f}", ha="center", va="center", color="black", fontsize=8)
         for r in range(self.grid_size):
             for c in range(self.grid_size):
                 cell = occupancy_map.grid[r][c]
@@ -1104,23 +1068,16 @@ class RealTimeVisualizer:
                             'shape': obj.get('shape', 'Uncertain'),
                             'zone': obj.get('zone', 'Center'),
                             'position': f"({r},{c})",
-                            'is_target': obj.get('is_target', False),
-                            'detected_from_node': obj.get('detected_from_node', [])
+                            'is_target': obj.get('is_target', False)
                         })
         
         # Display object details on the right side
-        display_objects = (self.update_counter % self.update_interval == 0)  # แสดงเฉพาะทุก 3 โหนด
-        if display_objects:
-            # จำกัดจำนวนวัตถุที่แสดง (เฉพาะ 10 อันแรก)
-            limited_objects = all_objects[:10]
+        if all_objects:
             details_text = "=== DETECTED OBJECTS ===\n\n"
-            for obj in sorted(limited_objects, key=lambda x: x['id']):
+            for obj in sorted(all_objects, key=lambda x: x['id']):
                 target_mark = " ⭐TARGET" if obj['is_target'] else ""
-                detected_from = f"detected from ({obj['detected_from_node'][0]},{obj['detected_from_node'][1]})" if obj['detected_from_node'] else "detected from unknown"
                 details_text += f"ID {obj['id']}: {obj['color']} {obj['shape']}\n"
-                details_text += f"  @ {obj['position']} [{obj['zone']}] {detected_from}{target_mark}\n\n"
-            if len(all_objects) > 10:
-                details_text += f"... and {len(all_objects) - 10} more objects"
+                details_text += f"  @ {obj['position']} [{obj['zone']}]{target_mark}\n\n"
             
             # Add text box on the right side
             self.fig.text(0.78, 0.5, details_text, fontsize=9, family='monospace',
@@ -1194,7 +1151,7 @@ class MovementController:
         self.current_x_pos, self.current_y_pos = position_info[0], position_info[1]
 
     def _calculate_yaw_correction(self, attitude_handler, target_yaw):
-        KP_YAW = 0.8; MAX_YAW_SPEED = 25
+        KP_YAW = 1.8; MAX_YAW_SPEED = 25
         yaw_error = attitude_handler.normalize_angle(target_yaw - attitude_handler.current_yaw)
         speed = KP_YAW * yaw_error
         return max(min(speed, MAX_YAW_SPEED), -MAX_YAW_SPEED)
@@ -1202,7 +1159,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=0.5, Ki=0.1, Kd=25, setpoint=target_distance)
+        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -1306,84 +1263,22 @@ class MovementController:
     def rotate_to_direction(self, target_direction, attitude_handler):
         global CURRENT_DIRECTION
         if CURRENT_DIRECTION == target_direction: return
-        
-        # เก็บ reference ของ gimbal เพื่อใช้ในการควบคุม
-        gimbal = None
-        try:
-            gimbal = manager.get_gimbal()
-        except Exception as e:
-            print(f"⚠️ Could not get gimbal reference: {e}")
-        
         diff = (target_direction - CURRENT_DIRECTION + 4) % 4
-        
-        # ทำการเลี้ยวหุ่นก่อน และรอให้เสร็จสิ้น
-        if diff == 1: 
-            self.rotate_90_degrees_right(attitude_handler)
-        elif diff == 3: 
-            self.rotate_90_degrees_left(attitude_handler)
-        elif diff == 2: 
-            self.rotate_90_degrees_right(attitude_handler); 
-            self.rotate_90_degrees_right(attitude_handler)
-        
-        # รอให้การเลี้ยวเสร็จสิ้นก่อนที่จะปรับ Gimbal
-        print("   -> Waiting for robot rotation to complete...")
-        time.sleep(0.5)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
-        
-        # หลังจากหุ่นเลี้ยวเสร็จแล้ว ให้ gimbal หันตามหน้าหุ่น
-        if gimbal is not None:
-            try:
-                print("   -> Adjusting gimbal to follow robot's new direction...")
-                # คำนวณมุม gimbal ที่ต้องหมุนตามการเลี้ยวของหุ่น
-                # เมื่อหุ่นเลี้ยว gimbal ต้องหมุนในทิศทางตรงข้ามเพื่อให้ยังคงมองไปข้างหน้า
-                gimbal_yaw_offset = 0  # gimbal จะอยู่ที่ตำแหน่งเดิมเมื่อหุ่นเลี้ยวเสร็จ
-                
-                # ตรวจสอบมุมปัจจุบันของ gimbal และปรับให้ตรงกับทิศทางใหม่ของหุ่น
-                with gimbal_angle_lock:
-                    current_gimbal_yaw = gimbal_angles[1]  # yaw angle ของ gimbal
-                
-                # คำนวณมุมที่ gimbal ต้องหมุนเพื่อให้ยังคงมองไปข้างหน้า
-                # เมื่อหุ่นเลี้ยว 90 องศา gimbal ต้องหมุน -90 องศาเพื่อให้ยังคงมองไปข้างหน้า
-                if diff == 1:  # เลี้ยวขวา 90 องศา
-                    gimbal_yaw_offset = current_gimbal_yaw - 90
-                elif diff == 3:  # เลี้ยวซ้าย 90 องศา  
-                    gimbal_yaw_offset = current_gimbal_yaw + 90
-                elif diff == 2:  # เลี้ยว 180 องศา
-                    gimbal_yaw_offset = current_gimbal_yaw + 180
-                
-                # ปรับมุมให้อยู่ในช่วง -180 ถึง 180
-                while gimbal_yaw_offset > 180:
-                    gimbal_yaw_offset -= 360
-                while gimbal_yaw_offset <= -180:
-                    gimbal_yaw_offset += 360
-                
-                print(f"   -> Gimbal adjusting from {current_gimbal_yaw:.1f}° to {gimbal_yaw_offset:.1f}°")
-                gimbal.moveto(pitch=0, yaw=gimbal_yaw_offset, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                time.sleep(0.2)  # รอให้ gimbal เสถียร
-                print("   -> ✅ Gimbal adjusted to follow robot direction")
-            except Exception as e:
-                print(f"   -> ⚠️ Gimbal adjustment error: {e}")
+        if diff == 1: self.rotate_90_degrees_right(attitude_handler)
+        elif diff == 3: self.rotate_90_degrees_left(attitude_handler)
+        elif diff == 2: self.rotate_90_degrees_right(attitude_handler); self.rotate_90_degrees_right(attitude_handler)
 
     def rotate_90_degrees_right(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° RIGHT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4; ROBOT_FACE += 1
     def rotate_90_degrees_left(self, attitude_handler):
         global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
         print("🔄 Rotating 90° LEFT...")
         CURRENT_TARGET_YAW = attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
-        
-        # หุ่นเลี้ยวก่อน โดยไม่ให้ gimbal หมุนตาม
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
-        
-        # รอให้หุ่นเลี้ยวเสร็จก่อน แล้วค่อยให้ gimbal กลับมาที่ตำแหน่งกลาง
-        print("   -> Robot rotation completed. Centering gimbal...")
         CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4; ROBOT_FACE -= 1
         if ROBOT_FACE < 1: ROBOT_FACE += 4
     def cleanup(self):
@@ -1453,7 +1348,7 @@ class EnvironmentScanner:
         # [CRITICAL] Set the global lock at the very beginning
         self.is_performing_full_scan = True
         try:
-            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.2)
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.75)
             
             readings = {}
             readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
@@ -1488,7 +1383,7 @@ class EnvironmentScanner:
                         t_gimbal = time.time() - t_start
                         if t_gimbal > 2.0:
                             print(f"    ⚠️ Gimbal move took {t_gimbal:.2f}s (unusually long!)")
-                        time.sleep(0.2)  # ลดเวลารอ
+                        time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
                         
                         # อ่าน ToF เพียงครั้งเดียว (เร็วที่สุด)
                         tof_confirm_dist_cm = self.side_tof_reading_cm
@@ -1500,7 +1395,7 @@ class EnvironmentScanner:
                     finally:
                         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
-                        time.sleep(0.2)  # ลดเวลารอ
+                        time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
 
                 readings[side.lower()] = is_wall
                 print(f"    -> Final Result for {side} side: {'WALL' if is_wall else 'FREE'}")
@@ -1511,16 +1406,9 @@ class EnvironmentScanner:
             self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
-        # เช็คว่ากิมบอลอยู่ที่ 0° อยู่แล้วหรือไม่
-        if not self.is_gimbal_centered:
-            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.2)  # ลดจาก 0.75 เป็น 0.2
-        # อ่าน ToF 3 ครั้งเพื่อความแม่นยำ
-        readings = []
-        for _ in range(3):
-            readings.append(self.last_tof_distance_cm)
-            time.sleep(TOF_TIME_CHECK)
-        return statistics.median(readings)  # ใช้ค่ามัธยฐาน
+        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+        time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
+        return self.last_tof_distance_cm
 
     def cleanup(self):
         try: self.tof_sensor.unsub_distance()
@@ -1548,37 +1436,24 @@ def find_path_bfs(occupancy_map, start, end):
     return None
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
-    """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N)"""
-    from collections import deque
     h, w = occupancy_map.height, occupancy_map.width
-    
-    # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
-    queue = deque([(start_pos, [start_pos])])
-    visited_bfs = {start_pos}
-    
-    while queue:
-        current_pos, path = queue.popleft()
-        
-        # เช็คทุกทิศทาง
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = current_pos[0] + dr, current_pos[1] + dc
-            
-            # เช็คขอบเขตและไม่เคยไปใน BFS นี้
-            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited_bfs:
-                visited_bfs.add((nr, nc))
-                
-                # เช็คว่าเป็นเซลล์ที่ยังไม่ไปในการสำรวจหรือไม่
-                if (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied():
-                    # เจอเซลล์ที่ยังไม่ไปแล้ว! ส่งกลับเส้นทาง
-                    return path + [(nr, nc)]
-                
-                # ถ้าเป็นเซลล์ที่ไปแล้วและไม่เป็นกำแพง ให้เพิ่มในคิว
-                if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
-                    new_path = list(path)
-                    new_path.append((nr, nc))
-                    queue.append(((nr, nc), new_path))
-    
-    return None
+    unvisited_cells_coords = []
+    for r in range(h):
+        for c in range(w):
+            if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                unvisited_cells_coords.append((r, c))
+    if not unvisited_cells_coords: return None
+    shortest_path = None
+    for target_pos in unvisited_cells_coords:
+        path = find_path_bfs(occupancy_map, start_pos, target_pos)
+        if path:
+            if shortest_path is None or len(path) < len(shortest_path):
+                shortest_path = path
+    return shortest_path
+
+# แก้ไขฟังก์ชัน execute_path
+
+# แก้ไขฟังก์ชัน execute_path
 
 # แก้ไขฟังก์ชัน execute_path
 
@@ -1591,8 +1466,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
     # บันทึกตำแหน่งเริ่มต้นของ path execution
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_start")
 
-    # เดินไปยังโหนดก่อนสุดท้าย (ไม่ใช่โหนดสุดท้าย)
-    for i in range(len(path) - 2):  # เปลี่ยนจาก len(path) - 1 เป็น len(path) - 2
+    for i in range(len(path) - 1):
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
         
@@ -1607,7 +1481,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # --- ส่วนการตรวจสอบ ---
             print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
             scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-            time.sleep(0.2)  # ลดเวลารอ
+            time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
             
             # 1. อ่านค่าจากเซ็นเซอร์จริง
             is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
@@ -1632,49 +1506,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             CURRENT_POSITION = (next_r, next_c)
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
-    
-    # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้หันหน้าไปยังทิศทางที่จะไปโหนดสุดท้าย
-    if len(path) >= 2:
-        current_r, current_c = path[-2]  # โหนดก่อนสุดท้าย
-        target_r, target_c = path[-1]    # โหนดสุดท้าย (ที่ยังไม่สำรวจ)
-        dr, dc = target_r - current_r, target_c - current_c
-        target_direction = dir_vectors_map[(dr, dc)]
-        
-        print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Turning to face unvisited node ({target_r},{target_c})...")
-        movement_controller.rotate_to_direction(target_direction, attitude_handler)
-        
-        # เช็ค detection ก่อนเดินไปโหนดสุดท้าย
-        print("🔍 Performing object detection before moving to unvisited node...")
-        start_detection_mode()
-        time.sleep(1.0)
-        save_detected_objects_to_map(occupancy_map)
-        stop_detection_mode()
-        print("🔍 Object detection completed before final move")
-        
-        # เช็คเส้นทางด้วย ToF ก่อนเดินไปโหนดสุดท้าย
-        print(f"   -> [{path_name}] Final confirmation to unvisited node ({target_r},{target_c}) with ToF...")
-        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.2)
-        
-        is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
-        occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
-        print(f"   -> [{path_name}] Final ToF check: Path to unvisited node is {'BLOCKED' if is_blocked else 'CLEAR'}.")
-        
-        if is_blocked:
-            print(f"   -> 🔥 [{path_name}] FINAL STOP. Real-time sensor detected obstacle to unvisited node.")
-            return
-        
-        # เดินไปโหนดสุดท้าย (ที่ยังไม่สำรวจ)
-        print(f"🚀 [{path_name}] Moving to unvisited node ({target_r},{target_c})...")
-        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
-        movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
-        
-        movement_controller.center_in_node_with_tof(scanner, attitude_handler)
-        
-        CURRENT_POSITION = (target_r, target_c)
-        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_unvisited")
-        print(f"✅ [{path_name}] Successfully reached unvisited node ({target_r},{target_c})")
-        visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
+            visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
 
     print(f"✅ {path_name} complete.")
 
@@ -1767,7 +1599,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # Ensure the gimbal is facing forward before checking the path and moving.
                 print("    Ensuring gimbal is centered before ToF confirmation...")
                 scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
-                time.sleep(0.2)  # ลดเวลารอ
+                time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
                 # <<< END OF NEW CODE >>>
                 
                 print("    Confirming path forward with ToF...")
@@ -2151,7 +1983,7 @@ if __name__ == '__main__':
                         t_gimbal = time.time() - t_start
                         if t_gimbal > 2.0:
                             print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
-                        time.sleep(0.2)  # ลดเวลารอ
+                        time.sleep(0.75)  # เพิ่มเวลาอ่าน ToF ให้เสถียร
                         
                         print("    Confirming path forward with ToF...")
                         t_start = time.time()
