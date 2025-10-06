@@ -136,7 +136,7 @@ def safe_gimbal_center(gimbal, timeout=None):
     return safe_gimbal_moveto(gimbal, pitch=0, yaw=0, timeout=timeout)
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (1,3)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -196,7 +196,7 @@ OCCUPANCY_THRESHOLD = 0.7
 FREE_THRESHOLD = 0.3
 
 # --- Visualization Configuration ---
-MAP_FIGURE_SIZE = (6, 4)  # (width, height) ปรับได้ตามต้องการ
+MAP_FIGURE_SIZE = (4, 4)  # (width, height) ปรับได้ตามต้องการ
 
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
@@ -2268,47 +2268,51 @@ def mark_cell_as_dead_end(occupancy_map, position):
     
     print(f"   -> Dead end verification: {accessible_count} accessible directions remaining")
 
-def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
-    """ใช้ BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N) - ปรับปรุงให้เร็วขึ้น"""
+def find_nearest_frontier_node(occupancy_map, start_pos, visited_cells):
+    """หาโหนดที่ใกล้ที่สุดที่มีเพื่อนบ้านที่ยังไม่ได้สำรวจ (frontier node)"""
     h, w = occupancy_map.height, occupancy_map.width
     
-    # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
     queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
     
     while queue:
         current_pos, path = queue.pop(0)
+        r, c = current_pos
         
-        # เช็คทุกทิศทาง
+        # ตรวจสอบว่าโหนดนี้เป็น frontier หรือไม่
+        # (มีเพื่อนบ้านที่ยังไม่ได้สำรวจและเข้าถึงได้)
+        has_unvisited_neighbor = False
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = current_pos[0] + dr, current_pos[1] + dc
+            nr, nc = r + dr, c + dc
             
-            # เช็คขอบเขตและไม่เคยไปใน BFS นี้
+            if 0 <= nr < h and 0 <= nc < w:
+                # ตรวจสอบว่าเป็นโหนดที่ยังไม่ได้สำรวจและไม่ถูกบล็อก
+                if ((nr, nc) not in visited_cells and 
+                    not occupancy_map.grid[nr][nc].is_node_occupied() and
+                    occupancy_map.is_path_clear(r, c, nr, nc)):
+                    has_unvisited_neighbor = True
+                    break
+        
+        # ถ้าเจอ frontier node ให้ return เส้นทางไปที่นั่น
+        if has_unvisited_neighbor and current_pos != start_pos:
+            print(f"   -> Found frontier node: {current_pos} (has unvisited neighbors)")
+            return path
+        
+        # ขยาย BFS ไปยังโหนดข้างเคียง
+        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+            nr, nc = r + dr, c + dc
+            
             if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited_bfs:
-                visited_bfs.add((nr, nc))
-                
-                # **เพิ่มการตรวจสอบนี้:** เช็คว่าโหนดไม่ถูกทำเครื่องหมายเป็นทางตัน
-                if occupancy_map.grid[nr][nc].is_node_occupied():
-                    print(f"   -> Skipping dead-end node ({nr},{nc})")
-                    continue
-                
-                # เช็คว่าเป็นเซลล์ที่ยังไม่ไปในการสำรวจหรือไม่
-                if (nr, nc) not in visited_cells:
-                    # ตรวจสอบการเข้าถึงแบบง่าย - เช็คแค่กำแพงระหว่างเซลล์
-                    if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
-                        print(f"   -> Found accessible unvisited node: ({nr},{nc})")
-                        return path + [(nr, nc)]
-                    else:
-                        print(f"   -> Found unvisited node ({nr},{nc}) but path is blocked")
-                        continue
-                
-                # ถ้าเป็นเซลล์ที่ไปแล้วและไม่เป็นกำแพง ให้เพิ่มในคิว
-                if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
+                # เฉพาะโหนดที่สำรวจแล้วและไม่ถูกบล็อกเท่านั้น
+                if ((nr, nc) in visited_cells and 
+                    not occupancy_map.grid[nr][nc].is_node_occupied() and
+                    occupancy_map.is_path_clear(r, c, nr, nc)):
+                    visited_bfs.add((nr, nc))
                     new_path = list(path)
                     new_path.append((nr, nc))
                     queue.append(((nr, nc), new_path))
     
-    print("   -> No accessible unvisited nodes found")
+    print("   -> No frontier nodes found")
     return None
 
 # แก้ไขฟังก์ชัน execute_path
@@ -2626,48 +2630,37 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         if not moved:
             print("No immediate unvisited path. Initiating backtrack...")
             
-            # ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่ - ปรับปรุงจาก debug_img_3-10.py
-            print(f"🔍 Analyzing if current position {CURRENT_POSITION} is a dead end...")
             if is_dead_end(occupancy_map, CURRENT_POSITION, visited_cells):
-                print(f"🚫 Dead end confirmed at {CURRENT_POSITION}. Marking as fully explored.")
-                # ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน
+                print(f"Dead end confirmed at {CURRENT_POSITION}. Marking as fully explored.")
                 mark_cell_as_dead_end(occupancy_map, CURRENT_POSITION)
-            else:
-                print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
             
-            print("🔍 Searching for accessible unvisited nodes...")
-            backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+            print("Searching for nearest frontier node...")
+            # เปลี่ยนจาก find_nearest_unvisited_path เป็น find_nearest_frontier_node
+            backtrack_path = find_nearest_frontier_node(occupancy_map, CURRENT_POSITION, visited_cells)
             
             if backtrack_path and len(backtrack_path) > 1:
                 target_node = backtrack_path[-1]
-                print(f"🎯 Found backtrack target: {target_node}")
+                print(f"Found frontier node at: {target_node}")
                 
-                # ตรวจสอบจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
                 if target_node in backtrack_attempts:
                     backtrack_attempts[target_node] += 1
-                    print(f"🔄 Attempt #{backtrack_attempts[target_node]} to reach {target_node}")
-                    if backtrack_attempts[target_node] >= 3:  # ถ้าพยายามมากกว่า 3 ครั้ง
-                        print(f"🔄 Too many attempts to reach {target_node}. Marking as dead end.")
+                    if backtrack_attempts[target_node] >= 3:
+                        print(f"Too many attempts to reach {target_node}. Marking as dead end.")
                         mark_cell_as_dead_end(occupancy_map, target_node)
-                        # ลบโหนดนี้ออกจาก backtrack path และลองหาใหม่
-                        print("🔍 Searching for alternative path...")
-                        backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                        backtrack_path = find_nearest_frontier_node(occupancy_map, CURRENT_POSITION, visited_cells)
                         if not backtrack_path or len(backtrack_path) <= 1:
-                            print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                            print("EXPLORATION COMPLETE! No reachable frontier nodes remain.")
                             break
                 else:
                     backtrack_attempts[target_node] = 1
-                    print(f"🆕 First attempt to reach {target_node}")
                 
-                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
-                print("Backtrack to new area complete. Resuming exploration.")
+                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, 
+                            visualizer, occupancy_map, path_name="Backtrack")
+                print("Backtrack to frontier node complete. Resuming exploration.")
                 continue
             else:
-                print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                print("EXPLORATION COMPLETE! No reachable frontier nodes remain.")
                 break
-        # end of per-step block
-    
-    print("\n🎉 === EXPLORATION PHASE FINISHED ===")
 
 # =============================================================================
 # ===== MAIN EXECUTION BLOCK ==================================================
