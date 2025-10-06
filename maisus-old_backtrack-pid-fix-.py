@@ -76,71 +76,10 @@ TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.5
 TOF_FRONT_CM = 17.0  # ระยะเป้าหมายจากหน้า robot ถึงผนัง (cm)
 
-GRID = 5
-
-# --- Gimbal Control Variables ---
-GIMBAL_TIMEOUT_SECONDS = 3.0  # Timeout สำหรับ gimbal movement
-GIMBAL_SETTLE_TIME = 0.8  # เวลารอให้ gimbal settle หลัง movement
-CAMERA_RECOVERY_TIME = 1.0  # เวลารอหลัง camera recovery
-
-ENABLE_PLOT = True
-PLOT_UPDATE_INTERVAL = 3  # อัปเดต plot ทุก N steps (เมื่อเปิดใช้งาน)
-
-def set_plot_enabled(enabled):
-    """เปิด/ปิดการแสดงผล plot แบบ global"""
-    global ENABLE_PLOT
-    ENABLE_PLOT = enabled
-    if enabled:
-        print("📊 Plot visualization ENABLED globally")
-    else:
-        print("📊 Plot visualization DISABLED globally")
-        print("📊 This will save O(N²) computation time during exploration")
-
-def set_plot_update_interval(interval):
-    """ตั้งค่าความถี่การอัปเดต plot"""
-    global PLOT_UPDATE_INTERVAL
-    PLOT_UPDATE_INTERVAL = interval
-    print(f"📊 Plot update interval set to {interval} steps")
-
-def safe_gimbal_moveto(gimbal, pitch, yaw, yaw_speed=SPEED_ROTATE, timeout=None):
-    """จัดการ gimbal movement อย่างปลอดภัยพร้อม timeout"""
-    if timeout is None:
-        timeout = GIMBAL_TIMEOUT_SECONDS
-    
-    try:
-        print(f"🎯 Moving gimbal to pitch={pitch:.1f}°, yaw={yaw:.1f}°...")
-        start_time = time.time()
-        
-        # ใช้ timeout สำหรับ gimbal movement
-        gimbal.moveto(pitch=pitch, yaw=yaw, yaw_speed=yaw_speed).wait_for_completed(timeout=timeout)
-        
-        elapsed_time = time.time() - start_time
-        print(f"✅ Gimbal movement completed in {elapsed_time:.2f}s")
-        
-        # รอให้ gimbal settle
-        time.sleep(GIMBAL_SETTLE_TIME)
-        
-        return True
-        
-    except Exception as e:
-        elapsed_time = time.time() - start_time
-        print(f"⚠️ Gimbal movement failed after {elapsed_time:.2f}s: {e}")
-        
-        # รอให้ gimbal settle แม้จะล้มเหลว
-        time.sleep(GIMBAL_SETTLE_TIME)
-        
-        return False
-
-def safe_gimbal_center(gimbal, timeout=None):
-    """จัดการ gimbal center อย่างปลอดภัย"""
-    return safe_gimbal_moveto(gimbal, pitch=0, yaw=0, timeout=timeout)
+GRID = 4
 
 # --- Logical state for the grid map (from map_suay.py) ---
-<<<<<<< HEAD
 CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
-=======
-CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
->>>>>>> 1e6d70ab7c0d06e0bf1aa0be28d4c7bdaacecdfd
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -200,7 +139,7 @@ OCCUPANCY_THRESHOLD = 0.7
 FREE_THRESHOLD = 0.3
 
 # --- Visualization Configuration ---
-MAP_FIGURE_SIZE = (4, 4)  # (width, height) ปรับได้ตามต้องการ
+MAP_FIGURE_SIZE = (6, 4)  # (width, height) ปรับได้ตามต้องการ
 
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
@@ -1279,11 +1218,9 @@ def pid_tracking_and_firing(manager, roi_state):
                         gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                         time.sleep(0.2)
                         # Then move to front position
-                        success = safe_gimbal_center(gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                        if success:
-                            print("✅ Gimbal returned to front position")
-                        else:
-                            print("⚠️ Gimbal return failed, but continuing...")
+                        gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
+                        time.sleep(0.8)  # เพิ่มเวลารอให้ camera thread settle
+                        print("✅ Gimbal returned to front position")
                     except Exception as e:
                         print(f"⚠️ Error returning gimbal to front: {e}")
                         # Try alternative approach
@@ -1379,11 +1316,9 @@ def pid_tracking_and_firing(manager, roi_state):
                     # Return gimbal to front position
                     gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                     time.sleep(0.2)
-                    success = safe_gimbal_center(gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                    if success:
-                        print("✅ Gimbal returned to front position")
-                    else:
-                        print("⚠️ Gimbal return failed, but continuing...")
+                    gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
+                    time.sleep(0.8)  # เพิ่มเวลารอให้ camera thread settle
+                    print("✅ Gimbal returned to front position")
                 except Exception as e:
                     print(f"⚠️ Error returning gimbal to front: {e}")
                     # Try alternative approach
@@ -1592,45 +1527,15 @@ class RealTimeVisualizer:
     def __init__(self, grid_size, target_dest=None):
         self.grid_size = grid_size
         self.target_dest = target_dest
-        self.enable_plot = ENABLE_PLOT  # ใช้ตัวแปร global
-        self.update_interval = PLOT_UPDATE_INTERVAL  # ใช้ตัวแปร global
-        
-        if self.enable_plot:
-            plt.ion()
-            self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
-            self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000", "wall_prob": "#000080"}
-            self.obj_color_map = {'Red': '#FF0000', 'Green': '#00FF00', 'Blue': '#0080FF', 'Yellow': '#FFFF00', 'Unknown': '#808080'}
-            # เพิ่มตัวควบคุมความถี่การวาดกราฟ
-            self.update_counter = 0
-            print("📊 Plot visualization is ENABLED")
-        else:
-            print("📊 Plot visualization is DISABLED (ENABLE_PLOT = False)")
-            print("📊 This will save O(N²) computation time during exploration")
-    
-    def enable_plotting(self):
-        """เปิดการแสดงผล plot แบบ dynamic"""
-        if not self.enable_plot:
-            self.enable_plot = True
-            plt.ion()
-            self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
-            self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000", "wall_prob": "#000080"}
-            self.obj_color_map = {'Red': '#FF0000', 'Green': '#00FF00', 'Blue': '#0080FF', 'Yellow': '#FFFF00', 'Unknown': '#808080'}
-            self.update_counter = 0
-            print("📊 Plot visualization ENABLED dynamically")
-    
-    def disable_plotting(self):
-        """ปิดการแสดงผล plot แบบ dynamic"""
-        if self.enable_plot:
-            self.enable_plot = False
-            plt.close(self.fig) if hasattr(self, 'fig') else None
-            print("📊 Plot visualization DISABLED dynamically")
-            print("📊 This will save O(N²) computation time during exploration")
+        plt.ion()
+        self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
+        self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000", "wall_prob": "#000080"}
+        self.obj_color_map = {'Red': '#FF0000', 'Green': '#00FF00', 'Blue': '#0080FF', 'Yellow': '#FFFF00', 'Unknown': '#808080'}
+        # เพิ่มตัวควบคุมความถี่การวาดกราฟ
+        self.update_counter = 0
+        self.update_interval = 3  # อัปเดตทุก 3 โหนด
 
     def update_plot(self, occupancy_map, robot_pos, path=None):
-        # ตรวจสอบว่าการแสดงผลเปิดอยู่หรือไม่
-        if not self.enable_plot:
-            return  # ปิดการแสดงผล - ประหยัด O(N²)
-        
         # เพิ่มตัวนับและข้ามการวาดบางครั้ง
         self.update_counter += 1
         if self.update_counter % self.update_interval != 0:
@@ -2002,9 +1907,8 @@ class MovementController:
         if scanner and scanner.gimbal:
             try:
                 print("   -> Adjusting gimbal to match new robot direction...")
-                success = safe_gimbal_center(scanner.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                if not success:
-                    print("   ⚠️ Gimbal adjustment failed, but continuing...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                 print("   -> Gimbal adjusted to match robot direction")
             except Exception as e:
                 print(f"⚠️ Gimbal centering error: {e}")
@@ -2123,10 +2027,7 @@ class EnvironmentScanner:
         # [CRITICAL] Set the global lock at the very beginning
         self.is_performing_full_scan = True
         try:
-            success = safe_gimbal_center(self.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-            if not success:
-                print("⚠️ Gimbal centering failed during scan, but continuing...")
-            time.sleep(0.5)
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed(); time.sleep(0.5)
             
             readings = {}
             readings['front'] = (self.last_tof_distance_cm < self.tof_wall_threshold_cm)
@@ -2160,9 +2061,7 @@ class EnvironmentScanner:
                     
                     try:
                         self.is_gimbal_centered = False
-                        success = safe_gimbal_moveto(self.gimbal, pitch=0, yaw=target_gimbal_yaw, timeout=GIMBAL_TIMEOUT_SECONDS)
-                        if not success:
-                            print(f"⚠️ Gimbal movement to {target_gimbal_yaw}° failed, but continuing...")
+                        self.gimbal.moveto(pitch=0, yaw=target_gimbal_yaw, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         time.sleep(0.1)
                         
                         tof_confirm_dist_cm = self.side_tof_reading_cm
@@ -2172,9 +2071,7 @@ class EnvironmentScanner:
                         print(f"    -> ToF Confirmation: {'WALL DETECTED' if is_wall else 'NO WALL'}.")
                     
                     finally:
-                        success = safe_gimbal_center(self.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                        if not success:
-                            print("⚠️ Gimbal return to center failed, but continuing...")
+                        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                         self.is_gimbal_centered = True
                         time.sleep(0.1)
 
@@ -2187,9 +2084,7 @@ class EnvironmentScanner:
             self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
-        success = safe_gimbal_center(self.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-        if not success:
-            print("⚠️ Gimbal centering failed during ToF reading, but continuing...")
+        self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         time.sleep(0.1)
         return self.last_tof_distance_cm
 
@@ -2256,12 +2151,11 @@ def is_dead_end(occupancy_map, position, visited_cells):
 def mark_cell_as_dead_end(occupancy_map, position):
     """ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน - ปรับปรุงจาก debug_img_3-10.py"""
     r, c = position
+    # เพิ่มข้อมูลใน occupancy map เพื่อระบุว่าโหนดนี้เป็นทางตัน
+    # สามารถใช้ log_odds หรือเพิ่มฟิลด์ใหม่ได้
     print(f"   -> Marking cell {position} as dead end")
     
-    # **เพิ่มส่วนนี้:** ทำเครื่องหมายโหนดว่า occupied เพื่อไม่ให้ pathfinding เข้าถึง
-    occupancy_map.update_node(r, c, True, 'tof')  # Mark as occupied
-    
-    # ตรวจสอบและแสดงข้อมูลการบล็อกทิศทาง
+    # เพิ่มการตรวจสอบเพิ่มเติมว่าจริงๆ แล้วเป็นทางตันหรือไม่
     directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]  # N, E, S, W
     accessible_count = 0
     for dr, dc in directions:
@@ -2272,51 +2166,76 @@ def mark_cell_as_dead_end(occupancy_map, position):
     
     print(f"   -> Dead end verification: {accessible_count} accessible directions remaining")
 
-def find_nearest_frontier_node(occupancy_map, start_pos, visited_cells):
-    """หาโหนดที่ใกล้ที่สุดที่มีเพื่อนบ้านที่ยังไม่ได้สำรวจ (frontier node)"""
+def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
+    """ใช้ BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N) - ปรับปรุงให้เร็วขึ้น"""
     h, w = occupancy_map.height, occupancy_map.width
     
+    # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
     queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
     
     while queue:
         current_pos, path = queue.pop(0)
-        r, c = current_pos
         
-        # ตรวจสอบว่าโหนดนี้เป็น frontier หรือไม่
-        # (มีเพื่อนบ้านที่ยังไม่ได้สำรวจและเข้าถึงได้)
-        has_unvisited_neighbor = False
+        # เช็คทุกทิศทาง
         for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = r + dr, c + dc
+            nr, nc = current_pos[0] + dr, current_pos[1] + dc
             
-            if 0 <= nr < h and 0 <= nc < w:
-                # ตรวจสอบว่าเป็นโหนดที่ยังไม่ได้สำรวจและไม่ถูกบล็อก
-                if ((nr, nc) not in visited_cells and 
-                    not occupancy_map.grid[nr][nc].is_node_occupied() and
-                    occupancy_map.is_path_clear(r, c, nr, nc)):
-                    has_unvisited_neighbor = True
-                    break
-        
-        # ถ้าเจอ frontier node ให้ return เส้นทางไปที่นั่น
-        if has_unvisited_neighbor and current_pos != start_pos:
-            print(f"   -> Found frontier node: {current_pos} (has unvisited neighbors)")
-            return path
-        
-        # ขยาย BFS ไปยังโหนดข้างเคียง
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = r + dr, c + dc
-            
+            # เช็คขอบเขตและไม่เคยไปใน BFS นี้
             if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited_bfs:
-                # เฉพาะโหนดที่สำรวจแล้วและไม่ถูกบล็อกเท่านั้น
-                if ((nr, nc) in visited_cells and 
-                    not occupancy_map.grid[nr][nc].is_node_occupied() and
-                    occupancy_map.is_path_clear(r, c, nr, nc)):
-                    visited_bfs.add((nr, nc))
+                visited_bfs.add((nr, nc))
+                
+                # เช็คว่าเป็นเซลล์ที่ยังไม่ไปในการสำรวจหรือไม่
+                if (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied():
+                    # ตรวจสอบการเข้าถึงแบบง่าย - เช็คแค่กำแพงระหว่างเซลล์
+                    if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
+                        print(f"   -> Found accessible unvisited node: ({nr},{nc})")
+                        return path + [(nr, nc)]
+                    else:
+                        print(f"   -> Found unvisited node ({nr},{nc}) but path is blocked")
+                        continue
+                
+                # ถ้าเป็นเซลล์ที่ไปแล้วและไม่เป็นกำแพง ให้เพิ่มในคิว
+                if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
                     new_path = list(path)
                     new_path.append((nr, nc))
                     queue.append(((nr, nc), new_path))
     
-    print("   -> No frontier nodes found")
+    print("   -> No accessible unvisited nodes found")
+    return None
+
+def check_node_has_unexplored_paths(occupancy_map, position, visited_cells):
+    """ตรวจสอบว่าโหนดปัจจุบันมีทางไปต่อที่ไม่ใช่นอกแมพหรือไม่"""
+    r, c = position
+    h, w = occupancy_map.height, occupancy_map.width
+    
+    # เช็คทุกทิศทาง
+    for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+        nr, nc = r + dr, c + dc
+        
+        # เช็คขอบเขต
+        if 0 <= nr < h and 0 <= nc < w:
+            # เช็คว่าเป็นเซลล์ที่ยังไม่ไปและไม่เป็นผนัง
+            if (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied():
+                # เช็คว่ามีทางไปได้
+                if occupancy_map.is_path_clear(r, c, nr, nc):
+                    return True
+    
+    return False
+
+def add_to_unexplored_queue(unexplored_queue, position, visited_cells):
+    """เพิ่มโหนดลงคิวถ้ายังไม่เคยเพิ่ม"""
+    if position not in unexplored_queue and position not in visited_cells:
+        unexplored_queue.append(position)
+        print(f"📝 Added {position} to unexplored queue (total: {len(unexplored_queue)})")
+
+def get_next_from_unexplored_queue(unexplored_queue, visited_cells):
+    """ดึงโหนดถัดไปจากคิวที่ยังไม่เคยไป"""
+    while unexplored_queue:
+        position = unexplored_queue.pop(0)
+        if position not in visited_cells:
+            print(f"📋 Retrieved {position} from unexplored queue (remaining: {len(unexplored_queue)})")
+            return position
     return None
 
 # แก้ไขฟังก์ชัน execute_path
@@ -2353,10 +2272,8 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # --- ส่วนการตรวจสอบแบบง่าย (ไม่เปิดโหมด detect) ---
             print(f"   -> [{path_name}] Quick ToF check to ({next_r},{next_c})...")
             try:
-                success = safe_gimbal_center(scanner.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                if not success:
-                    print(f"⚠️ Gimbal centering failed during {path_name}")
-                time.sleep(0.3)  # รอให้ gimbal settle หลัง error
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
             except Exception as e:
                 print(f"⚠️ Gimbal movement error during {path_name}: {e}")
                 time.sleep(0.3)  # รอให้ gimbal settle หลัง error
@@ -2434,9 +2351,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         # เช็คเส้นทางด้วย ToF ก่อนเดินไปโหนดสุดท้าย
         print(f"   -> [{path_name}] Final confirmation to unvisited node ({target_r},{target_c}) with ToF...")
-        success = safe_gimbal_center(scanner.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-        if not success:
-            print("⚠️ Gimbal centering failed during final confirmation, but continuing...")
+        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
         
         is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
@@ -2456,14 +2371,6 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         # เดินไปโหนดสุดท้าย (ที่ยังไม่สำรวจ)
         print(f"🚀 [{path_name}] Moving to unvisited node ({target_r},{target_c})...")
-
-        # **เพิ่มการตรวจสอบนี้ก่อนเดิน:**
-        if occupancy_map.grid[target_r][target_c].is_node_occupied():
-            print(f"⚠️ Target node ({target_r},{target_c}) is marked as dead end. Aborting move.")
-            return
-
-        axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
-        movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
         axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
         movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
         
@@ -2513,6 +2420,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
     global CURRENT_POSITION, CURRENT_DIRECTION, IMU_DRIFT_COMPENSATION_DEG
     visited_cells = set()
     backtrack_attempts = {}  # นับจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
+    unexplored_queue = []  # คิวสำหรับโหนดที่ยังมีทางไปต่อ
     
     # บันทึกตำแหน่งเริ่มต้น
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "exploration_start")
@@ -2566,9 +2474,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
                 print("    Ensuring gimbal is centered before ToF confirmation...")
-                success = safe_gimbal_center(scanner.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-                if not success:
-                    print("    ⚠️ Gimbal centering failed, but continuing...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
                 time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                 # <<< END OF NEW CODE >>>
                 
@@ -2634,52 +2540,136 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         if not moved:
             print("No immediate unvisited path. Initiating backtrack...")
             
+            # ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่ - ปรับปรุงจาก debug_img_3-10.py
+            print(f"🔍 Analyzing if current position {CURRENT_POSITION} is a dead end...")
             if is_dead_end(occupancy_map, CURRENT_POSITION, visited_cells):
-                print(f"Dead end confirmed at {CURRENT_POSITION}. Marking as fully explored.")
+                print(f"🚫 Dead end confirmed at {CURRENT_POSITION}. Marking as fully explored.")
+                # ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน
                 mark_cell_as_dead_end(occupancy_map, CURRENT_POSITION)
+            else:
+                print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
+                # เพิ่มโหนดนี้ลงคิวถ้ายังมีทางไปต่อ
+                if check_node_has_unexplored_paths(occupancy_map, CURRENT_POSITION, visited_cells):
+                    add_to_unexplored_queue(unexplored_queue, CURRENT_POSITION, visited_cells)
             
-            print("Searching for nearest frontier node...")
-            # เปลี่ยนจาก find_nearest_unvisited_path เป็น find_nearest_frontier_node
-            backtrack_path = find_nearest_frontier_node(occupancy_map, CURRENT_POSITION, visited_cells)
+            print("🔍 Searching for accessible unvisited nodes...")
+            backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+            
+            # ถ้าไม่พบ path ให้ลองดึงจากคิว
+            if not backtrack_path or len(backtrack_path) <= 1:
+                print("🔍 No immediate backtrack path found. Checking unexplored queue...")
+                next_position = get_next_from_unexplored_queue(unexplored_queue, visited_cells)
+                if next_position:
+                    print(f"🎯 Found position {next_position} from unexplored queue. Creating path...")
+                    backtrack_path = find_path_bfs(occupancy_map, CURRENT_POSITION, next_position)
+                    if backtrack_path and len(backtrack_path) > 1:
+                        print(f"✅ Created path to {next_position}: {backtrack_path}")
+                    else:
+                        print(f"❌ Failed to create path to {next_position}")
+                        backtrack_path = None
+                
+                # ถ้ายังไม่พบ path ให้ลองหาโหนดที่ยังไม่ได้ไปแบบละเอียด
+                if not backtrack_path or len(backtrack_path) <= 1:
+                    print("🔍 Performing detailed search for unvisited nodes...")
+                    h, w = occupancy_map.height, occupancy_map.width
+                    unvisited_found = False
+                    
+                    # หาโหนดที่ยังไม่ได้ไปทั้งหมด
+                    for r in range(h):
+                        for c in range(w):
+                            if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                                print(f"🔍 Found unvisited node ({r},{c}). Attempting to create path...")
+                                test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, (r, c))
+                                if test_path and len(test_path) > 1:
+                                    print(f"✅ Successfully created path to ({r},{c}): {test_path}")
+                                    backtrack_path = test_path
+                                    unvisited_found = True
+                                    break
+                        if unvisited_found:
+                            break
+                    
+                    if not unvisited_found:
+                        print("🔍 No accessible unvisited nodes found in detailed search.")
             
             if backtrack_path and len(backtrack_path) > 1:
                 target_node = backtrack_path[-1]
-                print(f"Found frontier node at: {target_node}")
+                print(f"🎯 Found backtrack target: {target_node}")
                 
+                # ตรวจสอบจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
                 if target_node in backtrack_attempts:
                     backtrack_attempts[target_node] += 1
-                    if backtrack_attempts[target_node] >= 3:
-                        print(f"Too many attempts to reach {target_node}. Marking as dead end.")
+                    print(f"🔄 Attempt #{backtrack_attempts[target_node]} to reach {target_node}")
+                    if backtrack_attempts[target_node] >= 3:  # ถ้าพยายามมากกว่า 3 ครั้ง
+                        print(f"🔄 Too many attempts to reach {target_node}. Marking as dead end.")
                         mark_cell_as_dead_end(occupancy_map, target_node)
-                        backtrack_path = find_nearest_frontier_node(occupancy_map, CURRENT_POSITION, visited_cells)
+                        # ลบโหนดนี้ออกจาก backtrack path และลองหาใหม่
+                        print("🔍 Searching for alternative path...")
+                        backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
                         if not backtrack_path or len(backtrack_path) <= 1:
-                            print("EXPLORATION COMPLETE! No reachable frontier nodes remain.")
+                            print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
                             break
                 else:
                     backtrack_attempts[target_node] = 1
+                    print(f"🆕 First attempt to reach {target_node}")
                 
-                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, 
-                            visualizer, occupancy_map, path_name="Backtrack")
-                print("Backtrack to frontier node complete. Resuming exploration.")
+                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                print("Backtrack to new area complete. Resuming exploration.")
                 continue
             else:
-                print("EXPLORATION COMPLETE! No reachable frontier nodes remain.")
+                print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                # ตรวจสอบว่ายังมีโหนดในคิวหรือไม่
+                if unexplored_queue:
+                    print(f"🔍 Found {len(unexplored_queue)} positions in unexplored queue. Attempting to visit them...")
+                    next_position = get_next_from_unexplored_queue(unexplored_queue, visited_cells)
+                    if next_position:
+                        print(f"🎯 Attempting to visit {next_position} from queue...")
+                        backtrack_path = find_path_bfs(occupancy_map, CURRENT_POSITION, next_position)
+                        if backtrack_path and len(backtrack_path) > 1:
+                            print(f"✅ Found path to {next_position}: {backtrack_path}")
+                            execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                            print("Backtrack to queued position complete. Resuming exploration.")
+                            continue
+                        else:
+                            print(f"❌ No path to {next_position}. Removing from queue.")
+                else:
+                    # ตรวจสอบแบบละเอียดว่ายังมีโหนดที่ยังไม่ได้ไปหรือไม่
+                    print("🔍 Performing final detailed check for unvisited nodes...")
+                    h, w = occupancy_map.height, occupancy_map.width
+                    unvisited_count = 0
+                    unvisited_nodes = []
+                    
+                    for r in range(h):
+                        for c in range(w):
+                            if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                                unvisited_count += 1
+                                unvisited_nodes.append((r, c))
+                    
+                    if unvisited_count > 0:
+                        print(f"⚠️ WARNING: Found {unvisited_count} unvisited nodes: {unvisited_nodes}")
+                        print("🔍 Attempting to create paths to these nodes...")
+                        
+                        for node in unvisited_nodes:
+                            print(f"🔍 Trying to create path to {node}...")
+                            test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, node)
+                            if test_path and len(test_path) > 1:
+                                print(f"✅ Successfully created path to {node}: {test_path}")
+                                execute_path(test_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                print("Backtrack to unvisited node complete. Resuming exploration.")
+                                break
+                        else:
+                            print("❌ No accessible paths found to any unvisited nodes.")
+                            print("🎉 All positions in queue have been processed. Exploration truly complete!")
+                    else:
+                        print("🎉 All positions in queue have been processed. Exploration truly complete!")
                 break
+        # end of per-step block
+    
+    print("\n🎉 === EXPLORATION PHASE FINISHED ===")
 
 # =============================================================================
 # ===== MAIN EXECUTION BLOCK ==================================================
 # =============================================================================
 if __name__ == '__main__':
-    # แสดงการตั้งค่า plot
-    print("📊 Plot Control Settings:")
-    print(f"   ENABLE_PLOT: {ENABLE_PLOT}")
-    print(f"   PLOT_UPDATE_INTERVAL: {PLOT_UPDATE_INTERVAL}")
-    if not ENABLE_PLOT:
-        print("   ⚡ Plot visualization is DISABLED - This will save O(N²) computation time!")
-    else:
-        print("   📊 Plot visualization is ENABLED - This may slow down exploration")
-    print()
-    
     ep_robot = None
     occupancy_map = None
     attitude_handler = AttitudeHandler()
@@ -2912,11 +2902,8 @@ if __name__ == '__main__':
         
         print(" GIMBAL: Centering gimbal...")
         try:
-            success = safe_gimbal_center(ep_gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
-            if success:
-                print("✅ Gimbal centered successfully")
-            else:
-                print("⚠️ Gimbal centering failed, but continuing...")
+            ep_gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            time.sleep(0.8)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
         except Exception as e:
             print(f"⚠️ Gimbal centering error: {e}")
             print("🔄 Continuing without gimbal centering...")
@@ -2937,6 +2924,7 @@ if __name__ == '__main__':
         
         visited_cells = set()
         backtrack_attempts = {}  # นับจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
+        unexplored_queue = []  # คิวสำหรับโหนดที่ยังมีทางไปต่อ
         
         for step in range(40):  # max_steps
             try:
@@ -3014,12 +3002,11 @@ if __name__ == '__main__':
                         
                         print("    Ensuring gimbal is centered before ToF confirmation...")
                         t_start = time.time()
-                        success = safe_gimbal_center(scanner.gimbal, timeout=GIMBAL_TIMEOUT_SECONDS)
+                        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        time.sleep(0.5)  # เพิ่มเวลารอให้ gimbal settle และ camera thread
                         t_gimbal = time.time() - t_start
                         if t_gimbal > 2.0:
                             print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
-                        if not success:
-                            print("    ⚠️ Gimbal centering failed, but continuing...")
                         time.sleep(0.2)  # ลดเวลารอ
                         
                         print("    Confirming path forward with ToF...")
@@ -3099,9 +3086,48 @@ if __name__ == '__main__':
                         mark_cell_as_dead_end(occupancy_map, CURRENT_POSITION)
                     else:
                         print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
+                        # เพิ่มโหนดนี้ลงคิวถ้ายังมีทางไปต่อ
+                        if check_node_has_unexplored_paths(occupancy_map, CURRENT_POSITION, visited_cells):
+                            add_to_unexplored_queue(unexplored_queue, CURRENT_POSITION, visited_cells)
                     
                     print("🔍 Searching for accessible unvisited nodes...")
                     backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                    
+                    # ถ้าไม่พบ path ให้ลองดึงจากคิว
+                    if not backtrack_path or len(backtrack_path) <= 1:
+                        print("🔍 No immediate backtrack path found. Checking unexplored queue...")
+                        next_position = get_next_from_unexplored_queue(unexplored_queue, visited_cells)
+                        if next_position:
+                            print(f"🎯 Found position {next_position} from unexplored queue. Creating path...")
+                            backtrack_path = find_path_bfs(occupancy_map, CURRENT_POSITION, next_position)
+                            if backtrack_path and len(backtrack_path) > 1:
+                                print(f"✅ Created path to {next_position}: {backtrack_path}")
+                            else:
+                                print(f"❌ Failed to create path to {next_position}")
+                                backtrack_path = None
+                        
+                        # ถ้ายังไม่พบ path ให้ลองหาโหนดที่ยังไม่ได้ไปแบบละเอียด
+                        if not backtrack_path or len(backtrack_path) <= 1:
+                            print("🔍 Performing detailed search for unvisited nodes...")
+                            h, w = occupancy_map.height, occupancy_map.width
+                            unvisited_found = False
+                            
+                            # หาโหนดที่ยังไม่ได้ไปทั้งหมด
+                            for r in range(h):
+                                for c in range(w):
+                                    if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                                        print(f"🔍 Found unvisited node ({r},{c}). Attempting to create path...")
+                                        test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, (r, c))
+                                        if test_path and len(test_path) > 1:
+                                            print(f"✅ Successfully created path to ({r},{c}): {test_path}")
+                                            backtrack_path = test_path
+                                            unvisited_found = True
+                                            break
+                                if unvisited_found:
+                                    break
+                            
+                            if not unvisited_found:
+                                print("🔍 No accessible unvisited nodes found in detailed search.")
                     
                     if backtrack_path and len(backtrack_path) > 1:
                         target_node = backtrack_path[-1]
@@ -3129,6 +3155,50 @@ if __name__ == '__main__':
                         continue
                     else:
                         print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                        # ตรวจสอบว่ายังมีโหนดในคิวหรือไม่
+                        if unexplored_queue:
+                            print(f"🔍 Found {len(unexplored_queue)} positions in unexplored queue. Attempting to visit them...")
+                            next_position = get_next_from_unexplored_queue(unexplored_queue, visited_cells)
+                            if next_position:
+                                print(f"🎯 Attempting to visit {next_position} from queue...")
+                                backtrack_path = find_path_bfs(occupancy_map, CURRENT_POSITION, next_position)
+                                if backtrack_path and len(backtrack_path) > 1:
+                                    print(f"✅ Found path to {next_position}: {backtrack_path}")
+                                    execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                    print("Backtrack to queued position complete. Resuming exploration.")
+                                    continue
+                                else:
+                                    print(f"❌ No path to {next_position}. Removing from queue.")
+                        else:
+                            # ตรวจสอบแบบละเอียดว่ายังมีโหนดที่ยังไม่ได้ไปหรือไม่
+                            print("🔍 Performing final detailed check for unvisited nodes...")
+                            h, w = occupancy_map.height, occupancy_map.width
+                            unvisited_count = 0
+                            unvisited_nodes = []
+                            
+                            for r in range(h):
+                                for c in range(w):
+                                    if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                                        unvisited_count += 1
+                                        unvisited_nodes.append((r, c))
+                            
+                            if unvisited_count > 0:
+                                print(f"⚠️ WARNING: Found {unvisited_count} unvisited nodes: {unvisited_nodes}")
+                                print("🔍 Attempting to create paths to these nodes...")
+                                
+                                for node in unvisited_nodes:
+                                    print(f"🔍 Trying to create path to {node}...")
+                                    test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, node)
+                                    if test_path and len(test_path) > 1:
+                                        print(f"✅ Successfully created path to {node}: {test_path}")
+                                        execute_path(test_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                        print("Backtrack to unvisited node complete. Resuming exploration.")
+                                        break
+                                else:
+                                    print("❌ No accessible paths found to any unvisited nodes.")
+                                    print("🎉 All positions in queue have been processed. Exploration truly complete!")
+                            else:
+                                print("🎉 All positions in queue have been processed. Exploration truly complete!")
                         break
             
             except Exception as e:

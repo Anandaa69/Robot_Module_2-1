@@ -57,7 +57,7 @@ LEFT_TARGET_CM = 16.0
 
 RIGHT_SHARP_SENSOR_ID = 2
 RIGHT_SHARP_SENSOR_PORT = 1
-RIGHT_TARGET_CM = 13.0
+RIGHT_TARGET_CM = 16.0
 
 # --- IR Sensor Configuration ---
 LEFT_IR_SENSOR_ID = 1
@@ -67,19 +67,18 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.1    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.2    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.5
-TOF_FRONT_CM = 17.0  # ระยะเป้าหมายจากหน้า robot ถึงผนัง (cm)
 
-GRID = 4
+GRID = 5
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -717,7 +716,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
         if cam is None:
             time.sleep(0.1)
             continue
-        
+            
         # Check if gimbal is moving (reduce camera load during gimbal movement)
         try:
             with gimbal_angle_lock:
@@ -758,20 +757,20 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
         current_time = time.time()
         if fail >= 3 and (current_time - last_success_time) > 1.5:  # ลด threshold
             print("⚠️ Too many camera errors → drop & reconnect")
-            try:
-                manager.drop_and_reconnect()
-                # Clear queue to prevent buildup
-                while not q.empty():
-                    try: 
-                        q.get_nowait()
-                    except queue.Empty:
-                        break
-                fail = 0
-                last_success_time = time.time()
-                time.sleep(0.5)  # ลด sleep time
-            except Exception as reconnect_error:
-                print(f"⚠️ Reconnect error: {reconnect_error}")
-                time.sleep(0.3)
+                try:
+                    manager.drop_and_reconnect()
+                    # Clear queue to prevent buildup
+                    while not q.empty():
+                        try:
+                            q.get_nowait()
+                        except queue.Empty:
+                            break
+                    fail = 0
+                    last_success_time = time.time()
+                    time.sleep(0.5)  # ลด sleep time
+                except Exception as reconnect_error:
+                    print(f"⚠️ Reconnect error: {reconnect_error}")
+                    time.sleep(0.3)
             
         # Increase sleep time during gimbal movement
         sleep_time = 0.05 if gimbal_moving else 0.02
@@ -810,7 +809,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             # Debug: Print pitch info every 30 frames
             if processing_count % 30 == 0:
                 print(f"🎯 Pitch info: pitch={pitch_deg:.1f}°, ROI_Y0={ROI_Y0}, roi_y_dynamic={roi_y_dynamic}")
-            
+
             ROI_X, ROI_W = roi_state["x"], roi_state["w"]
             ROI_H = roi_state["h"]
             roi_state["y"] = roi_y_dynamic
@@ -1186,22 +1185,22 @@ def pid_tracking_and_firing(manager, roi_state):
                         except Exception as e2:
                             print(f"⚠️ Error stopping gimbal: {e2}")
                     
-                    is_tracking_mode = False
-                    fired_targets.clear()
-                    shots_fired = 0
-                    current_target_id = None
-                    total_targets_count = 0
-                    targets_detected_at_start.clear()
-                    all_targets_fired = False
-                    targets_fired_count = 0
-                    # Stop detection mode when tracking is complete
-                    stop_detection_mode()
-                    return False
-                else:
-                    # Still have targets to fire at, continue with current target
-                    print(f"🎯 Still have {total_targets_count - targets_fired_count} targets remaining. Continuing...")
-                    shots_fired = 0  # Reset shot count for same target
-                    # Continue tracking without stopping
+                is_tracking_mode = False
+                fired_targets.clear()
+                shots_fired = 0
+                current_target_id = None
+                total_targets_count = 0
+                targets_detected_at_start.clear()
+                all_targets_fired = False
+                targets_fired_count = 0
+                # Stop detection mode when tracking is complete
+                stop_detection_mode()
+                return False
+        else:
+            # Still have targets to fire at, continue with current target
+            print(f"🎯 Still have {total_targets_count - targets_fired_count} targets remaining. Continuing...")
+            shots_fired = 0  # Reset shot count for same target
+            # Continue tracking without stopping
     else:
         # Target lost - implement recovery strategy
         if target_lost_start_time == 0.0:
@@ -1269,7 +1268,7 @@ def pid_tracking_and_firing(manager, roi_state):
                 print("🎯 No more targets available. Returning to normal exploration...")
                 try:
                     # Return gimbal to front position
-                    gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+            gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
                     time.sleep(0.2)
                     gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
                     time.sleep(0.5)
@@ -1728,7 +1727,7 @@ class MovementController:
     def move_forward_one_grid(self, axis, attitude_handler):
         attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw()) # MODIFIED
         target_distance = 0.6
-        pid = PID(Kp=1.1, Ki=0.25, Kd=8, setpoint=target_distance)
+        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=target_distance)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving FORWARD 0.6m, monitoring GLOBAL AXIS '{axis}'")
@@ -1772,7 +1771,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=TOF_FRONT_CM, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=15, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -2186,6 +2185,8 @@ def find_nearest_unvisited_path_optimized(occupancy_map, start_pos, visited_cell
         print("   -> No unvisited cells remaining")
         return None
     
+    print(f"   -> DEBUG: Looking for path to unvisited cells: {unvisited_cells}")
+    
     # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
     queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
@@ -2218,6 +2219,7 @@ def find_nearest_unvisited_path_optimized(occupancy_map, start_pos, visited_cell
                     queue.append(((nr, nc), new_path))
     
     print("   -> No accessible unvisited nodes found")
+    print(f"   -> DEBUG: BFS visited {len(visited_bfs)} cells, but none were unvisited")
     return None
 
 # แก้ไขฟังก์ชัน execute_path
@@ -2254,7 +2256,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # --- ส่วนการตรวจสอบแบบง่าย (ไม่เปิดโหมด detect) ---
             print(f"   -> [{path_name}] Quick ToF check to ({next_r},{next_c})...")
             try:
-                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
                 time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal settle
             except Exception as e:
                 print(f"⚠️ Gimbal movement error during {path_name}: {e}")
@@ -2589,6 +2591,21 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                         execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
                         print("Backtrack to new area complete. Resuming exploration.")
                         continue
+                    else:
+                        print("⚠️ CRITICAL: Even relaxed path finding failed!")
+                        print("🔍 DEBUG: Checking if unvisited cells are truly inaccessible...")
+                        # Double-check each unvisited cell
+                        for unvisited_cell in unvisited_cells:
+                            print(f"   -> Checking accessibility to {unvisited_cell}...")
+                            # Try to find any path to this cell
+                            test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, unvisited_cell)
+                            if test_path:
+                                print(f"   -> ✅ Path found to {unvisited_cell}: {test_path}")
+                                execute_path(test_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                print("Backtrack to new area complete. Resuming exploration.")
+                                continue
+                            else:
+                                print(f"   -> ❌ No path to {unvisited_cell}")
                 
                 print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
                 break
@@ -2685,7 +2702,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
@@ -3016,7 +3033,16 @@ if __name__ == '__main__':
                         print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
                     
                     print("🔍 Searching for accessible unvisited nodes...")
-                    backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                    # Pre-compute unvisited cells once to avoid repeated computation
+                    unvisited_cells = get_unvisited_cells_fast(occupancy_map, visited_cells)
+                    print(f"🔍 DEBUG: Found {len(unvisited_cells)} unvisited cells: {unvisited_cells}")
+                    
+                    if not unvisited_cells:
+                        print("🎉 EXPLORATION COMPLETE! No unvisited cells remain.")
+                        break
+                    
+                    # Use optimized path finding with pre-computed unvisited cells
+                    backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
                     
                     if backtrack_path and len(backtrack_path) > 1:
                         target_node = backtrack_path[-1]
@@ -3029,10 +3055,22 @@ if __name__ == '__main__':
                             if backtrack_attempts[target_node] >= 3:  # ถ้าพยายามมากกว่า 3 ครั้ง
                                 print(f"🔄 Too many attempts to reach {target_node}. Marking as dead end.")
                                 mark_cell_as_dead_end(occupancy_map, target_node)
-                                # ลบโหนดนี้ออกจาก backtrack path และลองหาใหม่
+                                # ลบโหนดนี้ออกจาก unvisited_cells และลองหาใหม่
+                                unvisited_cells.remove(target_node)
                                 print("🔍 Searching for alternative path...")
-                                backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
+                                backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
                                 if not backtrack_path or len(backtrack_path) <= 1:
+                                    if len(unvisited_cells) > 0:
+                                        print("⚠️ WARNING: There are still unvisited cells but no path found!")
+                                        print("🔄 Trying to find alternative path with relaxed constraints...")
+                                        # Try with relaxed path finding
+                                        backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                                        if backtrack_path and len(backtrack_path) > 1:
+                                            print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
+                                            execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                            print("Backtrack to new area complete. Resuming exploration.")
+                                            continue
+                                    
                                     print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
                                     break
                         else:
@@ -3043,6 +3081,32 @@ if __name__ == '__main__':
                         print("Backtrack to new area complete. Resuming exploration.")
                         continue
                     else:
+                        if len(unvisited_cells) > 0:
+                            print("⚠️ WARNING: There are still unvisited cells but no path found!")
+                            print("🔄 Trying to find alternative path with relaxed constraints...")
+                            # Try with relaxed path finding
+                            backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                            if backtrack_path and len(backtrack_path) > 1:
+                                print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
+                                execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                print("Backtrack to new area complete. Resuming exploration.")
+                                continue
+                            else:
+                                print("⚠️ CRITICAL: Even relaxed path finding failed!")
+                                print("🔍 DEBUG: Checking if unvisited cells are truly inaccessible...")
+                                # Double-check each unvisited cell
+                                for unvisited_cell in unvisited_cells:
+                                    print(f"   -> Checking accessibility to {unvisited_cell}...")
+                                    # Try to find any path to this cell
+                                    test_path = find_path_bfs(occupancy_map, CURRENT_POSITION, unvisited_cell)
+                                    if test_path:
+                                        print(f"   -> ✅ Path found to {unvisited_cell}: {test_path}")
+                                        execute_path(test_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
+                                        print("Backtrack to new area complete. Resuming exploration.")
+                                        continue
+                                    else:
+                                        print(f"   -> ❌ No path to {unvisited_cell}")
+                        
                         print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
                         break
             

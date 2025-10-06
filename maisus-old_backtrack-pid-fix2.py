@@ -530,7 +530,7 @@ def load_resume_data():
         
         print(f"✅ Resume data loaded:")
         print(f"   Position: {CURRENT_POSITION}")
-        print(f"   Direction: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION]}")
+        print(f"   Direction: {['North', 'East', 'South', 'West'][CURRENT_DIRECTION] if 0 <= CURRENT_DIRECTION <= 3 else 'INVALID'}")
         print(f"   Yaw: {CURRENT_TARGET_YAW:.1f}°")
         print(f"   IMU Compensation: {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
         print(f"   Previous positions logged: {len(POSITION_LOG)}")
@@ -1417,7 +1417,11 @@ def save_detected_objects_to_map(occupancy_map):
     if objects:
         # Calculate next node position (where robot will move to)
         dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]  # N, E, S, W
-        next_r, next_c = CURRENT_POSITION[0] + dir_vectors[CURRENT_DIRECTION][0], CURRENT_POSITION[1] + dir_vectors[CURRENT_DIRECTION][1]
+        if 0 <= CURRENT_DIRECTION <= 3:
+            next_r, next_c = CURRENT_POSITION[0] + dir_vectors[CURRENT_DIRECTION][0], CURRENT_POSITION[1] + dir_vectors[CURRENT_DIRECTION][1]
+        else:
+            print(f"⚠️ Invalid CURRENT_DIRECTION: {CURRENT_DIRECTION}, using default position")
+            next_r, next_c = CURRENT_POSITION[0], CURRENT_POSITION[1]
         
         # Adjust object zones based on robot's facing direction
         adjusted_objects = []
@@ -1839,7 +1843,7 @@ class AttitudeHandler:
 class PID:
     def __init__(self, Kp, Ki, Kd, setpoint=0):
         self.Kp, self.Ki, self.Kd, self.setpoint = Kp, Ki, Kd, setpoint
-        self.prev_error, self.integral, self.integral_max = 0, 0, 1.0
+        self.prev_error, self.integral, self.integral_max = 0, 0, I_CLAMP
     def compute(self, current, dt):
         error = self.setpoint - current
         self.integral += error * dt; self.integral = max(min(self.integral, self.integral_max), -self.integral_max)
@@ -2268,7 +2272,7 @@ def mark_cell_as_dead_end(occupancy_map, position):
     print(f"   -> Dead end verification: {accessible_count} accessible directions remaining")
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
-    """ใช้ BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N) - ปรับปรุงให้เร็วขึ้น"""
+    """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N) - ปรับปรุงให้ตรวจสอบการเข้าถึงได้"""
     h, w = occupancy_map.height, occupancy_map.width
     
     # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
@@ -2288,7 +2292,8 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                 
                 # เช็คว่าเป็นเซลล์ที่ยังไม่ไปในการสำรวจหรือไม่
                 if (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied():
-                    # ตรวจสอบการเข้าถึงแบบง่าย - เช็คแค่กำแพงระหว่างเซลล์
+                    # ตรวจสอบเพิ่มเติมว่าโหนดนี้สามารถเข้าถึงได้จริงหรือไม่
+                    # โดยตรวจสอบว่ามีเส้นทางที่เปิดอยู่จากโหนดปัจจุบันไปยังโหนดปลายทาง
                     if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
                         print(f"   -> Found accessible unvisited node: ({nr},{nc})")
                         return path + [(nr, nc)]
@@ -2352,7 +2357,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
             
             # อัปเดตแผนที่
-            occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+            occupancy_map.update_wall(current_r, current_c, dir_map_abs_char.get(CURRENT_DIRECTION, 'UNKNOWN'), is_blocked, 'tof')
             print(f"   -> [{path_name}] Quick ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION)
 
@@ -2364,6 +2369,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
             
+            # Centering ใน backtracking เหมือนใน long-02-12_00_dee.py
             movement_controller.center_in_node_with_tof(scanner, attitude_handler)
 
             CURRENT_POSITION = (next_r, next_c)
@@ -2393,7 +2399,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         print("🔍 Performing object detection before moving to unvisited node...")
         try:
             start_detection_mode()
-            time.sleep(0.5)
+            time.sleep(0.2)
             save_detected_objects_to_map(occupancy_map)
             
             # Check for targets and start PID tracking if found
@@ -2446,6 +2452,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
         movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
         
+        # Centering ใน backtracking เหมือนใน long-02-12_00_dee.py
         movement_controller.center_in_node_with_tof(scanner, attitude_handler)
         
         CURRENT_POSITION = (target_r, target_c)
@@ -2501,7 +2508,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
             wait_for_camera_recovery(pause_label=f"Step {step+1}")
 
         r, c = CURRENT_POSITION
-        print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
+        print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION] if 0 <= CURRENT_DIRECTION <= 3 else 'INVALID'} ---")
         
         # บันทึกตำแหน่งในแต่ละ step
         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
@@ -2514,7 +2521,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         print("--- Performing Scan for Mapping (Front ToF Only) ---")
         is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
         dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
-        occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+        occupancy_map.update_wall(r, c, dir_map_abs_char.get(CURRENT_DIRECTION, 'UNKNOWN'), is_front_occupied, 'tof')
         
         occupancy_map.update_node(r, c, False, 'tof')
         visited_cells.add((r, c))
@@ -2536,6 +2543,11 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
         
         for target_dir in priority_dirs:
+            # ตรวจสอบว่า target_dir อยู่ในช่วงที่ถูกต้อง
+            if not (0 <= target_dir <= 3):
+                print(f"⚠️ Invalid target_dir: {target_dir}, skipping...")
+                continue
+                
             target_r, target_c = r + dir_vectors[target_dir][0], c + dir_vectors[target_dir][1]
             
             if occupancy_map.is_path_clear(r, c, target_r, target_c) and (target_r, target_c) not in visited_cells:
@@ -2554,7 +2566,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 print("    Confirming path forward with ToF...")
                 is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
                 
-                occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+                occupancy_map.update_wall(r, c, dir_map_abs_char.get(CURRENT_DIRECTION, 'UNKNOWN'), is_blocked, 'tof')
                 print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
                 visualizer.update_plot(occupancy_map, CURRENT_POSITION)
                 
@@ -2562,7 +2574,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 if is_blocked:
                     print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
                     movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler, scanner)
-                    print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
+                    print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION] if 0 <= CURRENT_DIRECTION <= 3 else 'INVALID'}. Re-evaluating available paths...")
                     continue  # Skip this direction and try next one
                 # <<< END OF NEW CODE >>>
                 
@@ -2928,10 +2940,74 @@ if __name__ == '__main__':
         visited_cells = set()
         backtrack_attempts = {}  # นับจำนวนครั้งที่พยายาม backtrack ไปยังโหนดเดียวกัน
         
+        # เพิ่มการตรวจสอบพื้นที่ที่ยังไม่ได้สำรวจ - OPTIMIZED O(N) version
+        unvisited_cells_cache = set()  # Cache สำหรับเก็บ unvisited cells
+        
+        def update_unvisited_cache():
+            """อัปเดต cache ของ unvisited cells - O(N)"""
+            unvisited_cells_cache.clear()
+            for r in range(occupancy_map.height):
+                for c in range(occupancy_map.width):
+                    if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                        unvisited_cells_cache.add((r, c))
+        
+        def get_unvisited_cells_count():
+            """นับจำนวน unvisited cells - O(1)"""
+            return len(unvisited_cells_cache)
+        
+        def find_nearest_unvisited_cell_direct():
+            """หาพื้นที่ที่ยังไม่ได้สำรวจที่ใกล้ที่สุด - O(N)"""
+            if not unvisited_cells_cache:
+                return None
+                
+            min_distance = float('inf')
+            nearest_cell = None
+            
+            for (r, c) in unvisited_cells_cache:
+                # คำนวณระยะทางแบบ Manhattan distance
+                distance = abs(r - CURRENT_POSITION[0]) + abs(c - CURRENT_POSITION[1])
+                if distance < min_distance:
+                    min_distance = distance
+                    nearest_cell = (r, c)
+            
+            return nearest_cell
+        
+        def try_alternative_exploration():
+            """ลองใช้กลยุทธ์การสำรวจแบบอื่น"""
+            print("🔄 Trying alternative exploration strategy...")
+            
+            # หาพื้นที่ที่ยังไม่ได้สำรวจที่ใกล้ที่สุด
+            nearest_unvisited = find_nearest_unvisited_cell_direct()
+            if nearest_unvisited:
+                print(f"🎯 Found nearest unvisited cell: {nearest_unvisited}")
+                
+                # ลองหา path ไปยังพื้นที่นั้น
+                path = find_path_bfs(occupancy_map, CURRENT_POSITION, nearest_unvisited)
+                if path and len(path) > 1:
+                    print(f"✅ Found alternative path to {nearest_unvisited}: {path}")
+                    execute_path(path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Alternative Exploration")
+                    return True
+                else:
+                    print(f"❌ No path found to {nearest_unvisited}")
+                    return False
+            else:
+                print("❌ No unvisited cells found")
+                return False
+        
+        # อัปเดต cache ครั้งแรก
+        update_unvisited_cache()
+        
         for step in range(40):  # max_steps
             try:
                 r, c = CURRENT_POSITION
-                print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
+                print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION] if 0 <= CURRENT_DIRECTION <= 3 else 'INVALID'} ---")
+                
+                # อัปเดต cache และแสดงสถิติการสำรวจ
+                update_unvisited_cache()
+                unvisited_count = get_unvisited_cells_count()
+                total_cells = occupancy_map.height * occupancy_map.width
+                visited_count = len(visited_cells)
+                print(f"📊 Exploration Progress: {visited_count}/{total_cells} visited, {unvisited_count} remaining")
                 
                 log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
                 
@@ -2946,7 +3022,7 @@ if __name__ == '__main__':
                 print("--- Performing Scan for Mapping (Front ToF Only) ---")
                 is_front_occupied = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
                 dir_map_abs_char = {0: 'N', 1: 'E', 2: 'S', 3: 'W'}
-                occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_front_occupied, 'tof')
+                occupancy_map.update_wall(r, c, dir_map_abs_char.get(CURRENT_DIRECTION, 'UNKNOWN'), is_front_occupied, 'tof')
                 
                 # ถ้ากล้องไม่พร้อม ให้หยุดหุ่น ณ จุดนี้และรอให้กล้องกลับมาก่อนจึงเดินต่อ
                 if not camera_is_healthy():
@@ -3019,7 +3095,7 @@ if __name__ == '__main__':
                         if t_tof > 1.0:
                             print(f"    ⚠️ ToF read took {t_tof:.2f}s (unusually long!)")
                         
-                        occupancy_map.update_wall(r, c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
+                        occupancy_map.update_wall(r, c, dir_map_abs_char.get(CURRENT_DIRECTION, 'UNKNOWN'), is_blocked, 'tof')
                         print(f"    ToF confirmation: Wall belief updated. Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
                         visualizer.update_plot(occupancy_map, CURRENT_POSITION)
                         
@@ -3027,7 +3103,7 @@ if __name__ == '__main__':
                         if is_blocked:
                             print(f"    🚫 Wall detected! Turning back to original direction and recalculating path...")
                             movement_controller.rotate_to_direction(CURRENT_DIRECTION, attitude_handler, scanner)
-                            print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION]}. Re-evaluating available paths...")
+                            print(f"    ✅ Turned back to {['N','E','S','W'][CURRENT_DIRECTION] if 0 <= CURRENT_DIRECTION <= 3 else 'INVALID'}. Re-evaluating available paths...")
                             continue  # Skip this direction and try next one
                         # <<< END OF NEW CODE >>>
                         
@@ -3036,7 +3112,7 @@ if __name__ == '__main__':
                             print("🔍 Performing object detection after turning to new direction...")
                             try:
                                 start_detection_mode()
-                                time.sleep(1.0)
+                                time.sleep(0.5)
                                 save_detected_objects_to_map(occupancy_map)
                                 
                                 # Check for targets and start PID tracking if found
@@ -3071,13 +3147,15 @@ if __name__ == '__main__':
                             
                             movement_controller.center_in_node_with_tof(scanner, attitude_handler)
                             
-                            CURRENT_POSITION = (target_r, target_c)
-                            log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
-                            
-                            moved = True
-                            break
-                        else:
-                            print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
+                    CURRENT_POSITION = (target_r, target_c)
+                    log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                    
+                    # อัปเดต cache เมื่อมีการเพิ่ม visited cell
+                    update_unvisited_cache()
+                    moved = True
+                    break
+                else:
+                    print(f"    Confirmation failed. Path to {['N','E','S','W'][target_dir]} is blocked. Re-evaluating.")
                 
                 if not moved:
                     print("No immediate unvisited path. Initiating backtrack...")
@@ -3091,6 +3169,15 @@ if __name__ == '__main__':
                         print(f"⚠️ Position {CURRENT_POSITION} may still have accessible paths.")
                     
                     print("🔍 Searching for accessible unvisited nodes...")
+                    
+                    # ตรวจสอบจำนวนพื้นที่ที่ยังไม่ได้สำรวจก่อนตัดสินใจหยุด
+                    unvisited_count = get_unvisited_cells_count()
+                    print(f"🔍 Remaining unvisited cells: {unvisited_count}")
+                    
+                    if unvisited_count == 0:
+                        print("🎉 EXPLORATION COMPLETE! All accessible cells have been visited.")
+                        break
+                    
                     backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
                     
                     if backtrack_path and len(backtrack_path) > 1:
@@ -3108,8 +3195,14 @@ if __name__ == '__main__':
                                 print("🔍 Searching for alternative path...")
                                 backtrack_path = find_nearest_unvisited_path(occupancy_map, CURRENT_POSITION, visited_cells)
                                 if not backtrack_path or len(backtrack_path) <= 1:
-                                    print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
-                                    break
+                                    # ตรวจสอบอีกครั้งว่ายังมีพื้นที่ที่ไม่ได้สำรวจหรือไม่
+                                    remaining_unvisited = get_unvisited_cells_count()
+                                    if remaining_unvisited == 0:
+                                        print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                                        break
+                                    else:
+                                        print(f"⚠️ Still {remaining_unvisited} unvisited cells remain. Continuing exploration...")
+                                        continue
                         else:
                             backtrack_attempts[target_node] = 1
                             print(f"🆕 First attempt to reach {target_node}")
@@ -3118,8 +3211,23 @@ if __name__ == '__main__':
                         print("Backtrack to new area complete. Resuming exploration.")
                         continue
                     else:
-                        print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
-                        break
+                        # ตรวจสอบอีกครั้งว่ายังมีพื้นที่ที่ไม่ได้สำรวจหรือไม่
+                        remaining_unvisited = get_unvisited_cells_count()
+                        if remaining_unvisited == 0:
+                            print("🎉 EXPLORATION COMPLETE! No reachable unvisited cells remain.")
+                            break
+                        else:
+                            print(f"⚠️ Still {remaining_unvisited} unvisited cells remain. Trying alternative exploration strategy...")
+                            # ลองใช้กลยุทธ์การสำรวจแบบอื่น
+                            if try_alternative_exploration():
+                                print("✅ Alternative exploration successful. Resuming normal exploration...")
+                                continue
+                            else:
+                                print("❌ Alternative exploration failed. Marking remaining cells as unreachable...")
+                                # ทำเครื่องหมายพื้นที่ที่เข้าถึงไม่ได้เป็น occupied - OPTIMIZED O(N)
+                                for (r, c) in unvisited_cells_cache:
+                                    occupancy_map.update_node(r, c, True, 'unreachable')
+                                break
             
             except Exception as e:
                 print(f"\n❌ Error during step {step+1}: {e}")
