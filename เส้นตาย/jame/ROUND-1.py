@@ -147,6 +147,11 @@ POSITION_LOG = []  # เก็บข้อมูลตำแหน่งแล�
 RESUME_MODE = False  # ตัวแปรบอกว่าเป็นโหมด resume หรือไม่
 DATA_FOLDER = r"F:\Coder\Year2-1\Robot_Module\Assignment\dude\James_path"  # โฟลเดอร์สำหรับเก็บไฟล์ JSON
 
+# ==================== ตัวแปรสำหรับ Path ไฟล์ ====================
+MAPPING_FILE = "Mapping_Top.json"
+ROBOT_PATH_FILE = "Robot_Position_Timestamps.json"
+DETECTED_OBJECTS_FILE = "Detected_Objects.json"
+
 def save_all_data(occupancy_map):
     """บันทึกข้อมูลทั้งหมด (Map, Timestamps, Objects) ลง JSON"""
     try:
@@ -177,7 +182,7 @@ def save_all_data(occupancy_map):
                 }
                 final_map_data["nodes"].append(cell_data)
 
-        map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
+        map_file = os.path.join(DATA_FOLDER, MAPPING_FILE)
         with open(map_file, "w") as f:
             json.dump(final_map_data, f, indent=2)
         print(f"✅ Final Hybrid Belief Map (with objects) saved to {map_file}")
@@ -195,7 +200,7 @@ def save_all_data(occupancy_map):
             "position_log": POSITION_LOG
         }
         
-        timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+        timestamp_file = os.path.join(DATA_FOLDER, ROBOT_PATH_FILE)
         with open(timestamp_file, "w") as f:
             json.dump(timestamp_data, f, indent=2)
         print(f"✅ Robot position timestamps saved to {timestamp_file}")
@@ -220,7 +225,7 @@ def save_all_data(occupancy_map):
             "detected_objects": all_detected_objects
         }
         
-        objects_file = os.path.join(DATA_FOLDER, "Detected_Objects.json")
+        objects_file = os.path.join(DATA_FOLDER, DETECTED_OBJECTS_FILE)
         with open(objects_file, "w") as f:
             json.dump(objects_data, f, indent=2)
         print(f"✅ Detected objects saved to {objects_file} (Total: {len(all_detected_objects)} objects)")
@@ -235,9 +240,6 @@ def save_map_data_on_error(occupancy_map):
     """บันทึกข้อมูลแผนที่เมื่อเกิด Camera error"""
     try:
         print("💾 Saving map data due to camera error...")
-        
-        # สร้างชื่อไฟล์ที่มี timestamp เพื่อไม่ให้ทับกัน
-        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
         
         # 1. บันทึกแผนที่พร้อม objects
         final_map_data = {'nodes': []}
@@ -264,7 +266,7 @@ def save_map_data_on_error(occupancy_map):
                 }
                 final_map_data["nodes"].append(cell_data)
 
-        map_file = os.path.join(DATA_FOLDER, f"Mapping_Top_CameraError_{timestamp_str}.json")
+        map_file = os.path.join(DATA_FOLDER, MAPPING_FILE)
         with open(map_file, "w") as f:
             json.dump(final_map_data, f, indent=2)
         print(f"✅ Emergency map saved to {map_file}")
@@ -278,13 +280,12 @@ def save_map_data_on_error(occupancy_map):
                 "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
                 "target_destination": list(TARGET_DESTINATION),
                 "interrupted": True,
-                "camera_error": True,
-                "error_timestamp": timestamp_str
+                "camera_error": True
             },
             "position_log": POSITION_LOG
         }
         
-        timestamp_file = os.path.join(DATA_FOLDER, f"Robot_Position_Timestamps_CameraError_{timestamp_str}.json")
+        timestamp_file = os.path.join(DATA_FOLDER, ROBOT_PATH_FILE)
         with open(timestamp_file, "w") as f:
             json.dump(timestamp_data, f, indent=2)
         print(f"✅ Emergency position log saved to {timestamp_file}")
@@ -305,13 +306,12 @@ def save_map_data_on_error(occupancy_map):
                 "total_objects_detected": len(all_detected_objects),
                 "detection_timestamp": time.time(),
                 "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
-                "camera_error": True,
-                "error_timestamp": timestamp_str
+                "camera_error": True
             },
             "detected_objects": all_detected_objects
         }
         
-        objects_file = os.path.join(DATA_FOLDER, f"Detected_Objects_CameraError_{timestamp_str}.json")
+        objects_file = os.path.join(DATA_FOLDER, DETECTED_OBJECTS_FILE)
         with open(objects_file, "w") as f:
             json.dump(objects_data, f, indent=2)
         print(f"✅ Emergency objects saved to {objects_file} (Total: {len(all_detected_objects)} objects)")
@@ -511,8 +511,8 @@ def check_for_resume_data():
     """
     NEW: ตรวจสอบว่ามีไฟล์ JSON สำหรับ resume หรือไม่
     """
-    map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
-    timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+    map_file = os.path.join(DATA_FOLDER, MAPPING_FILE)
+    timestamp_file = os.path.join(DATA_FOLDER, ROBOT_PATH_FILE)
     
     if os.path.exists(map_file) and os.path.exists(timestamp_file):
         return True
@@ -528,7 +528,7 @@ def load_resume_data():
         print("🔄 Loading resume data...")
         
         # โหลดข้อมูล timestamp
-        timestamp_file = os.path.join(DATA_FOLDER, "Robot_Position_Timestamps.json")
+        timestamp_file = os.path.join(DATA_FOLDER, ROBOT_PATH_FILE)
         with open(timestamp_file, "r", encoding="utf-8") as f:
             timestamp_data = json.load(f)
         
@@ -574,7 +574,7 @@ def create_occupancy_map_from_json():
     NEW: สร้าง OccupancyGridMap จากไฟล์ JSON
     """
     try:
-        map_file = os.path.join(DATA_FOLDER, "Mapping_Top.json")
+        map_file = os.path.join(DATA_FOLDER, MAPPING_FILE)
         with open(map_file, "r", encoding="utf-8") as f:
             map_data = json.load(f)
         
