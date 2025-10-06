@@ -6,9 +6,9 @@ from typing import Dict, Any, List, Tuple
 
 def generate_mission_map(
     # ใช้ Path เต็มเป็นค่าเริ่มต้น (Default) เพื่อให้รันได้แม้ไฟล์จะอยู่คนละโฟลเดอร์
-    mapping_file: str = '/Users/faiijaran/Robot/Robot_Module_2-1/Assignment/dude/James_path/Mapping_Top.json', 
-    position_file: str = '/Users/faiijaran/Robot/Robot_Module_2-1/Assignment/dude/James_path/Robot_Position_Timestamps.json', 
-    detected_objects_file: str = '/Users/faiijaran/Robot/Robot_Module_2-1/Assignment/dude/James_path/Detected_Objects.json'
+    mapping_file: str = 'D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude\James_path\Mapping_Top.json', 
+    position_file: str = 'D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude\James_path\Robot_Position_Timestamps.json', 
+    detected_objects_file: str = 'D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude\James_path\Detected_Objects.json'
 ):
     """
     สร้างกราฟแผนที่ (Grid Map) แสดงผนัง เส้นทางการเคลื่อนที่ และวัตถุที่ตรวจจับได้
