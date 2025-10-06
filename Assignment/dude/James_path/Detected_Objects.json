@@ -1,121 +1,16 @@
 {
   "session_info": {
-    "total_objects_detected": 11,
-    "detection_timestamp": 1759787539.1581268,
+    "total_objects_detected": 3,
+    "detection_timestamp": 1759790513.563283,
     "grid_size": "5x5"
   },
   "detected_objects": [
     {
       "color": "Red",
-      "shape": "Rectangle_V",
+      "shape": "Uncertain",
       "zone": "Left",
       "is_target": false,
-      "timestamp": 1759787404.3660812,
-      "detected_from_node": [
-        1,
-        1
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 0
-      }
-    },
-    {
-      "color": "Red",
-      "shape": "Rectangle_H",
-      "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787404.3660812,
-      "detected_from_node": [
-        1,
-        1
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 0
-      }
-    },
-    {
-      "color": "Red",
-      "shape": "Rectangle_H",
-      "zone": "Right",
-      "is_target": false,
-      "timestamp": 1759787380.9150465,
-      "detected_from_node": [
-        2,
-        1
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 1
-      }
-    },
-    {
-      "color": "Red",
-      "shape": "Circle",
-      "zone": "Center",
-      "is_target": true,
-      "timestamp": 1759787162.974044,
-      "detected_from_node": [
-        2,
-        2
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 2
-      }
-    },
-    {
-      "color": "Red",
-      "shape": "Circle",
-      "zone": "Center",
-      "is_target": true,
-      "timestamp": 1759787315.0105882,
-      "detected_from_node": [
-        2,
-        3
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 3
-      }
-    },
-    {
-      "color": "Blue",
-      "shape": "Square",
-      "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787315.0105882,
-      "detected_from_node": [
-        2,
-        3
-      ],
-      "cell_position": {
-        "row": 1,
-        "col": 3
-      }
-    },
-    {
-      "color": "Blue",
-      "shape": "Rectangle_V",
-      "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787519.702851,
-      "detected_from_node": [
-        3,
-        1
-      ],
-      "cell_position": {
-        "row": 3,
-        "col": 0
-      }
-    },
-    {
-      "color": "Red",
-      "shape": "Circle",
-      "zone": "Left",
-      "is_target": true,
-      "timestamp": 1759787058.7072976,
+      "timestamp": 1759790495.2162366,
       "detected_from_node": [
         4,
         1
@@ -126,11 +21,11 @@
       }
     },
     {
-      "color": "Blue",
-      "shape": "Square",
+      "color": "Red",
+      "shape": "Rectangle_V",
       "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787049.4587114,
+      "is_target": true,
+      "timestamp": 1759790480.9418643,
       "detected_from_node": [
         4,
         0
@@ -141,11 +36,11 @@
       }
     },
     {
-      "color": "Blue",
-      "shape": "Circle",
+      "color": "Red",
+      "shape": "Rectangle_V",
       "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787049.4587114,
+      "is_target": true,
+      "timestamp": 1759790480.9418643,
       "detected_from_node": [
         4,
         0
@@ -153,21 +48,6 @@
       "cell_position": {
         "row": 4,
         "col": 1
-      }
-    },
-    {
-      "color": "Yellow",
-      "shape": "Square",
-      "zone": "Center",
-      "is_target": false,
-      "timestamp": 1759787235.7822978,
-      "detected_from_node": [
-        3,
-        4
-      ],
-      "cell_position": {
-        "row": 4,
-        "col": 4
       }
     }
   ]

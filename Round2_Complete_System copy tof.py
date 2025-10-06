@@ -28,7 +28,7 @@ import cv2
 # =============================================================================
 
 SHOW_WINDOW = True
-DATA_FOLDER = r"./Assignment/dude/James_path"
+DATA_FOLDER = r"./Assignment/dude/data"
 
 CURRENT_POSITION = (4, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
 IMU_DRIFT_COMPENSATION_DEG = 0.0
@@ -41,12 +41,12 @@ TOF_ADJUST_SPEED = 0.08; TOF_CALIBRATION_SLOPE = 0.0894; TOF_CALIBRATION_Y_INTER
 TOF_TARGET_CM = 15.0
 
 FRAME_W, FRAME_H = 960, 540; VERTICAL_FOV_DEG = 54.0; PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
-PITCH_BIAS_DEG = 2.5; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
+PITCH_BIAS_DEG = 2; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 
 ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
 ROI_SHIFT_PER_DEG = 6.0; ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
 
-SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 2
+SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 5
 
 is_tracking_mode = False; is_detecting_flag = {"v": True}; fired_targets = set()
 shots_fired = 0; gimbal_angle_lock = threading.Lock(); gimbal_angles = (0.0, 0.0, 0.0, 0.0)
@@ -170,7 +170,7 @@ class RMConnection:
     def connect(self):
         with self._lock:
             self._safe_close(); print("🤖 Connecting..."); rb=robot.Robot(); rb.initialize(conn_type="ap"); rb.camera.start_video_stream(display=False,resolution=r_camera.STREAM_540P)
-            try: rb.gimbal.sub_angle(freq=50,callback=sub_angle_cb)
+            try: rb.gimbal.sub_angle(freq=20,callback=sub_angle_cb)
             except Exception as e: print("Gimbal sub error:",e)
             self._robot=rb; self.connected.set(); print("✅ Connected")
             try: rb.gimbal.recenter(pitch_speed=200,yaw_speed=200).wait_for_completed()
@@ -246,7 +246,7 @@ def camera_display_thread(roi_state):
 class EnvironmentScanner:
     def __init__(self, tof_sensor):
         self.tof_sensor = tof_sensor; self.last_tof_distance_cm = float('inf')
-        self.tof_sensor.sub_distance(freq=10, callback=self._tof_data_handler)
+        self.tof_sensor.sub_distance(freq=20, callback=self._tof_data_handler)
     def _tof_data_handler(self, sub_info): self.last_tof_distance_cm = calibrate_tof_value(sub_info[0])
     def get_tof_distance_cm(self): return self.last_tof_distance_cm
     def cleanup(self): self.tof_sensor.unsub_distance()
@@ -254,7 +254,7 @@ class EnvironmentScanner:
 class AttitudeHandler:
     def __init__(self): self.current_yaw,self.yaw_tolerance,self.is_monitoring=0.0,2.0,False # ลด Tolerance
     def attitude_handler(self, info): self.current_yaw=info[0]
-    def start_monitoring(self, chassis): self.is_monitoring=True; chassis.sub_attitude(freq=50,callback=self.attitude_handler) # เพิ่ม Freq
+    def start_monitoring(self, chassis): self.is_monitoring=True; chassis.sub_attitude(freq=20,callback=self.attitude_handler) # เพิ่ม Freq
     def stop_monitoring(self, chassis):
         self.is_monitoring = False
         try: chassis.unsub_attitude()
@@ -339,7 +339,7 @@ class MovementController:
             print(f"Dist: {relative_position:.3f}/0.60 m", end='\r')
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.25)
         
-    def perform_3_way_tof_centering(self, wall_threshold_cm=50.0, target_dist_cm=15.0, tol_cm=1.5, max_adjust_time=2.5):
+    def perform_3_way_tof_centering(self, wall_threshold_cm=50.0, target_dist_cm=17.0, tol_cm=1.5, max_adjust_time=2.5):
         print("\n--- Performing 3-Way ToF Centering ---")
         comp_yaw = get_compensated_target_yaw()
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()

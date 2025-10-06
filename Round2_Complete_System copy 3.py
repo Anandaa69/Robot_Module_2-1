@@ -31,7 +31,7 @@ import cv2
 SHOW_WINDOW = True # ตั้งเป็น True เพื่อเปิดหน้าต่างกล้อง, False เพื่อปิด
 
 # Data folder
-DATA_FOLDER = r"./Assignment/dude/James_path/tem_map_copy" # <-- แนะนำให้ใช้ Path แบบนี้เพื่อความเข้ากันได้
+DATA_FOLDER = r"./Assignment/dude/data" # <-- แนะนำให้ใช้ Path แบบนี้เพื่อความเข้ากันได้
 
 # Robot configuration
 CURRENT_POSITION = (4, 0)
@@ -358,7 +358,7 @@ class MovementController:
         KP_YAW=0.8; MAX_YAW_SPEED=25; yaw_error=self.attitude_handler.normalize_angle(target_yaw-self.attitude_handler.current_yaw)
         speed=KP_YAW*yaw_error; return max(min(speed,MAX_YAW_SPEED),-MAX_YAW_SPEED)
     def move_forward_one_grid(self, axis, target_yaw):
-        self.attitude_handler.correct_yaw_to_target(self.chassis,target_yaw); pid=PID(Kp=0.5,Ki=0.15,Kd=0.2,setpoint=0.6)
+        self.attitude_handler.correct_yaw_to_target(self.chassis,target_yaw); pid=PID(Kp=1.0,Ki=0.15,Kd=13,setpoint=0.6)
         start_time,last_time=time.time(),time.time(); start_position=self.current_x_pos if axis=='x' else self.current_y_pos
         print(f"🚀 Moving 0.6m, AXIS '{axis}'");
         while time.time()-start_time<4.0:
