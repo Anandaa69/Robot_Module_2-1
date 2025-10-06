@@ -67,7 +67,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.3    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.5    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -214,7 +214,6 @@ def save_all_data(occupancy_map):
 
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
-camera_health_lock = threading.Lock()  # สำหรับ thread safety
 
 def camera_is_healthy(timeout=3.0) -> bool:
     """
@@ -228,8 +227,7 @@ def camera_is_healthy(timeout=3.0) -> bool:
     except Exception:
         return False
     
-    with camera_health_lock:
-        return (time.time() - last_frame_received_ts) <= timeout
+    return (time.time() - last_frame_received_ts) <= timeout
 
 def wait_for_camera_recovery(pause_label="Runtime"):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
@@ -687,9 +685,6 @@ def reconnector_thread(manager: RMConnection):
 def capture_thread_func(manager: RMConnection, q: queue.Queue):
     print("🚀 Capture thread started")
     fail = 0
-    frame_count = 0
-    last_success_time = time.time()
-    consecutive_errors = 0
     
     while not stop_event.is_set():
         if not manager.connected.is_set():
@@ -702,9 +697,8 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             continue
             
         try:
-            frame = cam.read_cv2_image(timeout=2.0)  # เพิ่ม timeout จาก 1.5 เป็น 2.0
+            frame = cam.read_cv2_image(timeout=1.0)  # ลด timeout กลับเป็น 1.0
             if frame is not None and frame.size > 0:
-                # Clear queue if it's full to prevent memory buildup
                 if q.full():
                     try: 
                         q.get_nowait()
@@ -715,42 +709,29 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 # mark last healthy frame timestamp
                 try:
                     global last_frame_received_ts
-                    with camera_health_lock:
-                        last_frame_received_ts = time.time()
+                    last_frame_received_ts = time.time()  # ลบ lock ออก
                 except Exception:
                     pass
-                frame_count += 1
-                last_success_time = time.time()
                 fail = 0
-                consecutive_errors = 0
             else:
                 fail += 1
-                consecutive_errors += 1
                 
         except Exception as e:
-            # แสดง error detail เฉพาะเมื่อเกิดติดกันหรือทุก 10 ครั้ง
-            consecutive_errors += 1
-            if consecutive_errors <= 3 or consecutive_errors % 10 == 0:
-                print(f"⚠️ Camera read error #{consecutive_errors}: {str(e)[:100]}")
+            print(f"⚠️ Camera read error: {e}")
             fail += 1
 
-        # More tolerant reconnection policy - เพิ่ม threshold จาก 10 เป็น 20
-        if fail >= 20:
+        if fail >= 10:  # ลด threshold กลับเป็น 10
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
-            # Clear queue to prevent memory buildup
             try:
                 while True: 
                     q.get_nowait()
             except queue.Empty:
                 pass
             fail = 0
-            consecutive_errors = 0
-            # Short sleep to allow reconnect path to proceed
-            time.sleep(0.5)  # เพิ่ม sleep time จาก 0.2 เป็น 0.5
+            time.sleep(0.2)
             
-        # เพิ่ม sleep time เพื่อลด CPU usage
-        time.sleep(0.01)  # เพิ่มจาก 0.005 เป็น 0.01
+        time.sleep(0.005)  # ลด sleep time กลับเป็น 0.005
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
@@ -768,7 +749,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             continue
             
         try:
-            frame_to_process = q.get(timeout=0.5)  # เพิ่ม timeout จาก 0.3 เป็น 0.5
+            frame_to_process = q.get(timeout=0.3)  # ลด timeout กลับเป็น 0.3
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
@@ -848,15 +829,8 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             time.sleep(0.1)  # Sleep when no frames to process
             continue
         except Exception as e:
-            # แสดง error เฉพาะเมื่อเกิดติดกันหรือทุก 5 ครั้ง
-            if not hasattr(processing_thread_func, 'error_count'):
-                processing_thread_func.error_count = 0
-            processing_thread_func.error_count += 1
-            
-            if processing_thread_func.error_count <= 3 or processing_thread_func.error_count % 5 == 0:
-                print(f"⚠️ Processing error #{processing_thread_func.error_count}: {str(e)[:100]}")
-            
-            time.sleep(0.2)  # เพิ่ม sleep time เมื่อเกิด error
+            print(f"⚠️ Processing error: {e}")
+            time.sleep(0.1)  # เพิ่ม sleep time เมื่อเกิด error
             # Clear queue to prevent buildup
             try:
                 while True: 
@@ -2299,7 +2273,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
