@@ -2214,15 +2214,14 @@ def find_path_bfs(occupancy_map, start, end):
                     queue.append(new_path)
     return None
 
-def is_dead_end(occupancy_map, position, visited_cells, retry_count=0):
-    """ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่ - ปรับปรุงให้ยืดหยุ่นมากขึ้น"""
+def is_dead_end(occupancy_map, position, visited_cells):
+    """ตรวจสอบว่าโหนดปัจจุบันเป็นทางตันหรือไม่ - ปรับปรุงจาก debug_img_3-10.py"""
     r, c = position
     directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]  # N, E, S, W
     dir_names = ['N', 'E', 'S', 'W']
     
     accessible_neighbors = 0
     unvisited_neighbors = 0
-    potentially_accessible = 0  # โหนดที่อาจเข้าถึงได้จากทิศทางอื่น
     blocked_directions = []
     
     for i, (dr, dc) in enumerate(directions):
@@ -2236,92 +2235,19 @@ def is_dead_end(occupancy_map, position, visited_cells, retry_count=0):
                 # ตรวจสอบว่าเป็นโหนดที่ยังไม่ไปหรือไม่
                 if (nr, nc) not in visited_cells:
                     unvisited_neighbors += 1
-                else:
-                    # ตรวจสอบว่าโหนดที่ไปแล้วมีเส้นทางไปยังโหนดที่ยังไม่ไปหรือไม่
-                    if has_potential_path_to_unvisited(occupancy_map, (nr, nc), visited_cells):
-                        potentially_accessible += 1
             else:
                 blocked_directions.append(dir_names[i])
         else:
             blocked_directions.append(dir_names[i])
     
-    # ปรับปรุงเงื่อนไขการตัดสินใจ dead end
-    # ถ้าไม่มีเพื่อนบ้านที่เข้าถึงได้เลย = ทางตันแน่นอน
-    if accessible_neighbors == 0:
-        is_dead = True
-    # ถ้ามีเพื่อนบ้านที่เข้าถึงได้ แต่ไม่มีโหนดที่ยังไม่ไป และไม่มีโหนดที่อาจมีเส้นทางไปยังโหนดที่ยังไม่ไป
-    elif accessible_neighbors > 0 and unvisited_neighbors == 0 and potentially_accessible == 0:
-        # เพิ่มการตรวจสอบเพิ่มเติม - ลองดูว่ามีโหนดที่ยังไม่ไปในระยะ 2 ช่องหรือไม่
-        if retry_count < 2 and not has_unvisited_in_range(occupancy_map, position, visited_cells, range_distance=2):
-            is_dead = True
-        else:
-            is_dead = False
-    else:
-        is_dead = False
+    # ถ้าไม่มีเพื่อนบ้านที่เข้าถึงได้ หรือมีแค่เพื่อนบ้านที่ไปแล้ว = ทางตัน
+    is_dead = (accessible_neighbors == 0) or (accessible_neighbors > 0 and unvisited_neighbors == 0)
     
     if is_dead:
-        print(f"   -> Dead end analysis (retry {retry_count}): {accessible_neighbors} accessible, {unvisited_neighbors} unvisited, {potentially_accessible} potentially accessible")
+        print(f"   -> Dead end analysis: {accessible_neighbors} accessible neighbors, {unvisited_neighbors} unvisited")
         print(f"   -> Blocked directions: {blocked_directions}")
-    else:
-        print(f"   -> Not dead end: {accessible_neighbors} accessible, {unvisited_neighbors} unvisited, {potentially_accessible} potentially accessible")
     
     return is_dead
-
-def has_potential_path_to_unvisited(occupancy_map, position, visited_cells, max_depth=2):
-    """ตรวจสอบว่าโหนดที่ไปแล้วมีเส้นทางไปยังโหนดที่ยังไม่ไปหรือไม่"""
-    if max_depth <= 0:
-        return False
-    
-    r, c = position
-    directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-    
-    for dr, dc in directions:
-        nr, nc = r + dr, c + dc
-        if (0 <= nr < occupancy_map.height and 0 <= nc < occupancy_map.width and 
-            occupancy_map.is_path_clear(r, c, nr, nc)):
-            if (nr, nc) not in visited_cells:
-                return True
-            elif has_potential_path_to_unvisited(occupancy_map, (nr, nc), visited_cells, max_depth-1):
-                return True
-    return False
-
-def has_unvisited_in_range(occupancy_map, position, visited_cells, range_distance=2):
-    """ตรวจสอบว่ามีโหนดที่ยังไม่ไปในระยะที่กำหนดหรือไม่"""
-    r, c = position
-    directions = [(-1, 0), (0, 1), (1, 0), (0, -1)]
-    
-    for distance in range(1, range_distance + 1):
-        for dr, dc in directions:
-            nr, nc = r + dr * distance, c + dc * distance
-            if (0 <= nr < occupancy_map.height and 0 <= nc < occupancy_map.width and 
-                (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied()):
-                # ตรวจสอบว่ามีเส้นทางไปยังโหนดนี้หรือไม่
-                if is_path_clear_to_position(occupancy_map, position, (nr, nc)):
-                    return True
-    return False
-
-def is_path_clear_to_position(occupancy_map, start, end):
-    """ตรวจสอบว่าเส้นทางจาก start ไป end เปิดหรือไม่"""
-    start_r, start_c = start
-    end_r, end_c = end
-    
-    # ใช้ BFS แบบง่ายเพื่อตรวจสอบเส้นทาง
-    queue = [(start_r, start_c)]
-    visited = {(start_r, start_c)}
-    
-    while queue:
-        current_r, current_c = queue.pop(0)
-        if (current_r, current_c) == (end_r, end_c):
-            return True
-        
-        for dr, dc in [(-1, 0), (0, 1), (1, 0), (0, -1)]:
-            nr, nc = current_r + dr, current_c + dc
-            if (0 <= nr < occupancy_map.height and 0 <= nc < occupancy_map.width and 
-                (nr, nc) not in visited and occupancy_map.is_path_clear(current_r, current_c, nr, nc)):
-                visited.add((nr, nc))
-                queue.append((nr, nc))
-    
-    return False
 
 def mark_cell_as_dead_end(occupancy_map, position):
     """ทำเครื่องหมายว่าโหนดนี้เป็นทางตัน - ปรับปรุงจาก debug_img_3-10.py"""
@@ -2342,13 +2268,12 @@ def mark_cell_as_dead_end(occupancy_map, position):
     print(f"   -> Dead end verification: {accessible_count} accessible directions remaining")
 
 def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
-    """ใช้ BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุด - ปรับปรุงให้รวมโหนดที่อาจเข้าถึงได้"""
+    """ใช้ multi-source BFS เพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุดใน O(N) - ปรับปรุงให้ตรวจสอบการเข้าถึงได้"""
     h, w = occupancy_map.height, occupancy_map.width
     
-    # ใช้ BFS จากจุดเริ่มต้น หาเซลล์ที่ยังไม่ไป
+    # ใช้ BFS เดียวจากจุดเริ่มต้น หาเซลล์แรกที่ยังไม่ไป
     queue = [(start_pos, [start_pos])]
     visited_bfs = {start_pos}
-    unvisited_candidates = []  # เก็บโหนดที่ยังไม่ไปที่พบ
     
     while queue:
         current_pos, path = queue.pop(0)
@@ -2363,14 +2288,13 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                 
                 # เช็คว่าเป็นเซลล์ที่ยังไม่ไปในการสำรวจหรือไม่
                 if (nr, nc) not in visited_cells and not occupancy_map.grid[nr][nc].is_node_occupied():
-                    # ตรวจสอบการเข้าถึงแบบง่าย - เช็คแค่กำแพงระหว่างเซลล์
+                    # ตรวจสอบเพิ่มเติมว่าโหนดนี้สามารถเข้าถึงได้จริงหรือไม่
+                    # โดยตรวจสอบว่ามีเส้นทางที่เปิดอยู่จากโหนดปัจจุบันไปยังโหนดปลายทาง
                     if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
                         print(f"   -> Found accessible unvisited node: ({nr},{nc})")
                         return path + [(nr, nc)]
                     else:
-                        print(f"   -> Found unvisited node ({nr},{nc}) but direct path is blocked")
-                        # เก็บโหนดนี้ไว้เป็นตัวเลือก
-                        unvisited_candidates.append((nr, nc))
+                        print(f"   -> Found unvisited node ({nr},{nc}) but path is blocked")
                         continue
                 
                 # ถ้าเป็นเซลล์ที่ไปแล้วและไม่เป็นกำแพง ให้เพิ่มในคิว
@@ -2379,45 +2303,7 @@ def find_nearest_unvisited_path(occupancy_map, start_pos, visited_cells):
                     new_path.append((nr, nc))
                     queue.append(((nr, nc), new_path))
     
-    # ถ้าไม่พบโหนดที่เข้าถึงได้โดยตรง ลองหาโหนดที่อาจเข้าถึงได้ผ่านเส้นทางอื่น
-    if unvisited_candidates:
-        print(f"   -> Found {len(unvisited_candidates)} unvisited candidates, checking alternative paths...")
-        for candidate in unvisited_candidates:
-            alternative_path = find_alternative_path(occupancy_map, start_pos, candidate, visited_cells)
-            if alternative_path:
-                print(f"   -> Found alternative path to unvisited node: {candidate}")
-                return alternative_path
-    
     print("   -> No accessible unvisited nodes found")
-    return None
-
-def find_alternative_path(occupancy_map, start_pos, target_pos, visited_cells, max_depth=5):
-    """หาเส้นทางทางเลือกไปยังโหนดที่ยังไม่ไป"""
-    h, w = occupancy_map.height, occupancy_map.width
-    queue = [(start_pos, [start_pos])]
-    visited_bfs = {start_pos}
-    
-    while queue and len(queue[0][1]) <= max_depth:
-        current_pos, path = queue.pop(0)
-        
-        # เช็คทุกทิศทาง
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            nr, nc = current_pos[0] + dr, current_pos[1] + dc
-            
-            # เช็คขอบเขตและไม่เคยไปใน BFS นี้
-            if 0 <= nr < h and 0 <= nc < w and (nr, nc) not in visited_bfs:
-                visited_bfs.add((nr, nc))
-                
-                # ถ้าเป็นโหนดเป้าหมาย
-                if (nr, nc) == target_pos:
-                    return path + [(nr, nc)]
-                
-                # ถ้าเป็นเซลล์ที่ไปแล้วและไม่เป็นกำแพง ให้เพิ่มในคิว
-                if occupancy_map.is_path_clear(current_pos[0], current_pos[1], nr, nc):
-                    new_path = list(path)
-                    new_path.append((nr, nc))
-                    queue.append(((nr, nc), new_path))
-    
     return None
 
 
@@ -2618,6 +2504,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
         r, c = CURRENT_POSITION
         print(f"\n--- Step {step + 1} at {CURRENT_POSITION}, Facing: {['N', 'E', 'S', 'W'][CURRENT_DIRECTION]} ---")
         
+        
         # บันทึกตำแหน่งในแต่ละ step
         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"step_{step + 1}")
         
@@ -2727,6 +2614,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                         CURRENT_POSITION = (target_r, target_c)
                         # บันทึกตำแหน่งใหม่หลังจากเคลื่อนที่
                         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, "moved_to_new_node")
+                        # รีเซ็ต position stuck count เมื่อย้ายไปยังตำแหน่งใหม่
                         moved = True
                         break
                     else:
