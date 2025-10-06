@@ -231,6 +231,97 @@ def save_all_data(occupancy_map):
         traceback.print_exc()
         return False
 
+def save_map_data_on_error(occupancy_map):
+    """บันทึกข้อมูลแผนที่เมื่อเกิด Camera error"""
+    try:
+        print("💾 Saving map data due to camera error...")
+        
+        # สร้างชื่อไฟล์ที่มี timestamp เพื่อไม่ให้ทับกัน
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        
+        # 1. บันทึกแผนที่พร้อม objects
+        final_map_data = {'nodes': []}
+        for r in range(occupancy_map.height):
+            for c in range(occupancy_map.width):
+                cell = occupancy_map.grid[r][c]
+                cell_data = {
+                    "coordinate": {"row": r, "col": c},
+                    "probability": round(cell.get_node_probability(), 3),
+                    "is_occupied": cell.is_node_occupied(),
+                    "walls": {
+                        "north": cell.walls['N'].is_occupied(),
+                        "south": cell.walls['S'].is_occupied(),
+                        "east": cell.walls['E'].is_occupied(),
+                        "west": cell.walls['W'].is_occupied()
+                    },
+                    "wall_probabilities": {
+                        "north": round(cell.walls['N'].get_probability(), 3),
+                        "south": round(cell.walls['S'].get_probability(), 3),
+                        "east": round(cell.walls['E'].get_probability(), 3),
+                        "west": round(cell.walls['W'].get_probability(), 3)
+                    },
+                    "objects": cell.objects if hasattr(cell, 'objects') else []
+                }
+                final_map_data["nodes"].append(cell_data)
+
+        map_file = os.path.join(DATA_FOLDER, f"Mapping_Top_CameraError_{timestamp_str}.json")
+        with open(map_file, "w") as f:
+            json.dump(final_map_data, f, indent=2)
+        print(f"✅ Emergency map saved to {map_file}")
+        
+        # 2. บันทึกข้อมูล timestamp และตำแหน่ง
+        timestamp_data = {
+            "session_info": {
+                "start_time": POSITION_LOG[0]["iso_timestamp"] if POSITION_LOG else "N/A",
+                "end_time": POSITION_LOG[-1]["iso_timestamp"] if POSITION_LOG else "N/A",
+                "total_positions_logged": len(POSITION_LOG),
+                "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
+                "target_destination": list(TARGET_DESTINATION),
+                "interrupted": True,
+                "camera_error": True,
+                "error_timestamp": timestamp_str
+            },
+            "position_log": POSITION_LOG
+        }
+        
+        timestamp_file = os.path.join(DATA_FOLDER, f"Robot_Position_Timestamps_CameraError_{timestamp_str}.json")
+        with open(timestamp_file, "w") as f:
+            json.dump(timestamp_data, f, indent=2)
+        print(f"✅ Emergency position log saved to {timestamp_file}")
+        
+        # 3. บันทึกข้อมูลวัตถุที่ตรวจจับได้
+        all_detected_objects = []
+        for r in range(occupancy_map.height):
+            for c in range(occupancy_map.width):
+                cell = occupancy_map.grid[r][c]
+                if hasattr(cell, 'objects') and cell.objects:
+                    for obj in cell.objects:
+                        obj_with_pos = obj.copy()
+                        obj_with_pos['cell_position'] = {'row': r, 'col': c}
+                        all_detected_objects.append(obj_with_pos)
+        
+        objects_data = {
+            "session_info": {
+                "total_objects_detected": len(all_detected_objects),
+                "detection_timestamp": time.time(),
+                "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
+                "camera_error": True,
+                "error_timestamp": timestamp_str
+            },
+            "detected_objects": all_detected_objects
+        }
+        
+        objects_file = os.path.join(DATA_FOLDER, f"Detected_Objects_CameraError_{timestamp_str}.json")
+        with open(objects_file, "w") as f:
+            json.dump(objects_data, f, indent=2)
+        print(f"✅ Emergency objects saved to {objects_file} (Total: {len(all_detected_objects)} objects)")
+        
+        return True
+        
+    except Exception as e:
+        print(f"❌ Error saving emergency data: {e}")
+        return False
+
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
 
@@ -251,6 +342,14 @@ def camera_is_healthy(timeout=3.0) -> bool:
 def wait_for_camera_recovery(pause_label="Runtime"):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
     print(f"🛑 {pause_label}: Camera unhealthy → locking chassis and waiting...")
+    
+    # เซฟ JSON เมื่อเกิด Camera recovery
+    try:
+        print("💾 Saving map data due to camera recovery...")
+        save_map_data_on_error(occupancy_map)
+    except Exception as save_error:
+        print(f"⚠️ Error saving map data: {save_error}")
+    
     try:
         movement_controller.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
     except Exception:
@@ -763,11 +862,27 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
         except Exception as e:
             print(f"⚠️ Camera read error: {e}")
             fail += 1
+            
+            # เซฟ JSON เมื่อเกิด Camera read error (เฉพาะเมื่อ fail >= 2)
+            if fail >= 2:
+                try:
+                    print("💾 Saving map data due to camera read error...")
+                    save_map_data_on_error(occupancy_map)
+                except Exception as save_error:
+                    print(f"⚠️ Error saving map data: {save_error}")
 
         # Enhanced reconnection logic with better error handling and thread protection
         current_time = time.time()
         if fail >= 3 and (current_time - last_success_time) > 1.0:  # ลด threshold
             print("⚠️ Too many camera errors → drop & reconnect")
+            
+            # เซฟ JSON เมื่อเกิด Camera error
+            try:
+                print("💾 Saving map data due to camera error...")
+                save_map_data_on_error(occupancy_map)
+            except Exception as save_error:
+                print(f"⚠️ Error saving map data: {save_error}")
+            
             try:
                 # Clear queue to prevent buildup before reconnection
                 while not q.empty():
@@ -800,6 +915,14 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
         # Additional protection: if too many consecutive failures, increase sleep time
         if fail >= 5:
             print("⚠️ High failure rate detected, increasing sleep time for stability")
+            
+            # เซฟ JSON เมื่อเกิด High failure rate
+            try:
+                print("💾 Saving map data due to high failure rate...")
+                save_map_data_on_error(occupancy_map)
+            except Exception as save_error:
+                print(f"⚠️ Error saving map data: {save_error}")
+            
             time.sleep(0.1)
             fail = max(0, fail - 1)  # Gradually reduce fail counter
             
@@ -1802,7 +1925,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=15, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=18, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -2253,6 +2376,34 @@ def find_nearest_unvisited_path_optimized(occupancy_map, start_pos, visited_cell
     print(f"   -> DEBUG: BFS visited {len(visited_bfs)} cells, but none were unvisited")
     return None
 
+def find_nearest_unvisited_path_safe(occupancy_map, start_pos, visited_cells):
+    """ใช้ BFS ที่ปลอดภัยเพื่อหาเซลล์ที่ยังไม่ไปที่ใกล้ที่สุด - ตรวจสอบข้อมูลแผนที่อย่างละเอียด"""
+    h, w = occupancy_map.height, occupancy_map.width
+    unvisited_cells_coords = []
+    
+    # หาเซลล์ที่ยังไม่ไปทั้งหมด
+    for r in range(h):
+        for c in range(w):
+            if (r, c) not in visited_cells and not occupancy_map.grid[r][c].is_node_occupied():
+                unvisited_cells_coords.append((r, c))
+    
+    if not unvisited_cells_coords:
+        print("   -> No unvisited cells remaining")
+        return None
+    
+    print(f"   -> DEBUG: Found {len(unvisited_cells_coords)} unvisited cells: {unvisited_cells_coords}")
+    
+    # หาเส้นทางที่สั้นที่สุดไปยังเซลล์ที่ยังไม่ไป
+    shortest_path = None
+    for target_pos in unvisited_cells_coords:
+        path = find_path_bfs(occupancy_map, start_pos, target_pos)
+        if path:
+            if shortest_path is None or len(path) < len(shortest_path):
+                shortest_path = path
+                print(f"   -> Found path to unvisited node: {target_pos}")
+    
+    return shortest_path
+
 # แก้ไขฟังก์ชัน execute_path
 
 def execute_path(path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map, path_name="Backtrack"):
@@ -2314,6 +2465,10 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             CURRENT_POSITION = (next_r, next_c)
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
+            
+            # เพิ่มการปรับซ้ายขวาด้วย Sharp sensor ในตอน backtracking
+            print(f"   -> [{path_name}] Performing side alignment with Sharp sensors...")
+            perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
     
     # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้เริ่มระบบปกติ (เช็ค detect, scan, etc.)
     if len(path) >= 2:
@@ -2394,6 +2549,11 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         CURRENT_POSITION = (target_r, target_c)
         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_unvisited")
         print(f"✅ Successfully reached unvisited node ({target_r},{target_c})")
+        
+        # เพิ่มการปรับซ้ายขวาด้วย Sharp sensor ในตอนที่เดินไปโหนดสุดท้าย
+        print(f"   -> [{path_name}] Performing final side alignment with Sharp sensors...")
+        perform_side_alignment_and_mapping(movement_controller, scanner, attitude_handler, occupancy_map, visualizer)
+        
         print("✅ Backtrack complete. Resuming normal exploration...")
         visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
 
@@ -2573,7 +2733,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 break
             
             # Use optimized path finding with pre-computed unvisited cells
-            backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
+            backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
             
             if backtrack_path and len(backtrack_path) > 1:
                 target_node = backtrack_path[-1]
@@ -2589,13 +2749,13 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                         # ลบโหนดนี้ออกจาก unvisited_cells และลองหาใหม่
                         unvisited_cells.remove(target_node)
                         print("🔍 Searching for alternative path...")
-                        backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
+                        backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                         if not backtrack_path or len(backtrack_path) <= 1:
                             if len(unvisited_cells) > 0:
                                 print("⚠️ WARNING: There are still unvisited cells but no path found!")
                                 print("🔄 Trying to find alternative path with relaxed constraints...")
                                 # Try with relaxed path finding
-                                backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                                backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                                 if backtrack_path and len(backtrack_path) > 1:
                                     print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
                                     execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
@@ -2616,7 +2776,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                     print("⚠️ WARNING: There are still unvisited cells but no path found!")
                     print("🔄 Trying to find alternative path with relaxed constraints...")
                     # Try with relaxed path finding
-                    backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                    backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                     if backtrack_path and len(backtrack_path) > 1:
                         print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
                         execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
@@ -2840,6 +3000,14 @@ if __name__ == '__main__':
 
         except Exception as e:
             print(f"❌ Camera display error: {e}")
+            
+            # เซฟ JSON เมื่อเกิด Camera display error
+            try:
+                print("💾 Saving map data due to camera display error...")
+                save_map_data_on_error(occupancy_map)
+            except Exception as save_error:
+                print(f"⚠️ Error saving map data: {save_error}")
+                
         finally:
             try:
                 cv2.destroyAllWindows()
@@ -3073,7 +3241,7 @@ if __name__ == '__main__':
                         break
                     
                     # Use optimized path finding with pre-computed unvisited cells
-                    backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
+                    backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                     
                     if backtrack_path and len(backtrack_path) > 1:
                         target_node = backtrack_path[-1]
@@ -3089,13 +3257,13 @@ if __name__ == '__main__':
                                 # ลบโหนดนี้ออกจาก unvisited_cells และลองหาใหม่
                                 unvisited_cells.remove(target_node)
                                 print("🔍 Searching for alternative path...")
-                                backtrack_path = find_nearest_unvisited_path_optimized(occupancy_map, CURRENT_POSITION, visited_cells, unvisited_cells)
+                                backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                                 if not backtrack_path or len(backtrack_path) <= 1:
                                     if len(unvisited_cells) > 0:
                                         print("⚠️ WARNING: There are still unvisited cells but no path found!")
                                         print("🔄 Trying to find alternative path with relaxed constraints...")
                                         # Try with relaxed path finding
-                                        backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                                        backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                                         if backtrack_path and len(backtrack_path) > 1:
                                             print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
                                             execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)
@@ -3116,7 +3284,7 @@ if __name__ == '__main__':
                             print("⚠️ WARNING: There are still unvisited cells but no path found!")
                             print("🔄 Trying to find alternative path with relaxed constraints...")
                             # Try with relaxed path finding
-                            backtrack_path = find_nearest_unvisited_path_relaxed(occupancy_map, CURRENT_POSITION, visited_cells)
+                            backtrack_path = find_nearest_unvisited_path_safe(occupancy_map, CURRENT_POSITION, visited_cells)
                             if backtrack_path and len(backtrack_path) > 1:
                                 print(f"🎯 Found alternative backtrack target: {backtrack_path[-1]}")
                                 execute_path(backtrack_path, movement_controller, attitude_handler, scanner, visualizer, occupancy_map)

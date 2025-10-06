@@ -1,0 +1,41 @@
+{
+  "session_info": {
+    "total_objects_detected": 2,
+    "detection_timestamp": 1759784533.7603261,
+    "grid_size": "5x5",
+    "camera_error": true,
+    "error_timestamp": "20251007_040213"
+  },
+  "detected_objects": [
+    {
+      "color": "Red",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759784456.356837,
+      "detected_from_node": [
+        4,
+        3
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 3
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Circle",
+      "zone": "Left",
+      "is_target": true,
+      "timestamp": 1759784377.802319,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 1
+      }
+    }
+  ]
+}
