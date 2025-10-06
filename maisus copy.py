@@ -67,7 +67,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.5     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.3    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -75,10 +75,10 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.15
 
-GRID = 6
+GRID = 5
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
@@ -331,10 +331,6 @@ def sub_angle_cb(angle_info):
     sub_angle_cb.call_count += 1
     if sub_angle_cb.call_count % 50 == 0:
         print(f"🎯 Gimbal callback: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
-    
-    # Debug: Print every call during tracking mode
-    if is_tracking_mode and sub_angle_cb.call_count % 10 == 0:
-        print(f"🎯 Tracking callback: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -618,7 +614,7 @@ class RMConnection:
             rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
             # subscribe angles
             try:
-                rb.gimbal.sub_angle(freq=20, callback=sub_angle_cb)
+                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
             except Exception as e:
                 print("Gimbal sub_angle error:", e)
             self._robot = rb
@@ -662,6 +658,10 @@ class RMConnection:
     def get_blaster(self):
         with self._lock:
             return None if self._robot is None else self._robot.blaster
+
+    def get_robot(self):
+        with self._lock:
+            return self._robot
 
     def close(self):
         with self._lock:
@@ -766,11 +766,6 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             # ถ้าก้มลง (pitch < 0) => ขยับ ROI_Y ขึ้น
             roi_y_dynamic = int(ROI_Y0 - (max(0.0, -pitch_deg) * ROI_SHIFT_PER_DEG))
             roi_y_dynamic = max(ROI_Y_MIN, min(ROI_Y_MAX, roi_y_dynamic))
-            
-            # Debug: Check if gimbal callback is still working
-            if processing_count % 100 == 0:
-                callback_count = getattr(sub_angle_cb, 'call_count', 0)
-                print(f"🎯 Processing #{processing_count}: pitch={pitch_deg:.1f}°, callback_count={callback_count}")
             
             # Debug: Print ROI adjustment when it changes significantly
             if abs(roi_y_dynamic - ROI_Y0) > 2:
@@ -943,30 +938,6 @@ def pid_tracking_and_firing(manager, roi_state):
         print("⚠️ Gimbal or blaster not available")
         return False
     
-    # Re-subscribe gimbal angles to ensure fresh data
-    try:
-        print("🎯 Re-subscribing gimbal angles for PID tracking...")
-        # Reset callback count to track new subscription
-        if hasattr(sub_angle_cb, 'call_count'):
-            old_count = sub_angle_cb.call_count
-            sub_angle_cb.call_count = 0
-            print(f"🎯 Reset callback count from {old_count} to 0")
-        
-        gimbal.sub_angle(freq=20, callback=sub_angle_cb)
-        time.sleep(0.2)  # Give time for subscription to start
-        
-        # Check if callback is working
-        initial_count = getattr(sub_angle_cb, 'call_count', 0)
-        time.sleep(0.1)
-        final_count = getattr(sub_angle_cb, 'call_count', 0)
-        
-        if final_count > initial_count:
-            print(f"🎯 Gimbal angles re-subscribed successfully (callbacks: {initial_count} -> {final_count})")
-        else:
-            print(f"⚠️ Gimbal subscription may not be working (no new callbacks)")
-    except Exception as e:
-        print(f"⚠️ Failed to re-subscribe gimbal angles: {e}")
-    
     # Find current target (choose largest target box from live detection)
     with output_lock:
         dets = list(processed_output["details"])
@@ -1014,24 +985,9 @@ def pid_tracking_and_firing(manager, roi_state):
         u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
         u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
         
-        # Debug: Print PID control info every 10 calls
-        if not hasattr(pid_tracking_and_firing, 'debug_count'):
-            pid_tracking_and_firing.debug_count = 0
-        pid_tracking_and_firing.debug_count += 1
-        if pid_tracking_and_firing.debug_count % 10 == 0:
-            print(f"🎯 PID: err_x={err_x:.1f}, err_y={err_y:.1f}, u_x={u_x:.1f}, u_y={u_y:.1f}")
-            # Also check gimbal angles
-            with gimbal_angle_lock:
-                current_pitch = gimbal_angles[0]
-            callback_count = getattr(sub_angle_cb, 'call_count', 0)
-            print(f"🎯 Gimbal: pitch={current_pitch:.1f}°, callback_count={callback_count}")
-        
         try:
             # Note: pitch_speed in SDK axis reversed with image
             gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
-            # Debug: Print drive_speed command
-            if pid_tracking_and_firing.debug_count % 10 == 0:
-                print(f"🎯 Drive: pitch_speed={-u_y:.1f}, yaw_speed={u_x:.1f}")
         except Exception as e:
             print("drive_speed error:", e)
         
@@ -1616,13 +1572,10 @@ class MovementController:
         # ปรับ gimbal ให้ตรงกับทิศทางใหม่หลังจากหุ่นหมุนเสร็จ
         if scanner and scanner.gimbal:
             try:
-                if is_tracking_mode:
-                    print("   -> Skipping gimbal adjustment (tracking mode active)")
-                else:
-                    print("   -> Adjusting gimbal to match new robot direction...")
-                    scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                    time.sleep(0.2)  # รอให้ gimbal ปรับเสร็จ
-                    print("   -> Gimbal adjusted to match robot direction")
+                print("   -> Adjusting gimbal to match new robot direction...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                time.sleep(0.2)  # รอให้ gimbal ปรับเสร็จ
+                print("   -> Gimbal adjusted to match robot direction")
             except Exception as e:
                 print(f"   -> Gimbal adjustment failed: {e}")
                 print("   -> Continuing without gimbal adjustment...")
@@ -1778,11 +1731,6 @@ class EnvironmentScanner:
             self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
-        # Don't move gimbal if in tracking mode
-        if is_tracking_mode:
-            print("   -> Skipping gimbal centering (tracking mode active)")
-            return self.last_tof_distance_cm
-        
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         time.sleep(0.1)
         return self.last_tof_distance_cm
@@ -2134,12 +2082,9 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
-                if is_tracking_mode:
-                    print("    Skipping gimbal centering (tracking mode active)")
-                else:
-                    print("    Ensuring gimbal is centered before ToF confirmation...")
-                    scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
-                    time.sleep(0.2)  # ลดเวลารอ
+                print("    Ensuring gimbal is centered before ToF confirmation...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
+                time.sleep(0.2)  # ลดเวลารอ
                 # <<< END OF NEW CODE >>>
                 
                 print("    Confirming path forward with ToF...")
@@ -2458,17 +2403,26 @@ if __name__ == '__main__':
     
     try:
         visualizer = RealTimeVisualizer(grid_size=GRID, target_dest=TARGET_DESTINATION)
-        print("🤖 Connecting to robot...")
-        ep_robot = robot.Robot()
-        try:
-            ep_robot.initialize(conn_type="ap")
-            time.sleep(2.0)  # เพิ่มเวลารอให้ robot initialize เสร็จ
-        except Exception as e:
-            print(f"⚠️ Robot connection error: {e}")
-            print("🔄 Retrying robot connection...")
-            time.sleep(1.0)
-            ep_robot.initialize(conn_type="ap")
-            time.sleep(2.0)
+        
+        # +++ NEW CODE: รอให้ manager เชื่อมต่อสำเร็จก่อน +++
+        print("🤖 Waiting for robot connection from manager...")
+        # รอให้ manager ทำการเชื่อมต่อให้สำเร็จก่อน (timeout 15 วินาที)
+        if not manager.connected.wait(timeout=15.0):
+            print("❌ CRITICAL: Robot connection failed to establish via manager. Exiting.")
+            # ทำการ cleanup ก่อนออกจากโปรแกรม
+            stop_event.set()
+            if ep_robot: ep_robot.close()
+            exit()
+
+        print("✅ Robot connected via manager.")
+        ep_robot = manager.get_robot() # <-- ดึง instance ของ robot มาจาก manager
+        if ep_robot is None:
+            print("❌ CRITICAL: Failed to get robot instance from manager. Exiting.")
+            stop_event.set()
+            exit()
+        # +++ END OF NEW CODE +++
+
+        # ไม่ต้อง initialize อีกแล้ว เพราะ manager ทำให้แล้ว
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor
         
@@ -2571,15 +2525,12 @@ if __name__ == '__main__':
                         print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
                         movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                         
-                        if is_tracking_mode:
-                            print("    Skipping gimbal centering (tracking mode active)")
-                        else:
-                            print("    Ensuring gimbal is centered before ToF confirmation...")
-                            t_start = time.time()
-                            scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                            t_gimbal = time.time() - t_start
-                            if t_gimbal > 2.0:
-                                print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
+                        print("    Ensuring gimbal is centered before ToF confirmation...")
+                        t_start = time.time()
+                        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        t_gimbal = time.time() - t_start
+                        if t_gimbal > 2.0:
+                            print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
                         time.sleep(0.2)  # ลดเวลารอ
                         
                         print("    Confirming path forward with ToF...")

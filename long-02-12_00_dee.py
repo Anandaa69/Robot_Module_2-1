@@ -20,36 +20,6 @@ import queue
 # =============================================================================
 SPEED_ROTATE = 480
 
-# --- PID Target Tracking & Firing Configuration ---
-TARGET_SHAPE = "Circle"  # Shape to track
-TARGET_COLOR = "Red"     # Color to track
-FIRE_SHOTS_COUNT = 5     # Number of shots to fire (adjustable global variable)
-
-# PID Parameters (from fire_target.py)
-PID_KP = -0.25
-PID_KI = -0.01
-PID_KD = -0.03
-DERIV_LPF_ALPHA = 0.25
-MAX_YAW_SPEED = 220
-MAX_PITCH_SPEED = 180
-I_CLAMP = 2000.0
-PIX_ERR_DEADZONE = 6
-LOCK_TOL_X = 8
-LOCK_TOL_Y = 8
-LOCK_STABLE_COUNT = 6
-
-# Camera Configuration
-FRAME_W, FRAME_H = 960, 540
-VERTICAL_FOV_DEG = 54.0
-PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
-PITCH_BIAS_DEG = 2.5
-PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
-
-# ROI Configuration
-ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
-ROI_SHIFT_PER_DEG = 6.0
-ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
-
 # --- Sharp Distance Sensor Configuration ---
 LEFT_SHARP_SENSOR_ID = 1
 LEFT_SHARP_SENSOR_PORT = 1
@@ -67,7 +37,7 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.5     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.2     # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
@@ -75,25 +45,16 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 TOF_TIME_CHECK = 0.15
 
-GRID = 6
+GRID = 4
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
 ROBOT_FACE = 1  # 1,3,5.. = X axis, 2,4,6.. = Y axis
-
-# --- Global variables for PID tracking and firing ---
-is_tracking_mode = False
-fired_targets = set()  # Track which targets have been fired at
-current_target_id = None
-shots_fired = 0
-targets_found = []  # List of targets found in current detection
-gimbal_angle_lock = threading.Lock()
-gimbal_angles = (0.0, 0.0, 0.0, 0.0)  # (pitch, yaw, pitch_g, yaw_g)
 
 # --- NEW: IMU Drift Compensation Parameters ---
 IMU_COMPENSATION_START_NODE_COUNT = 7      # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
@@ -251,9 +212,9 @@ def wait_for_camera_recovery(pause_label="Runtime"):
 # ===== OBJECT DETECTION CONFIGURATION =======================================
 # =============================================================================
 
-# Object Detection Parameters (duplicate - using values from top of file)
-# TARGET_SHAPE = "Circle"  # Already defined at top
-# TARGET_COLOR = "Blue"    # Already defined at top
+# Object Detection Parameters
+TARGET_SHAPE = "Circle"
+TARGET_COLOR = "Red"
 
 # PID Parameters
 PID_KP = -0.25
@@ -321,20 +282,6 @@ def sub_angle_cb(angle_info):
     global gimbal_angles
     with gimbal_angle_lock:
         gimbal_angles = tuple(angle_info)
-    # Debug: Print gimbal angles when in tracking mode
-    if is_tracking_mode:
-        print(f"🎯 Gimbal angles: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}°")
-    
-    # Debug: Print gimbal angles every 50 calls (about 1 second at 50Hz)
-    if not hasattr(sub_angle_cb, 'call_count'):
-        sub_angle_cb.call_count = 0
-    sub_angle_cb.call_count += 1
-    if sub_angle_cb.call_count % 50 == 0:
-        print(f"🎯 Gimbal callback: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
-    
-    # Debug: Print every call during tracking mode
-    if is_tracking_mode and sub_angle_cb.call_count % 10 == 0:
-        print(f"🎯 Tracking callback: pitch={angle_info[0]:.1f}°, yaw={angle_info[1]:.1f}° (call #{sub_angle_cb.call_count})")
 
 # =============================================================================
 # ===== HELPER FUNCTIONS ======================================================
@@ -618,7 +565,7 @@ class RMConnection:
             rb.camera.start_video_stream(display=False, resolution=r_camera.STREAM_540P)
             # subscribe angles
             try:
-                rb.gimbal.sub_angle(freq=20, callback=sub_angle_cb)
+                rb.gimbal.sub_angle(freq=50, callback=sub_angle_cb)
             except Exception as e:
                 print("Gimbal sub_angle error:", e)
             self._robot = rb
@@ -725,7 +672,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail += 1
 
         # Tolerant reconnection policy (match fire_target.py behavior)
-        if fail >= 10:  # ลดจาก 30 เป็น 10 เหมือน fire_target.py
+        if fail >= 30:
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
             # Clear queue to prevent memory buildup
@@ -760,42 +707,11 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             frame_to_process = q.get(timeout=0.3)  # Reduced timeout
             processing_count += 1
 
-            # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
+            # เลื่อน ROI ตาม pitch ปัจจุบัน
             with gimbal_angle_lock:
-                pitch_deg = gimbal_angles[0]  # + ขึ้น, - ลง (ตาม SDK)
-            # ถ้าก้มลง (pitch < 0) => ขยับ ROI_Y ขึ้น
+                pitch_deg = gimbal_angles[0]
             roi_y_dynamic = int(ROI_Y0 - (max(0.0, -pitch_deg) * ROI_SHIFT_PER_DEG))
             roi_y_dynamic = max(ROI_Y_MIN, min(ROI_Y_MAX, roi_y_dynamic))
-            
-            # Debug: Check if gimbal callback is still working
-            if processing_count % 100 == 0:
-                callback_count = getattr(sub_angle_cb, 'call_count', 0)
-                print(f"🎯 Processing #{processing_count}: pitch={pitch_deg:.1f}°, callback_count={callback_count}")
-            
-            # Debug: Print ROI adjustment when it changes significantly
-            if abs(roi_y_dynamic - ROI_Y0) > 2:
-                print(f"🎯 ROI adjusted: pitch={pitch_deg:.1f}°, ROI_Y: {ROI_Y0} -> {roi_y_dynamic}")
-            
-            # Debug: Print pitch info every 30 frames
-            if processing_count % 30 == 0:
-                print(f"🎯 Pitch info: pitch={pitch_deg:.1f}°, ROI_Y0={ROI_Y0}, roi_y_dynamic={roi_y_dynamic}")
-            
-            # Debug: Test ROI adjustment by forcing gimbal movement (TEST ONLY)
-            if processing_count % 100 == 0 and is_tracking_mode:
-                print(f"🎯 TEST: Forcing gimbal pitch test...")
-                try:
-                    # Get gimbal from manager
-                    gimbal = manager.get_gimbal()
-                    if gimbal:
-                        # Test pitch movement
-                        gimbal.moveto(pitch=-15, yaw=0, pitch_speed=100).wait_for_completed()
-                        time.sleep(0.5)
-                        gimbal.moveto(pitch=15, yaw=0, pitch_speed=100).wait_for_completed()
-                        time.sleep(0.5)
-                        gimbal.moveto(pitch=0, yaw=0, pitch_speed=100).wait_for_completed()
-                        print(f"🎯 TEST: Gimbal pitch test completed")
-                except Exception as e:
-                    print(f"🎯 TEST: Gimbal test error: {e}")
 
             ROI_X, ROI_W = roi_state["x"], roi_state["w"]
             ROI_H = roi_state["h"]
@@ -867,213 +783,20 @@ def stop_detection_mode():
     print("🔍 Detection mode deactivated")
 
 def check_detection_timer():
-    """Check if detection mode should be stopped after 1 second (unless tracking mode is active)"""
-    global is_detecting_flag, detection_start_time, is_tracking_mode
+    """Check if detection mode should be stopped after 1 second"""
+    global is_detecting_flag, detection_start_time
     if is_detecting_flag["v"] and detection_start_time is not None:
         if time.time() - detection_start_time >= 1.0:
-            # Don't stop detection if we're in tracking mode
-            if not is_tracking_mode:
-                stop_detection_mode()
-                return True
-    return False
-
-# Removed duplicate sub_angle_cb function
-
-def check_for_targets():
-    """Check if any targets are detected and start tracking if found"""
-    global is_tracking_mode, targets_found, fired_targets, current_target_id, shots_fired, is_detecting_flag
-    
-    try:
-        with output_lock:
-            objects = processed_output["details"]
-    except Exception as e:
-        print(f"⚠️ Error accessing processed output: {e}")
-        return False
-    
-    print(f"🔍 DEBUG: Found {len(objects)} objects in processed_output")
-    for obj in objects:
-        print(f"   - Object: {obj.get('color')} {obj.get('shape')} (ID: {obj.get('id')})")
-    
-    # Filter targets that match our criteria and haven't been fired at
-    targets_found = []
-    for obj in objects:
-        # Safety check: ensure object has required keys
-        if (obj.get('shape') == TARGET_SHAPE and 
-            obj.get('color') == TARGET_COLOR and 
-            obj.get('id') not in fired_targets and
-            'id' in obj and 'box' in obj):
-            targets_found.append(obj)
-            print(f"🎯 DEBUG: Found matching target! {obj.get('color')} {obj.get('shape')} (ID: {obj.get('id')})")
-    
-    if targets_found and not is_tracking_mode:
-        print(f"🎯 Found {len(targets_found)} target(s) matching {TARGET_COLOR} {TARGET_SHAPE}")
-        print("🎯 Starting PID tracking mode...")
-        print("🔍 Keeping detection mode active for PID tracking...")
-        
-        # Keep detection mode active for PID tracking
-        is_detecting_flag["v"] = True
-        
-        is_tracking_mode = True
-        # Safety check: ensure targets_found has at least one element
-        if len(targets_found) > 0 and 'id' in targets_found[0]:
-            current_target_id = targets_found[0]['id']
-            shots_fired = 0
+            stop_detection_mode()
             return True
-        else:
-            print("⚠️ Target found but missing ID, skipping PID tracking")
-            is_tracking_mode = False
-            return False
-    
-    print(f"🔍 DEBUG: No matching targets found. Looking for {TARGET_COLOR} {TARGET_SHAPE}")
     return False
-
-def pid_tracking_and_firing(manager, roi_state):
-    """PID tracking and firing system (from fire_target.py)"""
-    global is_tracking_mode, targets_found, fired_targets, current_target_id, shots_fired
-    
-    if not is_tracking_mode:
-        return False
-    
-    # PID states (simplified for real-time tracking)
-    
-    gimbal = manager.get_gimbal()
-    blaster = manager.get_blaster()
-    
-    if gimbal is None or blaster is None:
-        print("⚠️ Gimbal or blaster not available")
-        return False
-    
-    # Re-subscribe gimbal angles to ensure fresh data
-    try:
-        print("🎯 Re-subscribing gimbal angles for PID tracking...")
-        # Reset callback count to track new subscription
-        if hasattr(sub_angle_cb, 'call_count'):
-            old_count = sub_angle_cb.call_count
-            sub_angle_cb.call_count = 0
-            print(f"🎯 Reset callback count from {old_count} to 0")
-        
-        gimbal.sub_angle(freq=20, callback=sub_angle_cb)
-        time.sleep(0.2)  # Give time for subscription to start
-        
-        # Check if callback is working
-        initial_count = getattr(sub_angle_cb, 'call_count', 0)
-        time.sleep(0.1)
-        final_count = getattr(sub_angle_cb, 'call_count', 0)
-        
-        if final_count > initial_count:
-            print(f"🎯 Gimbal angles re-subscribed successfully (callbacks: {initial_count} -> {final_count})")
-        else:
-            print(f"⚠️ Gimbal subscription may not be working (no new callbacks)")
-    except Exception as e:
-        print(f"⚠️ Failed to re-subscribe gimbal angles: {e}")
-    
-    # Find current target (choose largest target box from live detection)
-    with output_lock:
-        dets = list(processed_output["details"])
-    
-    target_box = None
-    max_area = -1
-    for det in dets:
-        if det.get("is_target", False):
-            x,y,w,h = det["box"]
-            area = w*h
-            if area > max_area:
-                max_area = area
-                target_box = (x,y,w,h)
-    
-    # Only work when there's a target
-    if target_box is not None:
-        x, y, w, h = target_box
-        
-        # Center target within ROI
-        cx_roi = x + w/2.0
-        cy_roi = y + h/2.0
-        
-        # Convert to pixels in full frame (using dynamic ROI)
-        ROI_X, ROI_Y, ROI_W, ROI_H = roi_state["x"], roi_state["y"], roi_state["w"], roi_state["h"]
-        cx = ROI_X + cx_roi
-        cy = ROI_Y + cy_roi
-        
-        # Image center
-        center_x = FRAME_W/2.0
-        center_y = FRAME_H/2.0
-        
-        # Error (image → gimbal): yaw uses x, pitch uses y
-        err_x = (center_x - cx)
-        err_y = (center_y - cy) + PITCH_BIAS_PIX
-        
-        # Deadzone to reduce jitter
-        if abs(err_x) < PIX_ERR_DEADZONE: err_x = 0.0
-        if abs(err_y) < PIX_ERR_DEADZONE: err_y = 0.0
-        
-        # Simple proportional control for now
-        u_x = PID_KP * err_x
-        u_y = PID_KP * err_y
-        
-        # Clamp
-        u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
-        u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
-        
-        # Debug: Print PID control info every 10 calls
-        if not hasattr(pid_tracking_and_firing, 'debug_count'):
-            pid_tracking_and_firing.debug_count = 0
-        pid_tracking_and_firing.debug_count += 1
-        if pid_tracking_and_firing.debug_count % 10 == 0:
-            print(f"🎯 PID: err_x={err_x:.1f}, err_y={err_y:.1f}, u_x={u_x:.1f}, u_y={u_y:.1f}")
-            # Also check gimbal angles
-            with gimbal_angle_lock:
-                current_pitch = gimbal_angles[0]
-            callback_count = getattr(sub_angle_cb, 'call_count', 0)
-            print(f"🎯 Gimbal: pitch={current_pitch:.1f}°, callback_count={callback_count}")
-        
-        try:
-            # Note: pitch_speed in SDK axis reversed with image
-            gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
-            # Debug: Print drive_speed command
-            if pid_tracking_and_firing.debug_count % 10 == 0:
-                print(f"🎯 Drive: pitch_speed={-u_y:.1f}, yaw_speed={u_x:.1f}")
-        except Exception as e:
-            print("drive_speed error:", e)
-        
-        # Check lock for firing
-        locked = (abs(err_x) <= LOCK_TOL_X) and (abs(err_y) <= LOCK_TOL_Y)
-        
-        if locked:
-            if shots_fired < FIRE_SHOTS_COUNT:
-                try:
-                    blaster.fire(fire_type=r_blaster.WATER_FIRE)
-                    shots_fired += 1
-                    print(f"🔥 Fired shot {shots_fired}/{FIRE_SHOTS_COUNT} at target")
-                    time.sleep(0.2)  # Prevent rapid firing
-                except Exception as e:
-                    print(f"fire error: {e}")
-            else:
-                print(f"✅ Completed firing {FIRE_SHOTS_COUNT} shots")
-                is_tracking_mode = False
-                fired_targets.clear()
-                shots_fired = 0  # Reset for next target
-                # Stop detection mode when tracking is complete
-                stop_detection_mode()
-                return False
-    else:
-        # No target → slowly stop
-        try:
-            gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-        except Exception:
-            pass
-    
-    return True
 
 def save_detected_objects_to_map(occupancy_map):
     """Save detected objects to map with position details in the next cell"""
     global processed_output, CURRENT_POSITION, CURRENT_DIRECTION
     
-    try:
-        with output_lock:
-            objects = processed_output["details"]
-    except Exception as e:
-        print(f"⚠️ Error accessing processed output: {e}")
-        return
+    with output_lock:
+        objects = processed_output["details"]
     
     if objects:
         # Calculate next node position (where robot will move to)
@@ -1353,7 +1076,7 @@ class RealTimeVisualizer:
                         self.ax.scatter(obj_x, obj_y, c=color, marker=marker, s=120, edgecolors=edge_color, linewidth=edge_width)
                         
                         # Display ID below the marker
-                        obj_id = obj.get('id', 'Unknown')
+                        obj_id = obj.get('id', '?')
                         self.ax.text(obj_x, obj_y + 0.35, f"ID:{obj_id}", ha="center", va="top", fontsize=7, 
                                     fontweight='bold', bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.2', edgecolor='none'))
                 if cell.walls['W'].is_occupied(): self.ax.plot([c - 0.5, c - 0.5], [r - 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
@@ -1539,7 +1262,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=17, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=19, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -1616,13 +1339,10 @@ class MovementController:
         # ปรับ gimbal ให้ตรงกับทิศทางใหม่หลังจากหุ่นหมุนเสร็จ
         if scanner and scanner.gimbal:
             try:
-                if is_tracking_mode:
-                    print("   -> Skipping gimbal adjustment (tracking mode active)")
-                else:
-                    print("   -> Adjusting gimbal to match new robot direction...")
-                    scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                    time.sleep(0.2)  # รอให้ gimbal ปรับเสร็จ
-                    print("   -> Gimbal adjusted to match robot direction")
+                print("   -> Adjusting gimbal to match new robot direction...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                time.sleep(0.2)  # รอให้ gimbal ปรับเสร็จ
+                print("   -> Gimbal adjusted to match robot direction")
             except Exception as e:
                 print(f"   -> Gimbal adjustment failed: {e}")
                 print("   -> Continuing without gimbal adjustment...")
@@ -1778,11 +1498,6 @@ class EnvironmentScanner:
             self.is_performing_full_scan = False
 
     def get_front_tof_cm(self):
-        # Don't move gimbal if in tracking mode
-        if is_tracking_mode:
-            print("   -> Skipping gimbal centering (tracking mode active)")
-            return self.last_tof_distance_cm
-        
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
         time.sleep(0.1)
         return self.last_tof_distance_cm
@@ -1915,8 +1630,8 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
     # บันทึกตำแหน่งเริ่มต้นของ path execution
     log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_start")
 
-    # เดินไปยังโหนดก่อนสุดท้าย (ไม่ใช่โหนดสุดท้าย) - ไม่เปิดโหมด detect
-    for i in range(len(path) - 2):  # หยุดที่โหนดก่อนโหนดที่ยังไม่สำรวจ
+    # เดินไปยังโหนดก่อนสุดท้าย (ไม่ใช่โหนดสุดท้าย)
+    for i in range(len(path) - 2):  # เปลี่ยนจาก len(path) - 1 เป็น len(path) - 2
         visualizer.update_plot(occupancy_map, path[i], path)
         current_r, current_c = path[i]
         
@@ -1935,23 +1650,25 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
                 print("🔄 Attempting rotation correction...")
                 movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
             
-            # --- ส่วนการตรวจสอบแบบง่าย (ไม่เปิดโหมด detect) ---
-            print(f"   -> [{path_name}] Quick ToF check to ({next_r},{next_c})...")
+            # --- ส่วนการตรวจสอบ ---
+            print(f"   -> [{path_name}] Confirming path to ({next_r},{next_c}) with ToF...")
             scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-            time.sleep(0.1)  # ลดเวลารอให้เร็วขึ้น
+            time.sleep(0.2)  # ลดเวลารอ
             
-            # อ่านค่าจากเซ็นเซอร์จริง
+            # 1. อ่านค่าจากเซ็นเซอร์จริง
             is_blocked = scanner.get_front_tof_cm() < scanner.tof_wall_threshold_cm
             
-            # อัปเดตแผนที่
+            # 2. อัปเดตแผนที่เป็นเรื่องรอง
             occupancy_map.update_wall(current_r, current_c, dir_map_abs_char[CURRENT_DIRECTION], is_blocked, 'tof')
-            print(f"   -> [{path_name}] Quick ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
+            print(f"   -> [{path_name}] Real-time ToF check: Path is {'BLOCKED' if is_blocked else 'CLEAR'}.")
             visualizer.update_plot(occupancy_map, CURRENT_POSITION)
 
-            # หยุดทันทีหากพบอุปสรรค
+            # 3. <<<<<<<<<<<<<<<<<<<< จุดแก้ไขสำคัญ >>>>>>>>>>>>>>>>>>>>
+            #    เปลี่ยนจากการเช็คแผนที่ มาเช็คผลจากเซ็นเซอร์โดยตรง!
             if is_blocked:
                 print(f"   -> 🔥 [{path_name}] IMMEDIATE STOP. Real-time sensor detected an obstacle. Aborting path.")
-                break
+                break # หยุดการทำงานทันที
+            # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 
             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
             movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -1962,54 +1679,23 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
             # บันทึกตำแหน่งใหม่ใน path execution
             log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_moved")
     
-    # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้เริ่มระบบปกติ (เช็ค detect, scan, etc.)
+    # เมื่อถึงโหนดก่อนสุดท้ายแล้ว ให้หันหน้าไปยังทิศทางที่จะไปโหนดสุดท้าย
     if len(path) >= 2:
-        current_r, current_c = path[-2]  # โหนดก่อนสุดท้าย (ที่หยุดอยู่)
+        current_r, current_c = path[-2]  # โหนดก่อนสุดท้าย
         target_r, target_c = path[-1]    # โหนดสุดท้าย (ที่ยังไม่สำรวจ)
-        
-        print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Starting normal exploration system...")
-        print(f"🎯 [{path_name}] Next target: unvisited node ({target_r},{target_c})")
-        
-        # อัปเดตตำแหน่งปัจจุบัน
-        CURRENT_POSITION = (current_r, current_c)
-        log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_pre_target")
-        
-        # หันหน้าไปยังทิศทางที่จะไปโหนดสุดท้าย
         dr, dc = target_r - current_r, target_c - current_c
         target_direction = dir_vectors_map[(dr, dc)]
         
-        print(f"🔄 [{path_name}] Turning to face unvisited node ({target_r},{target_c})...")
+        print(f"🎯 [{path_name}] Reached pre-target node ({current_r},{current_c}). Turning to face unvisited node ({target_r},{target_c})...")
         movement_controller.rotate_to_direction(target_direction, attitude_handler, scanner)
         
         # เช็ค detection ก่อนเดินไปโหนดสุดท้าย
         print("🔍 Performing object detection before moving to unvisited node...")
-        try:
-            start_detection_mode()
-            time.sleep(1.0)
-            save_detected_objects_to_map(occupancy_map)
-            
-            # Check for targets and start PID tracking if found
-            if check_for_targets():
-                print("🎯 Target detected! Starting PID tracking and firing...")
-                # Use existing ROI state (don't create new one)
-                
-                # PID tracking loop (detection mode stays active)
-                tracking_start_time = time.time()
-                while is_tracking_mode and (time.time() - tracking_start_time) < 30:  # 30 second timeout
-                    if pid_tracking_and_firing(manager, roi_state):
-                        time.sleep(0.01)  # Small delay for PID loop
-                    else:
-                        break
-                
-                print("🎯 PID tracking completed, resuming normal exploration...")
-            else:
-                # No targets found, stop detection mode normally
-                stop_detection_mode()
-                print("🔍 Object detection completed before final move")
-        except Exception as e:
-            print(f"⚠️ Object detection error: {e}")
-            stop_detection_mode()
-            print("🔍 Object detection failed, continuing without detection...")
+        start_detection_mode()
+        time.sleep(1.0)
+        save_detected_objects_to_map(occupancy_map)
+        stop_detection_mode()
+        print("🔍 Object detection completed before final move")
         
         # เช็คเส้นทางด้วย ToF ก่อนเดินไปโหนดสุดท้าย
         print(f"   -> [{path_name}] Final confirmation to unvisited node ({target_r},{target_c}) with ToF...")
@@ -2040,8 +1726,7 @@ def execute_path(path, movement_controller, attitude_handler, scanner, visualize
         
         CURRENT_POSITION = (target_r, target_c)
         log_position_timestamp(CURRENT_POSITION, CURRENT_DIRECTION, f"{path_name}_reached_unvisited")
-        print(f"✅ Successfully reached unvisited node ({target_r},{target_c})")
-        print("✅ Backtrack complete. Resuming normal exploration...")
+        print(f"✅ [{path_name}] Successfully reached unvisited node ({target_r},{target_c})")
         visualizer.update_plot(occupancy_map, CURRENT_POSITION, path)
 
     print(f"✅ {path_name} complete.")
@@ -2134,12 +1819,9 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 
                 # <<< NEW CODE ADDED >>>
                 # Ensure the gimbal is facing forward before checking the path and moving.
-                if is_tracking_mode:
-                    print("    Skipping gimbal centering (tracking mode active)")
-                else:
-                    print("    Ensuring gimbal is centered before ToF confirmation...")
-                    scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
-                    time.sleep(0.2)  # ลดเวลารอ
+                print("    Ensuring gimbal is centered before ToF confirmation...")
+                scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed();
+                time.sleep(0.2)  # ลดเวลารอ
                 # <<< END OF NEW CODE >>>
                 
                 print("    Confirming path forward with ToF...")
@@ -2160,33 +1842,11 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 if occupancy_map.is_path_clear(r, c, target_r, target_c):
                     # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
                     print("🔍 Performing object detection after turning to new direction...")
-                    try:
-                        start_detection_mode()
-                        time.sleep(1.0)
-                        save_detected_objects_to_map(occupancy_map)
-                        
-                        # Check for targets and start PID tracking if found
-                        if check_for_targets():
-                            print("🎯 Target detected! Starting PID tracking and firing...")
-                            # Use existing ROI state (don't create new one)
-                            
-                            # PID tracking loop (detection mode stays active)
-                            tracking_start_time = time.time()
-                            while is_tracking_mode and (time.time() - tracking_start_time) < 30:  # 30 second timeout
-                                if pid_tracking_and_firing(manager, roi_state):
-                                    time.sleep(0.01)  # Small delay for PID loop
-                                else:
-                                    break
-                            
-                            print("🎯 PID tracking completed, resuming normal exploration...")
-                        else:
-                            # No targets found, stop detection mode normally
-                            stop_detection_mode()
-                            print("🔍 Object detection completed after turn")
-                    except Exception as e:
-                        print(f"⚠️ Object detection error: {e}")
-                        stop_detection_mode()
-                        print("🔍 Object detection failed, continuing without detection...")
+                    start_detection_mode()
+                    time.sleep(1.0)
+                    save_detected_objects_to_map(occupancy_map)
+                    stop_detection_mode()
+                    print("🔍 Object detection completed after turn")
                     
                     axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                     movement_controller.move_forward_one_grid(axis=axis_to_monitor, attitude_handler=attitude_handler)
@@ -2571,15 +2231,12 @@ if __name__ == '__main__':
                         print(f"Path to {['N','E','S','W'][target_dir]} at ({target_r},{target_c}) seems clear. Attempting move.")
                         movement_controller.rotate_to_direction(target_dir, attitude_handler, scanner)
                         
-                        if is_tracking_mode:
-                            print("    Skipping gimbal centering (tracking mode active)")
-                        else:
-                            print("    Ensuring gimbal is centered before ToF confirmation...")
-                            t_start = time.time()
-                            scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-                            t_gimbal = time.time() - t_start
-                            if t_gimbal > 2.0:
-                                print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
+                        print("    Ensuring gimbal is centered before ToF confirmation...")
+                        t_start = time.time()
+                        scanner.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+                        t_gimbal = time.time() - t_start
+                        if t_gimbal > 2.0:
+                            print(f"    ⚠️ Gimbal center took {t_gimbal:.2f}s (unusually long!)")
                         time.sleep(0.2)  # ลดเวลารอ
                         
                         print("    Confirming path forward with ToF...")
@@ -2604,33 +2261,11 @@ if __name__ == '__main__':
                         if occupancy_map.is_path_clear(r, c, target_r, target_c):
                             # --- OBJECT DETECTION AFTER TURNING TO NEW DIRECTION ---
                             print("🔍 Performing object detection after turning to new direction...")
-                            try:
-                                start_detection_mode()
-                                time.sleep(1.0)
-                                save_detected_objects_to_map(occupancy_map)
-                                
-                                # Check for targets and start PID tracking if found
-                                if check_for_targets():
-                                    print("🎯 Target detected! Starting PID tracking and firing...")
-                                    # Use existing ROI state (don't create new one)
-                                    
-                                    # PID tracking loop (detection mode stays active)
-                                    tracking_start_time = time.time()
-                                    while is_tracking_mode and (time.time() - tracking_start_time) < 30:  # 30 second timeout
-                                        if pid_tracking_and_firing(manager, roi_state):
-                                            time.sleep(0.01)  # Small delay for PID loop
-                                        else:
-                                            break
-                                    
-                                    print("🎯 PID tracking completed, resuming normal exploration...")
-                                else:
-                                    # No targets found, stop detection mode normally
-                                    stop_detection_mode()
-                                    print("🔍 Object detection completed after turn")
-                            except Exception as e:
-                                print(f"⚠️ Object detection error: {e}")
-                                stop_detection_mode()
-                                print("🔍 Object detection failed, continuing without detection...")
+                            start_detection_mode()
+                            time.sleep(1.0)
+                            save_detected_objects_to_map(occupancy_map)
+                            stop_detection_mode()
+                            print("🔍 Object detection completed after turn")
                             
                             axis_to_monitor = 'x' if ROBOT_FACE % 2 != 0 else 'y'
                             t_start = time.time()
