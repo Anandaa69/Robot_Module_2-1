@@ -136,7 +136,7 @@ def safe_gimbal_center(gimbal, timeout=None):
     return safe_gimbal_moveto(gimbal, pitch=0, yaw=0, timeout=timeout)
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (1,3)  # (แถว, คอลัมน์) here
+CURRENT_POSITION = (4,0)  # (แถว, คอลัมน์) here
 CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
