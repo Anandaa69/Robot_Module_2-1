@@ -1,4 +1,4 @@
-# -*-coding:utf-8-*-
+c# -*-coding:utf-8-*-
 
 import time
 import robomaster
