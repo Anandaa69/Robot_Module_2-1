@@ -1,23 +1,38 @@
 {
   "session_info": {
-    "total_objects_detected": 1,
-    "detection_timestamp": 1759776245.6790335,
-    "grid_size": "4x4"
+    "total_objects_detected": 2,
+    "detection_timestamp": 1759782732.242152,
+    "grid_size": "5x5"
   },
   "detected_objects": [
     {
       "color": "Red",
       "shape": "Circle",
-      "zone": "Center",
+      "zone": "Left",
       "is_target": true,
-      "timestamp": 1759776140.0216565,
+      "timestamp": 1759782648.1938567,
       "detected_from_node": [
-        3,
-        1
+        4,
+        0
       ],
       "cell_position": {
-        "row": 3,
-        "col": 0
+        "row": 4,
+        "col": 1
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759782689.3793046,
+      "detected_from_node": [
+        3,
+        3
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 3
       }
     }
   ]
