@@ -1,21 +1,21 @@
 {
   "session_info": {
-    "start_time": "2025-10-06T11:24:32.594374Z",
-    "end_time": "2025-10-06T11:24:40.628615Z",
-    "total_positions_logged": 4,
-    "grid_size": "6x6",
+    "start_time": "2025-10-06T14:56:09.754370Z",
+    "end_time": "2025-10-06T14:56:09.755370Z",
+    "total_positions_logged": 2,
+    "grid_size": "4x4",
     "target_destination": [
-      5,
+      3,
       0
     ],
     "interrupted": true
   },
   "position_log": [
     {
-      "timestamp": 1759749872.5943744,
-      "iso_timestamp": "2025-10-06T11:24:32.594374Z",
+      "timestamp": 1759762569.754371,
+      "iso_timestamp": "2025-10-06T14:56:09.754370Z",
       "position": [
-        5,
+        3,
         0
       ],
       "direction": "East",
@@ -24,38 +24,14 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759749872.595386,
-      "iso_timestamp": "2025-10-06T11:24:32.595386Z",
+      "timestamp": 1759762569.7553701,
+      "iso_timestamp": "2025-10-06T14:56:09.755370Z",
       "position": [
-        5,
+        3,
         0
       ],
       "direction": "East",
       "action": "step_1",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759749880.6286151,
-      "iso_timestamp": "2025-10-06T11:24:40.628615Z",
-      "position": [
-        5,
-        1
-      ],
-      "direction": "East",
-      "action": "moved_to_new_node",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759749880.6286151,
-      "iso_timestamp": "2025-10-06T11:24:40.628615Z",
-      "position": [
-        5,
-        1
-      ],
-      "direction": "East",
-      "action": "step_2",
       "yaw_angle": 0.0,
       "imu_compensation": 0.0
     }

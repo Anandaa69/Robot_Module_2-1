@@ -25,17 +25,17 @@ TARGET_SHAPE = "Circle"  # Shape to track
 TARGET_COLOR = "Red"     # Color to track
 FIRE_SHOTS_COUNT = 5     # Number of shots to fire (adjustable global variable)
 
-# PID Parameters (from fire_target.py)
-PID_KP = -0.25
-PID_KI = -0.01
-PID_KD = -0.03
+# PID Parameters (from fire_target.py) - Reduced for stability
+PID_KP = -0.15  # Reduced from -0.25 for more stable control
+PID_KI = -0.005  # Reduced from -0.01
+PID_KD = -0.02   # Reduced from -0.03
 DERIV_LPF_ALPHA = 0.25
-MAX_YAW_SPEED = 220
-MAX_PITCH_SPEED = 180
+MAX_YAW_SPEED = 120  # Reduced from 220 for more stable control
+MAX_PITCH_SPEED = 100  # Reduced from 180 for more stable control
 I_CLAMP = 2000.0
-PIX_ERR_DEADZONE = 6
-LOCK_TOL_X = 8
-LOCK_TOL_Y = 8
+PIX_ERR_DEADZONE = 8  # Increased from 6 for more stable control
+LOCK_TOL_X = 12  # Increased from 8 for easier locking
+LOCK_TOL_Y = 12  # Increased from 8 for easier locking
 LOCK_STABLE_COUNT = 6
 
 # Camera Configuration
@@ -67,13 +67,13 @@ RIGHT_IR_SENSOR_PORT = 2
 
 # --- Sharp Sensor Detection Thresholds ---
 SHARP_WALL_THRESHOLD_CM = 60.0  # ระยะสูงสุดที่จะถือว่าเจอผนัง
-SHARP_STDEV_THRESHOLD = 0.3    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
+SHARP_STDEV_THRESHOLD = 0.5    # ค่าเบี่ยงเบนมาตรฐานสูงสุดที่ยอมรับได้ เพื่อกรองค่าที่แกว่ง
 
 # --- ToF Centering Configuration (from dude_kum.py) ---
 TOF_ADJUST_SPEED = 0.1             # ความเร็วในการขยับเข้า/ถอยออกเพื่อจัดตำแหน่งกลางโหนด
 TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
-TOF_TIME_CHECK = 0.15
+TOF_TIME_CHECK = 0.5
 
 GRID = 5
 
@@ -95,10 +95,23 @@ targets_found = []  # List of targets found in current detection
 gimbal_angle_lock = threading.Lock()
 gimbal_angles = (0.0, 0.0, 0.0, 0.0)  # (pitch, yaw, pitch_g, yaw_g)
 
+# --- Target Lost Recovery Variables ---
+last_target_error = (0.0, 0.0)  # (err_x, err_y) - last error when target was visible
+target_lost_countdown = 0  # Countdown timer when target is lost
+TARGET_LOST_TIMEOUT = 3.0  # Seconds to wait before giving up
+target_lost_start_time = 0.0  # When target was first lost
+target_missing_frames = 0  # Count frames when target is missing
+TARGET_MISSING_THRESHOLD = 10  # Frames to wait before starting recovery
+
+# --- Multiple Targets Management ---
+total_targets_count = 0  # Total number of targets detected initially
+targets_detected_at_start = set()  # Set of target IDs detected at the beginning
+all_targets_fired = False  # Flag to indicate if all targets have been fired
+
 # --- NEW: IMU Drift Compensation Parameters ---
-IMU_COMPENSATION_START_NODE_COUNT = 7      # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
+IMU_COMPENSATION_START_NODE_COUNT = 15      # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
 IMU_COMPENSATION_NODE_INTERVAL = 15      # เพิ่มค่าชดเชยทุกๆ N โหนด
-IMU_COMPENSATION_DEG_PER_INTERVAL = -1.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
+IMU_COMPENSATION_DEG_PER_INTERVAL = 1.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
 IMU_DRIFT_COMPENSATION_DEG = 0.0           # ตัวแปรเก็บค่าชดเชยปัจจุบัน
 
 # --- Occupancy Grid Parameters ---
@@ -214,7 +227,6 @@ def save_all_data(occupancy_map):
 
 # --- CAMERA HEALTH SHARED STATE ---
 last_frame_received_ts = 0.0  # อัปเดตทุกครั้งที่ได้เฟรมจากกล้อง (capture thread)
-camera_health_lock = threading.Lock()  # สำหรับ thread safety
 
 def camera_is_healthy(timeout=3.0) -> bool:
     """
@@ -228,8 +240,7 @@ def camera_is_healthy(timeout=3.0) -> bool:
     except Exception:
         return False
     
-    with camera_health_lock:
-        return (time.time() - last_frame_received_ts) <= timeout
+    return (time.time() - last_frame_received_ts) <= timeout
 
 def wait_for_camera_recovery(pause_label="Runtime"):
     """หยุดหุ่นและรอกล้องกลับมา ถ้าเกิน 30s จะสั่ง reconnect แล้วรอต่อ"""
@@ -687,9 +698,6 @@ def reconnector_thread(manager: RMConnection):
 def capture_thread_func(manager: RMConnection, q: queue.Queue):
     print("🚀 Capture thread started")
     fail = 0
-    frame_count = 0
-    last_success_time = time.time()
-    consecutive_errors = 0
     
     while not stop_event.is_set():
         if not manager.connected.is_set():
@@ -702,9 +710,8 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             continue
             
         try:
-            frame = cam.read_cv2_image(timeout=2.0)  # เพิ่ม timeout จาก 1.5 เป็น 2.0
+            frame = cam.read_cv2_image(timeout=1.0)  # ลด timeout กลับเป็น 1.0
             if frame is not None and frame.size > 0:
-                # Clear queue if it's full to prevent memory buildup
                 if q.full():
                     try: 
                         q.get_nowait()
@@ -715,42 +722,29 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 # mark last healthy frame timestamp
                 try:
                     global last_frame_received_ts
-                    with camera_health_lock:
-                        last_frame_received_ts = time.time()
+                    last_frame_received_ts = time.time()  # ลบ lock ออก
                 except Exception:
                     pass
-                frame_count += 1
-                last_success_time = time.time()
                 fail = 0
-                consecutive_errors = 0
             else:
                 fail += 1
-                consecutive_errors += 1
                 
         except Exception as e:
-            # แสดง error detail เฉพาะเมื่อเกิดติดกันหรือทุก 10 ครั้ง
-            consecutive_errors += 1
-            if consecutive_errors <= 3 or consecutive_errors % 10 == 0:
-                print(f"⚠️ Camera read error #{consecutive_errors}: {str(e)[:100]}")
+            print(f"⚠️ Camera read error: {e}")
             fail += 1
 
-        # More tolerant reconnection policy - เพิ่ม threshold จาก 10 เป็น 20
-        if fail >= 20:
+        if fail >= 10:  # ลด threshold กลับเป็น 10
             print("⚠️ Too many camera errors → drop & reconnect")
             manager.drop_and_reconnect()
-            # Clear queue to prevent memory buildup
             try:
                 while True: 
                     q.get_nowait()
             except queue.Empty:
                 pass
             fail = 0
-            consecutive_errors = 0
-            # Short sleep to allow reconnect path to proceed
-            time.sleep(0.5)  # เพิ่ม sleep time จาก 0.2 เป็น 0.5
+            time.sleep(0.2)
             
-        # เพิ่ม sleep time เพื่อลด CPU usage
-        time.sleep(0.01)  # เพิ่มจาก 0.005 เป็น 0.01
+        time.sleep(0.005)  # ลด sleep time กลับเป็น 0.005
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
@@ -768,7 +762,7 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             continue
             
         try:
-            frame_to_process = q.get(timeout=0.5)  # เพิ่ม timeout จาก 0.3 เป็น 0.5
+            frame_to_process = q.get(timeout=0.3)  # ลด timeout กลับเป็น 0.3
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
@@ -814,7 +808,19 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             divider1 = int(ROI_W*0.33)
             divider2 = int(ROI_W*0.66)
 
-            object_id_counter = 1
+            # Get previous frame objects for ID stability (simplified)
+            previous_objects = []
+            max_existing_id = 0
+            try:
+                with output_lock:
+                    if "details" in processed_output:
+                        previous_objects = processed_output["details"]
+                        # Calculate max ID once
+                        max_existing_id = max((obj.get("id", 0) for obj in previous_objects), default=0)
+            except:
+                pass
+
+            # Assign stable IDs to objects (ultra-optimized)
             for d in detections:
                 shape, color, (x,y,w,h) = d['shape'], d['color'], d['box']
                 endx = x+w
@@ -823,15 +829,45 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
                 elif x >= divider2: zone = "Right"
                 is_target = (shape == target_shape and color == target_color)
 
+                # Try to find matching object from previous frame (ultra-optimized)
+                matched_id = None
+                # Pre-calculate values to avoid repeated calculations
+                cx1, cy1 = x + w/2, y + h/2
+                size1 = w * h
+                threshold_sq = 2500  # 50*50
+                
+                for prev_obj in previous_objects:
+                    # Quick color/shape check first
+                    if color != prev_obj["color"] or shape != prev_obj["shape"]:
+                        continue
+                    
+                    # Simplified distance check
+                    x2, y2, w2, h2 = prev_obj["box"]
+                    dx = cx1 - (x2 + w2/2)
+                    dy = cy1 - (y2 + h2/2)
+                    distance_sq = dx*dx + dy*dy
+                    
+                    # Quick size check
+                    size2 = w2 * h2
+                    size_diff = abs(size1 - size2)
+                    
+                    if distance_sq < threshold_sq and size_diff < max(size1, size2)*0.3:
+                        matched_id = prev_obj["id"]
+                        break
+
+                # If no match found, assign new ID
+                if matched_id is None:
+                    max_existing_id += 1
+                    matched_id = max_existing_id
+
                 detailed_results.append({
-                    "id": object_id_counter,
+                    "id": matched_id,
                     "color": color,
                     "shape": shape,
                     "zone": zone,
                     "is_target": is_target,
                     "box": (x,y,w,h)
                 })
-                object_id_counter += 1
 
             with output_lock:
                 processed_output = {"details": detailed_results}
@@ -848,15 +884,8 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
             time.sleep(0.1)  # Sleep when no frames to process
             continue
         except Exception as e:
-            # แสดง error เฉพาะเมื่อเกิดติดกันหรือทุก 5 ครั้ง
-            if not hasattr(processing_thread_func, 'error_count'):
-                processing_thread_func.error_count = 0
-            processing_thread_func.error_count += 1
-            
-            if processing_thread_func.error_count <= 3 or processing_thread_func.error_count % 5 == 0:
-                print(f"⚠️ Processing error #{processing_thread_func.error_count}: {str(e)[:100]}")
-            
-            time.sleep(0.2)  # เพิ่ม sleep time เมื่อเกิด error
+            print(f"⚠️ Processing error: {e}")
+            time.sleep(0.1)  # เพิ่ม sleep time เมื่อเกิด error
             # Clear queue to prevent buildup
             try:
                 while True: 
@@ -895,6 +924,7 @@ def check_detection_timer():
 def check_for_targets():
     """Check if any targets are detected and start tracking if found"""
     global is_tracking_mode, targets_found, fired_targets, current_target_id, shots_fired, is_detecting_flag
+    global total_targets_count, targets_detected_at_start, all_targets_fired
     
     try:
         with output_lock:
@@ -920,6 +950,13 @@ def check_for_targets():
     
     if targets_found and not is_tracking_mode:
         print(f"🎯 Found {len(targets_found)} target(s) matching {TARGET_COLOR} {TARGET_SHAPE}")
+        
+        # Count total targets detected initially
+        if total_targets_count == 0:
+            total_targets_count = len(targets_found)
+            targets_detected_at_start = {obj.get('id') for obj in targets_found}
+            print(f"🎯 Total targets detected: {total_targets_count} (IDs: {targets_detected_at_start})")
+        
         print("🎯 Starting PID tracking mode...")
         print("🔍 Keeping detection mode active for PID tracking...")
         
@@ -941,8 +978,11 @@ def check_for_targets():
     return False
 
 def pid_tracking_and_firing(manager, roi_state):
-    """PID tracking and firing system (from fire_target.py)"""
+    """PID tracking and firing system (from fire_target.py) with target lost recovery"""
     global is_tracking_mode, targets_found, fired_targets, current_target_id, shots_fired
+    global last_target_error, target_lost_countdown, TARGET_LOST_TIMEOUT, target_lost_start_time
+    global target_missing_frames, TARGET_MISSING_THRESHOLD
+    global total_targets_count, targets_detected_at_start, all_targets_fired
     
     if not is_tracking_mode:
         return False
@@ -956,23 +996,94 @@ def pid_tracking_and_firing(manager, roi_state):
         print("⚠️ Gimbal or blaster not available")
         return False
     
-    # Find current target (choose largest target box from live detection)
+    # Find current target (prioritize current_target_id, then choose largest)
     with output_lock:
         dets = list(processed_output["details"])
     
     target_box = None
+    target_id = None
     max_area = -1
-    for det in dets:
-        if det.get("is_target", False):
-            x,y,w,h = det["box"]
-            area = w*h
-            if area > max_area:
-                max_area = area
+    
+    # First, try to find the current target by ID
+    if current_target_id is not None:
+        for det in dets:
+            if (det.get("is_target", False) and 
+                det.get("id") == current_target_id and
+                det.get("id") not in fired_targets):
+                x,y,w,h = det["box"]
                 target_box = (x,y,w,h)
+                target_id = det.get("id")
+                print(f"🎯 Continuing to track current target ID: {target_id}")
+                break
+    
+    # If current target not found, find the largest available target
+    if target_box is None:
+        for det in dets:
+            if (det.get("is_target", False) and 
+                det.get("id") not in fired_targets):
+                x,y,w,h = det["box"]
+                area = w*h
+                if area > max_area:
+                    max_area = area
+                    target_box = (x,y,w,h)
+                    target_id = det.get("id")
+        
+        if target_box is not None:
+            # Only switch if the new target is significantly larger or current target is lost
+            if (current_target_id is None or 
+                max_area > 5000 or  # Large target threshold
+                target_missing_frames > TARGET_MISSING_THRESHOLD):
+                current_target_id = target_id
+                print(f"🎯 Switched to new target ID: {target_id} (area: {max_area})")
+            else:
+                print(f"🎯 Keeping current target, new target area too small: {max_area}")
+        else:
+            # No targets found at all - check if current target is still valid
+            if current_target_id is not None:
+                target_missing_frames += 1
+                print(f"🎯 Current target ID {current_target_id} not found in detection (missing frames: {target_missing_frames})")
+                # Don't immediately switch to recovery, give it a few frames
+                # This prevents flickering when target temporarily disappears
+                if target_missing_frames < TARGET_MISSING_THRESHOLD:
+                    # Still within threshold, continue with last known position
+                    print(f"🎯 Target temporarily missing, continuing with last position...")
+                    # Use last known error for tracking
+                    if last_target_error != (0.0, 0.0):
+                        err_x, err_y = last_target_error
+                        # Reduce error by half to avoid overshooting
+                        recovery_err_x = err_x * 0.3
+                        recovery_err_y = err_y * 0.3
+                        
+                        # Convert to gimbal speeds
+                        u_x = PID_KP * recovery_err_x
+                        u_y = PID_KP * recovery_err_y
+                        
+                        # Clamp
+                        u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
+                        u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
+                        
+                        try:
+                            gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
+                            print(f"🎯 Tracking last known position...")
+                        except Exception as e:
+                            print(f"recovery drive_speed error: {e}")
+                    return True
+                else:
+                    # Threshold exceeded, start recovery
+                    print(f"🎯 Target missing threshold exceeded, starting recovery...")
+                    target_missing_frames = 0
+            else:
+                # No current target, start recovery immediately
+                target_missing_frames = 0
     
     # Only work when there's a target
     if target_box is not None:
         x, y, w, h = target_box
+        
+        # Reset target lost state when target is found
+        target_lost_countdown = 0
+        target_lost_start_time = 0.0
+        target_missing_frames = 0
         
         # Center target within ROI
         cx_roi = x + w/2.0
@@ -990,6 +1101,9 @@ def pid_tracking_and_firing(manager, roi_state):
         # Error (image → gimbal): yaw uses x, pitch uses y
         err_x = (center_x - cx)
         err_y = (center_y - cy) + PITCH_BIAS_PIX
+        
+        # Store last error for recovery
+        last_target_error = (err_x, err_y)
         
         # Deadzone to reduce jitter
         if abs(err_x) < PIX_ERR_DEADZONE: err_x = 0.0
@@ -1022,19 +1136,144 @@ def pid_tracking_and_firing(manager, roi_state):
                 except Exception as e:
                     print(f"fire error: {e}")
             else:
-                print(f"✅ Completed firing {FIRE_SHOTS_COUNT} shots")
+                print(f"✅ Completed firing {FIRE_SHOTS_COUNT} shots at target ID: {current_target_id}")
+                
+                # Mark this target as fired
+                fired_targets.add(current_target_id)
+                print(f"🎯 Target ID {current_target_id} marked as fired. Total fired: {len(fired_targets)}")
+                
+                # Check if all targets have been fired
+                if len(fired_targets) >= total_targets_count:
+                    print(f"🎯 All {total_targets_count} targets completed! Returning gimbal to front...")
+                    all_targets_fired = True
+                    
+                    # Return gimbal to front before stopping tracking
+                    try:
+                        print("🔄 Returning gimbal to front position...")
+                        # Stop any current gimbal movement first
+                        gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+                        time.sleep(0.2)
+                        # Then move to front position
+                        gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
+                        time.sleep(0.5)
+                        print("✅ Gimbal returned to front position")
+                    except Exception as e:
+                        print(f"⚠️ Error returning gimbal to front: {e}")
+                        # Try alternative approach
+                        try:
+                            gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+                            time.sleep(0.5)
+                            print("✅ Gimbal stopped")
+                        except Exception as e2:
+                            print(f"⚠️ Error stopping gimbal: {e2}")
+                    
+                    is_tracking_mode = False
+                    fired_targets.clear()
+                    shots_fired = 0
+                    current_target_id = None
+                    total_targets_count = 0
+                    targets_detected_at_start.clear()
+                    all_targets_fired = False
+                    # Stop detection mode when tracking is complete
+                    stop_detection_mode()
+                    return False
+                else:
+                    # Still have targets to fire at, continue with current target
+                    print(f"🎯 Still have {total_targets_count - len(fired_targets)} targets remaining. Continuing...")
+                    shots_fired = 0  # Reset shot count for same target
+                    # Continue tracking without stopping
+    else:
+        # Target lost - implement recovery strategy
+        if target_lost_start_time == 0.0:
+            target_lost_start_time = time.time()
+            print("🎯 Target lost! Starting recovery...")
+        
+        elapsed_time = time.time() - target_lost_start_time
+        
+        if elapsed_time < TARGET_LOST_TIMEOUT:
+            # Try to move gimbal to last known error position
+            if last_target_error != (0.0, 0.0):
+                err_x, err_y = last_target_error
+                
+                # Reduce error by half to avoid overshooting
+                recovery_err_x = err_x * 0.5
+                recovery_err_y = err_y * 0.5
+                
+                # Convert to gimbal speeds
+                u_x = PID_KP * recovery_err_x
+                u_y = PID_KP * recovery_err_y
+                
+                # Clamp
+                u_x = float(np.clip(u_x, -MAX_YAW_SPEED, MAX_YAW_SPEED))
+                u_y = float(np.clip(u_y, -MAX_PITCH_SPEED, MAX_PITCH_SPEED))
+                
+                try:
+                    gimbal.drive_speed(pitch_speed=-u_y, yaw_speed=u_x)
+                    remaining_time = TARGET_LOST_TIMEOUT - elapsed_time
+                    print(f"🎯 Searching for target... {remaining_time:.1f}s remaining")
+                except Exception as e:
+                    print(f"recovery drive_speed error: {e}")
+            else:
+                # No previous error data, slowly scan
+                try:
+                    scan_speed = 20  # Slow scan speed
+                    gimbal.drive_speed(pitch_speed=0, yaw_speed=scan_speed)
+                    remaining_time = TARGET_LOST_TIMEOUT - elapsed_time
+                    print(f"🎯 Scanning for target... {remaining_time:.1f}s remaining")
+                except Exception as e:
+                    print(f"scan drive_speed error: {e}")
+        else:
+            # Timeout reached - check if there are other targets
+            print("⏰ Target lost timeout reached. Checking for other targets...")
+            
+            # Check if there are other targets available
+            remaining_targets = []
+            for det in dets:
+                if (det.get("is_target", False) and 
+                    det.get("id") not in fired_targets and
+                    det.get("id") != current_target_id):
+                    remaining_targets.append(det.get("id"))
+            
+            if remaining_targets:
+                print(f"🎯 Found {len(remaining_targets)} other targets: {remaining_targets}")
+                # Switch to next available target
+                current_target_id = remaining_targets[0]
+                shots_fired = 0
+                target_lost_countdown = 0
+                target_lost_start_time = 0.0
+                last_target_error = (0.0, 0.0)
+                target_missing_frames = 0
+                print(f"🎯 Switching to target ID: {current_target_id}")
+                # Continue tracking without stopping
+            else:
+                print("🎯 No more targets available. Returning to normal exploration...")
+                try:
+                    # Return gimbal to front position
+                    gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+                    time.sleep(0.2)
+                    gimbal.moveto(pitch=0, yaw=0, pitch_speed=100, yaw_speed=100).wait_for_completed()
+                    time.sleep(0.5)
+                    print("✅ Gimbal returned to front position")
+                except Exception as e:
+                    print(f"⚠️ Error returning gimbal to front: {e}")
+                    # Try alternative approach
+                    try:
+                        gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
+                        time.sleep(0.5)
+                        print("✅ Gimbal stopped")
+                    except Exception as e2:
+                        print(f"⚠️ Error stopping gimbal: {e2}")
+                
                 is_tracking_mode = False
                 fired_targets.clear()
-                shots_fired = 0  # Reset for next target
-                # Stop detection mode when tracking is complete
+                shots_fired = 0
+                target_lost_countdown = 0
+                target_lost_start_time = 0.0
+                last_target_error = (0.0, 0.0)
+                current_target_id = None
+                target_missing_frames = 0
                 stop_detection_mode()
                 return False
-    else:
-        # No target → slowly stop
-        try:
-            gimbal.drive_speed(pitch_speed=0, yaw_speed=0)
-        except Exception:
-            pass
     
     return True
 
@@ -1513,7 +1752,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=17, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=15, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -2299,7 +2538,7 @@ if __name__ == '__main__':
     print("🎯 Camera confirmed ready - Starting exploration...")
     
     # Start camera display thread (optional via SHOW_WINDOW flag)
-    SHOW_WINDOW = False  # set False to disable display and reduce load on camera
+    SHOW_WINDOW = True  # set False to disable display and reduce load on camera
     def camera_display_thread():
         print("📹 Camera display thread started")
         display_frame = None
