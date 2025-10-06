@@ -14,7 +14,7 @@ import statistics
 # =============================================================================
 # ===== CONFIGURATION & PARAMETERS ============================================
 # =============================================================================
-SPEED_ROTATE = 480
+SPEED_ROTATE = 500
 SAVE_PATH = r"D:\downsyndrome\year2_1\Robot_Module_2-1\Assignment\dude"
 # --- Sharp Distance Sensor Configuration ---
 LEFT_SHARP_SENSOR_ID = 1
@@ -41,9 +41,9 @@ TOF_CALIBRATION_SLOPE = 0.0894     # ค่าจากการ Calibrate
 TOF_CALIBRATION_Y_INTERCEPT = 3.8409 # ค่าจากการ Calibrate
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (2,2)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION = 0  # 0:North, 1:East, 2:South, 3:West here
-TARGET_DESTINATION = (2,2)#here
+CURRENT_POSITION = (3,0)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION = 1  # 0:North, 1:East, 2:South, 3:West here
+TARGET_DESTINATION = (3,0)#here
 
 # --- Physical state for the robot ---
 CURRENT_TARGET_YAW = 0.0
@@ -805,14 +805,14 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
 # =============================================================================
 if __name__ == '__main__':
     ep_robot = None
-    occupancy_map = OccupancyGridMap(width=3, height=3)#here
+    occupancy_map = OccupancyGridMap(width=4, height=4)#here
     attitude_handler = AttitudeHandler()
     movement_controller = None
     scanner = None
     ep_chassis = None
     
     try:
-        visualizer = RealTimeVisualizer(grid_size=3, target_dest=TARGET_DESTINATION)#here
+        visualizer = RealTimeVisualizer(grid_size=4, target_dest=TARGET_DESTINATION)#here
         print("🤖 Connecting to robot..."); ep_robot = robot.Robot(); ep_robot.initialize(conn_type="ap")
         ep_chassis, ep_gimbal = ep_robot.chassis, ep_robot.gimbal
         ep_tof_sensor, ep_sensor_adaptor = ep_robot.sensor, ep_robot.sensor_adaptor

@@ -778,9 +778,9 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
     print("🛑 Capture thread stopped")
 
 def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
-                           target_shape, target_color,
-                           roi_state,
-                           is_detecting_func):
+                        target_shape, target_color,
+                        roi_state,
+                        is_detecting_func):
     global processed_output
     print("🧠 Processing thread started.")
     processing_count = 0
@@ -1633,7 +1633,7 @@ class RealTimeVisualizer:
             
             # Add text box on the right side
             self.fig.text(0.78, 0.5, details_text, fontsize=9, family='monospace',
-                         verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9))
+                        verticalalignment='center', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.9))
         
         legend_elements = [ 
             plt.Rectangle((0,0),1,1, facecolor='#8B0000', label=f'Node Occupied (P>{OCCUPANCY_THRESHOLD})'), 
@@ -2668,8 +2668,8 @@ if __name__ == '__main__':
     
     cap_t = threading.Thread(target=capture_thread_func, args=(manager, frame_queue), daemon=True)
     proc_t = threading.Thread(target=processing_thread_func,
-                              args=(tracker, frame_queue, TARGET_SHAPE, TARGET_COLOR, roi_state, is_detecting),
-                              daemon=True)
+                            args=(tracker, frame_queue, TARGET_SHAPE, TARGET_COLOR, roi_state, is_detecting),
+                            daemon=True)
     
     cap_t.start()
     proc_t.start()

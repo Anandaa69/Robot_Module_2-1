@@ -1,21 +1,21 @@
 {
   "session_info": {
-    "start_time": "2025-10-05T07:40:50.964252Z",
-    "end_time": "2025-10-05T07:44:00.765103Z",
-    "total_positions_logged": 17,
-    "grid_size": "3x3",
+    "start_time": "2025-10-06T18:59:44.913110Z",
+    "end_time": "2025-10-06T19:00:41.501821Z",
+    "total_positions_logged": 10,
+    "grid_size": "4x4",
     "target_destination": [
-      2,
+      3,
       0
     ],
     "interrupted": false
   },
   "position_log": [
     {
-      "timestamp": 1759650050.9642525,
-      "iso_timestamp": "2025-10-05T07:40:50.964252Z",
+      "timestamp": 1759777184.913111,
+      "iso_timestamp": "2025-10-06T18:59:44.913110Z",
       "position": [
-        2,
+        3,
         0
       ],
       "direction": "East",
@@ -24,10 +24,10 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650050.9652524,
-      "iso_timestamp": "2025-10-05T07:40:50.965252Z",
+      "timestamp": 1759777184.913111,
+      "iso_timestamp": "2025-10-06T18:59:44.913110Z",
       "position": [
-        2,
+        3,
         0
       ],
       "direction": "East",
@@ -36,10 +36,10 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650050.9652524,
-      "iso_timestamp": "2025-10-05T07:40:50.965252Z",
+      "timestamp": 1759777184.913111,
+      "iso_timestamp": "2025-10-06T18:59:44.913110Z",
       "position": [
-        2,
+        3,
         0
       ],
       "direction": "East",
@@ -48,10 +48,10 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650057.5645654,
-      "iso_timestamp": "2025-10-05T07:40:57.564565Z",
+      "timestamp": 1759777193.329525,
+      "iso_timestamp": "2025-10-06T18:59:53.329524Z",
       "position": [
-        2,
+        3,
         1
       ],
       "direction": "East",
@@ -60,10 +60,10 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650057.5655794,
-      "iso_timestamp": "2025-10-05T07:40:57.565579Z",
+      "timestamp": 1759777193.329525,
+      "iso_timestamp": "2025-10-06T18:59:53.329524Z",
       "position": [
-        2,
+        3,
         1
       ],
       "direction": "East",
@@ -72,146 +72,62 @@
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650063.5862172,
-      "iso_timestamp": "2025-10-05T07:41:03.586217Z",
+      "timestamp": 1759777202.100458,
+      "iso_timestamp": "2025-10-06T19:00:02.100457Z",
       "position": [
         2,
-        2
-      ],
-      "direction": "East",
-      "action": "moved_to_new_node",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650063.5872314,
-      "iso_timestamp": "2025-10-05T07:41:03.587231Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "East",
-      "action": "step_3",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650105.2715697,
-      "iso_timestamp": "2025-10-05T07:41:45.271569Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "East",
-      "action": "resume_session",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650105.2715697,
-      "iso_timestamp": "2025-10-05T07:41:45.271569Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "East",
-      "action": "exploration_start",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650105.2725685,
-      "iso_timestamp": "2025-10-05T07:41:45.272568Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "East",
-      "action": "step_1",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650220.3632073,
-      "iso_timestamp": "2025-10-05T07:43:40.363207Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "North",
-      "action": "resume_session",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650220.3632073,
-      "iso_timestamp": "2025-10-05T07:43:40.363207Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "North",
-      "action": "exploration_start",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650220.3632073,
-      "iso_timestamp": "2025-10-05T07:43:40.363207Z",
-      "position": [
-        2,
-        2
-      ],
-      "direction": "North",
-      "action": "step_1",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650229.3238606,
-      "iso_timestamp": "2025-10-05T07:43:49.323860Z",
-      "position": [
-        1,
-        2
-      ],
-      "direction": "North",
-      "action": "moved_to_new_node",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650229.3298588,
-      "iso_timestamp": "2025-10-05T07:43:49.329858Z",
-      "position": [
-        1,
-        2
-      ],
-      "direction": "North",
-      "action": "step_2",
-      "yaw_angle": 0.0,
-      "imu_compensation": 0.0
-    },
-    {
-      "timestamp": 1759650240.7641058,
-      "iso_timestamp": "2025-10-05T07:44:00.764105Z",
-      "position": [
-        1,
         1
       ],
-      "direction": "West",
+      "direction": "North",
       "action": "moved_to_new_node",
       "yaw_angle": -90.0,
       "imu_compensation": 0.0
     },
     {
-      "timestamp": 1759650240.7651036,
-      "iso_timestamp": "2025-10-05T07:44:00.765103Z",
+      "timestamp": 1759777202.100458,
+      "iso_timestamp": "2025-10-06T19:00:02.100457Z",
       "position": [
-        1,
+        2,
         1
       ],
-      "direction": "West",
+      "direction": "North",
       "action": "step_3",
+      "yaw_angle": -90.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759777241.5018218,
+      "iso_timestamp": "2025-10-06T19:00:41.501821Z",
+      "position": [
+        2,
+        1
+      ],
+      "direction": "East",
+      "action": "resume_session",
+      "yaw_angle": -90.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759777241.5018218,
+      "iso_timestamp": "2025-10-06T19:00:41.501821Z",
+      "position": [
+        2,
+        1
+      ],
+      "direction": "East",
+      "action": "exploration_start",
+      "yaw_angle": -90.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759777241.5018218,
+      "iso_timestamp": "2025-10-06T19:00:41.501821Z",
+      "position": [
+        2,
+        1
+      ],
+      "direction": "East",
+      "action": "step_1",
       "yaw_angle": -90.0,
       "imu_compensation": 0.0
     }

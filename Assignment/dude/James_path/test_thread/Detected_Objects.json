@@ -1,0 +1,9 @@
+{
+  "session_info": {
+    "target_shape": "Circle",
+    "target_color": "Red",
+    "total_detected": 0,
+    "total_fired": 0
+  },
+  "detected_objects": []
+}

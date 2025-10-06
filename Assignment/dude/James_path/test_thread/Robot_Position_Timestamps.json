@@ -1,0 +1,38 @@
+{
+  "session_info": {
+    "start_time": "2025-10-06T20:39:39.910512Z",
+    "end_time": "2025-10-06T20:39:39.910512Z",
+    "total_positions_logged": 2,
+    "grid_size": "4x4",
+    "target_destination": [
+      3,
+      0
+    ]
+  },
+  "position_log": [
+    {
+      "timestamp": 1759783179.9105124,
+      "iso_timestamp": "2025-10-06T20:39:39.910512Z",
+      "position": [
+        3,
+        0
+      ],
+      "direction": "East",
+      "action": "exploration_start",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    },
+    {
+      "timestamp": 1759783179.9105124,
+      "iso_timestamp": "2025-10-06T20:39:39.910512Z",
+      "position": [
+        3,
+        0
+      ],
+      "direction": "East",
+      "action": "step_1",
+      "yaw_angle": 0.0,
+      "imu_compensation": 0.0
+    }
+  ]
+}
