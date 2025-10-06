@@ -2,7 +2,10 @@
 
 """
 Round 2: Complete Target Shooting System
-(MODIFIED with Speed Ramp-Up, 3-Step Precision Nav & Advanced Camera)
+(MODIFIED with 3-Step Precision Navigation & Advanced Camera)
+- การเดินใช้ PID ควบคุมระยะทาง
+- จัดตำแหน่งกลางด้วย ToF (หน้า-หลัง) และ Sharp Sensor (ซ้าย-ขวา)
+- ระบบกล้องทำงานใน Background ตลอดเวลา, กรอบ ROI เคลื่อนที่ตามมุม Gimbal
 """
 
 import time
@@ -22,30 +25,53 @@ import cv2
 # =============================================================================
 # ===== CONFIGURATION & PARAMETERS ============================================
 # =============================================================================
+
+# --- Camera Display Toggle ---
 SHOW_WINDOW = True
+
+# Data folder
 DATA_FOLDER = r"./Assignment/dude/James_path"
 
-LEFT_SHARP_SENSOR_ID = 1; LEFT_SHARP_SENSOR_PORT = 1; LEFT_TARGET_CM = 16.0
-RIGHT_SHARP_SENSOR_ID = 2; RIGHT_SHARP_SENSOR_PORT = 1; RIGHT_TARGET_CM = 16.0
-SHARP_WALL_THRESHOLD_CM = 50.0
+# --- NEW: Sharp Sensor Configuration ---
+LEFT_SHARP_SENSOR_ID = 1
+LEFT_SHARP_SENSOR_PORT = 1
+LEFT_TARGET_CM = 16.0  # ระยะห่างที่ต้องการจากกำแพงด้านซ้าย
 
-CURRENT_POSITION = (4, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
+RIGHT_SHARP_SENSOR_ID = 2
+RIGHT_SHARP_SENSOR_PORT = 1
+RIGHT_TARGET_CM = 16.0 # ระยะห่างที่ต้องการจากกำแพงด้านขวา
+
+SHARP_WALL_THRESHOLD_CM = 50.0 # ระยะสูงสุดที่จะถือว่าเจอกำแพง
+
+# Robot configuration
+CURRENT_POSITION = (4, 0)
+CURRENT_DIRECTION = 1
+CURRENT_TARGET_YAW = 0.0
+ROBOT_FACE = 1
+
+# IMU Drift Compensation
 IMU_DRIFT_COMPENSATION_DEG = 0.0
 
+# --- PID Parameters for AIMING ---
 PID_AIM_KP = -0.15; PID_AIM_KI = -0.005; PID_AIM_KD = -0.02; DERIV_LPF_ALPHA = 0.25; I_CLAMP = 2000.0
 PIX_ERR_DEADZONE = 8; LOCK_TOL_X = 12; LOCK_TOL_Y = 12; LOCK_STABLE_COUNT = 6
 MAX_YAW_SPEED = 120; MAX_PITCH_SPEED = 100
 
+# --- ToF Centering Parameters ---
 TOF_ADJUST_SPEED = 0.1; TOF_CALIBRATION_SLOPE = 0.0894; TOF_CALIBRATION_Y_INTERCEPT = 3.8409
 
+# Camera Configuration
 FRAME_W, FRAME_H = 960, 540; VERTICAL_FOV_DEG = 54.0; PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
 PITCH_BIAS_DEG = 2.5; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 
+# ROI Configuration
 ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
 ROI_SHIFT_PER_DEG = 6.0; ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
 
+# Movement parameters
 SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 2
 
+# Global variables
 is_tracking_mode = False; is_detecting_flag = {"v": True}; fired_targets = set()
 shots_fired = 0; gimbal_angle_lock = threading.Lock(); gimbal_angles = (0.0, 0.0, 0.0, 0.0)
 frame_queue = queue.Queue(maxsize=1); processed_output = {"details": []}; output_lock = threading.Lock()
@@ -310,16 +336,16 @@ class MovementController:
                 print("\n✅ Move complete!")
                 break
             output = pid.compute(relative_position, dt)
-            # --- MODIFIED: Speed Ramp-Up Logic ---
+            # --- NEW: Speed Ramp-Up Logic ---
             ramp_multiplier = min(1.0, 0.1 + ((now - start_time) / 1.0) * 0.9)
             speed = max(-1.0, min(1.0, output * ramp_multiplier))
-            # --- END MODIFICATION ---
+            # --- END NEW ---
             yaw_correction = self._calculate_yaw_correction(target_yaw)
             self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=0.2)
             print(f"Dist: {relative_position:.3f}/0.60 m", end='\r')
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.25)
         
-    def center_in_node_with_tof(self, target_cm=18.0, tol_cm=1.0, max_adjust_time=5.0):
+    def center_in_node_with_tof(self, target_cm=18.0, tol_cm=1.0, max_adjust_time=3.0):
         print("\n--- Centering Front/Back (ToF) ---"); time.sleep(0.2)
         dist=self.scanner.get_front_tof_cm()
         if dist is None or math.isinf(dist) or dist>=50.0: print(f"[ToF] ✅ Open space or no data. Skipping."); return
@@ -363,13 +389,12 @@ class MovementController:
         has_right = right_dist < SHARP_WALL_THRESHOLD_CM
 
         if has_left and has_right:
-            # ถ้ามี 2 ฝั่ง ให้ปรับเข้าหาฝั่งที่ใกล้กว่าก่อน
-            if left_dist < right_dist:
-                self.adjust_position_to_wall("Left", LEFT_TARGET_CM, 1)
-                self.adjust_position_to_wall("Right", RIGHT_TARGET_CM, -1)
+            if abs(left_dist - right_dist) > 3: # Only adjust if significantly off-center
+                avg_target = (LEFT_TARGET_CM + RIGHT_TARGET_CM) / 2
+                self.adjust_position_to_wall("Left", avg_target, 1)
+                self.adjust_position_to_wall("Right", avg_target, -1)
             else:
-                self.adjust_position_to_wall("Right", RIGHT_TARGET_CM, -1)
-                self.adjust_position_to_wall("Left", LEFT_TARGET_CM, 1)
+                print("✅ Already centered between two walls.")
         elif has_left:
             self.adjust_position_to_wall("Left", LEFT_TARGET_CM, 1)
         elif has_right:
