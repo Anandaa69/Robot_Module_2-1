@@ -667,7 +667,7 @@ class ObjectTracker:
         }
         masks = {}
         masks['Red'] = cv2.inRange(hsv, np.array(ranges['Red'][0]), np.array(ranges['Red'][1])) | \
-                       cv2.inRange(hsv, np.array(ranges['Red'][2]), np.array(ranges['Red'][3]))
+                    cv2.inRange(hsv, np.array(ranges['Red'][2]), np.array(ranges['Red'][3]))
         for name in ['Yellow','Green','Blue']:
             masks[name] = cv2.inRange(hsv, np.array(ranges[name][0]), np.array(ranges[name][1]))
 

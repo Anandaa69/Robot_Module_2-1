@@ -303,11 +303,11 @@ class AttitudeHandler:
         chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         final_error = abs(self.normalize_angle(norm_target - self.current_yaw))
         if final_error <= self.yaw_tolerance:
-             print(f"✅ Yaw OK after loop: {self.current_yaw:.1f}°")
-             return True
+            print(f"✅ Yaw OK after loop: {self.current_yaw:.1f}°")
+            return True
         else:
-             print(f"\n🔥🔥 Yaw FAIL. Timeout reached. Final Yaw: {self.current_yaw:.1f}°, Error: {final_error:.2f}°")
-             return False
+            print(f"\n🔥🔥 Yaw FAIL. Timeout reached. Final Yaw: {self.current_yaw:.1f}°, Error: {final_error:.2f}°")
+            return False
 
 class MovementController:
     def __init__(self, chassis, scanner, attitude_handler, gimbal):
@@ -339,26 +339,58 @@ class MovementController:
             print(f"Dist: {relative_position:.3f}/0.60 m", end='\r')
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.25)
         
-    def perform_3_way_tof_centering(self, wall_threshold_cm=50.0, target_dist_cm=17.0, tol_cm=1.5, max_adjust_time=2.5):
+    def perform_3_way_tof_centering(self):
+        """
+        ปรับตำแหน่งหุ่นยนต์ให้อยู่ตรงกลางช่องโดยเช็ค ToF 3 ทิศทาง
+        ใช้การเคลื่อนที่แบบ single move command ตามระยะที่วัดได้
+        """
         print("\n--- Performing 3-Way ToF Centering ---")
-        comp_yaw = get_compensated_target_yaw()
+        
+        # 1️⃣ เช็คด้านหน้า (Front) - Target: 23cm
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3); front_dist = self.scanner.get_tof_distance_cm()
-        print(f"[Front] Initial: {front_dist:.1f} cm")
-        if front_dist < wall_threshold_cm: self._adjust_axis('x', front_dist, target_dist_cm, tol_cm, max_adjust_time, comp_yaw)
-        else: print("[Front] ✅ Open space. Skipping.")
+        time.sleep(0.3)
+        front_distance = self.scanner.get_tof_distance_cm()
+        print(f"[Front] Distance: {front_distance:.2f} cm")
+        
+        if front_distance <= 19.0:  # ถ้าใกล้เกิน 19cm
+            move_distance = -(23 - front_distance)  # คำนวณระยะถอยหลัง
+            print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {abs(move_distance):.2f}cm")
+            self.chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
+            time.sleep(0.2)
+        else:
+            print("[Front] ✅ Distance OK")
+        
+        # 2️⃣ เช็คด้านซ้าย (Left) - Target: 20cm
         self.gimbal.moveto(pitch=0, yaw=-90, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3); left_dist = self.scanner.get_tof_distance_cm()
-        print(f"[Left] Initial: {left_dist:.1f} cm")
-        if left_dist < wall_threshold_cm: self._adjust_axis('y', left_dist, target_dist_cm, tol_cm, max_adjust_time, comp_yaw)
-        else: print("[Left] ✅ Open space. Skipping.")
+        time.sleep(0.3)
+        left_distance = self.scanner.get_tof_distance_cm()
+        print(f"[Left] Distance: {left_distance:.2f} cm")
+        
+        if left_distance < 15:  # ถ้าใกล้เกิน 15cm
+            move_distance = 20 - left_distance  # คำนวณระยะเคลื่อนที่ไปทางขวา
+            print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}cm")
+            self.chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+            time.sleep(0.3)
+        else:
+            print("[Left] ✅ Distance OK")
+        
+        # 3️⃣ เช็คด้านขวา (Right) - Target: 21cm
         self.gimbal.moveto(pitch=0, yaw=90, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3); right_dist = self.scanner.get_tof_distance_cm()
-        print(f"[Right] Initial: {right_dist:.1f} cm")
-        if right_dist < wall_threshold_cm: self._adjust_axis('y', right_dist, target_dist_cm, tol_cm, max_adjust_time, comp_yaw, is_right_side=True)
-        else: print("[Right] ✅ Open space. Skipping.")
+        time.sleep(0.3)
+        right_distance = self.scanner.get_tof_distance_cm()
+        print(f"[Right] Distance: {right_distance:.2f} cm")
+        
+        if right_distance < 15:  # ถ้าใกล้เกิน 15cm
+            move_distance = -(21 - right_distance)  # คำนวณระยะเคลื่อนที่ไปทางซ้าย
+            print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {abs(move_distance):.2f}cm")
+            self.chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
+            time.sleep(0.3)
+        else:
+            print("[Right] ✅ Distance OK")
+        
+        # กลับมาหันหน้าตรง
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        print("--- 3-Way ToF Centering Complete ---")
+        print("--- 3-Way ToF Centering Complete ---\n")
 
     def _adjust_axis(self, axis, initial_dist, target_cm, tol_cm, max_time, comp_yaw, is_right_side=False):
         start_t = time.time(); error = initial_dist - target_cm

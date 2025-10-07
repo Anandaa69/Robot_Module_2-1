@@ -1571,7 +1571,7 @@ def scan_current_node_absolute(gimbal, chassis, sensor, tof_handler, graph_mappe
     right_distance = tof_handler.get_average_distance('right')
     right_wall = tof_handler.is_wall_detected('right')
     scan_results['right'] = right_distance
-
+33
     if right_distance < 15:
         move_distance = -(21 - right_distance)
         print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {move_distance:.2f}m")
