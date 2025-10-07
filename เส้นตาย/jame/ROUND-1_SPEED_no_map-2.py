@@ -22,7 +22,7 @@ SPEED_ROTATE = 480
 
 # --- PID Target Tracking & Firing Configuration ---
 TARGET_SHAPE = "Rectangle_V"  # Shape to track
-TARGET_COLOR = "Red"     # Color to track
+TARGET_COLOR = "Blue"     # Color to track
 FIRE_SHOTS_COUNT = 5     # Number of shots to fire (adjustable global variable)
 
 # PID Parameters (from fire_target.py) - Reduced for stability
@@ -79,7 +79,7 @@ GRID = 6
 
 # --- Logical state for the grid map (from map_suay.py) ---
 CURRENT_POSITION = (5,0)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
+CURRENT_DIRECTION =  0  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -126,8 +126,8 @@ targets_detected_at_start = set()  # Set of target IDs detected at the beginning
 all_targets_fired = False  # Flag to indicate if all targets have been fired
 
 # --- NEW: IMU Drift Compensation Parameters ---
-IMU_COMPENSATION_START_NODE_COUNT = 12     # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
-IMU_COMPENSATION_NODE_INTERVAL = 12      # เพิ่มค่าชดเชยทุกๆ N โหนด
+IMU_COMPENSATION_START_NODE_COUNT = 15     # จำนวนโหนดขั้นต่ำก่อนเริ่มการชดเชย
+IMU_COMPENSATION_NODE_INTERVAL = 15      # เพิ่มค่าชดเชยทุกๆ N โหนด
 IMU_COMPENSATION_DEG_PER_INTERVAL = 1.0 # ค่าองศาที่ชดเชย (ลบเพื่อแก้การเบี้ยวขวา)
 IMU_DRIFT_COMPENSATION_DEG = 0.0           # ตัวแปรเก็บค่าชดเชยปัจจุบัน
 
@@ -151,11 +151,22 @@ FREE_THRESHOLD = 0.3
 # --- Visualization Configuration ---
 MAP_FIGURE_SIZE = (6, 4)  # (width, height) ปรับได้ตามต้องการ
 
+# --- Visualization Control ---
+ENABLE_REALTIME_VISUALIZATION = False  # ปิดการแสดงผลแบบ real-time เพื่อลดการประมวลผล
+SHOW_FINAL_MAP = True  # แสดงแมพตอนจบโปรแกรม
+SHOW_MAP_ON_INTERRUPT = True  # แสดงแมพเมื่อมีการ interrupt
+VISUALIZATION_UPDATE_INTERVAL = 10  # อัปเดตทุก 10 โหนด (เพิ่มจาก 3)
+
 # --- NEW: Timestamp Logging ---
 POSITION_LOG = []  # เก็บข้อมูลตำแหน่งและเวลา
 
-# --- NEW: Resume Function Variables ---
-RESUME_MODE = False  # ตัวแปรบอกว่าเป็นโหมด resume หรือไม่
+# --- Thread Safety for Print Operations ---
+print_lock = threading.Lock()
+
+def safe_print(*args, **kwargs):
+    """Thread-safe print function"""
+    with print_lock:
+        print(*args, **kwargs)  # ตัวแปรบอกว่าเป็นโหมด resume หรือไม่
 DATA_FOLDER = r"F:\Coder\Year2-1\Robot_Module\Assignment\dude\James_path"  # โฟลเดอร์สำหรับเก็บไฟล์ JSON
 
 # ==================== ตัวแปรสำหรับ Path ไฟล์ ====================
@@ -301,31 +312,37 @@ def save_map_data_on_error(occupancy_map):
             json.dump(timestamp_data, f, indent=2)
         print(f"✅ Emergency position log saved to {timestamp_file}")
         
-        # 3. บันทึกข้อมูลวัตถุที่ตรวจจับได้
-        all_detected_objects = []
+        # 3. บันทึกข้อมูลวัตถุที่ตรวจจับได้ (ใช้รูปแบบเดียวกับ save_all_data)
+        objects_data = {"detected_objects": []}
         for r in range(occupancy_map.height):
             for c in range(occupancy_map.width):
                 cell = occupancy_map.grid[r][c]
                 if hasattr(cell, 'objects') and cell.objects:
                     for obj in cell.objects:
-                        obj_with_pos = obj.copy()
-                        obj_with_pos['cell_position'] = {'row': r, 'col': c}
-                        all_detected_objects.append(obj_with_pos)
-        
-        objects_data = {
-            "session_info": {
-                "total_objects_detected": len(all_detected_objects),
-                "detection_timestamp": time.time(),
-                "grid_size": f"{occupancy_map.height}x{occupancy_map.width}",
-                "camera_error": True
-            },
-            "detected_objects": all_detected_objects
-        }
+                        obj_data = {
+                            "id": obj.get("id", "Unknown"),
+                            "shape": obj.get("shape", "Unknown"),
+                            "color": obj.get("color", "Unknown"),
+                            "cell_position": {"row": r, "col": c},
+                            "detected_from_node": {"row": r, "col": c},
+                            "zone": obj.get("zone", "Unknown"),
+                            "is_target": obj.get("is_target", False),
+                            "camera_error": True
+                        }
+                        objects_data["detected_objects"].append(obj_data)
         
         objects_file = os.path.join(DATA_FOLDER, DETECTED_OBJECTS_FILE)
         with open(objects_file, "w") as f:
             json.dump(objects_data, f, indent=2)
-        print(f"✅ Emergency objects saved to {objects_file} (Total: {len(all_detected_objects)} objects)")
+        print(f"✅ Emergency objects saved to {objects_file} (Total: {len(objects_data['detected_objects'])} objects)")
+        
+        # 4. แสดงแมพเมื่อเกิด camera error
+        if SHOW_MAP_ON_INTERRUPT and 'visualizer' in globals():
+            try:
+                print("🗺️ Showing map due to camera error...")
+                visualizer.show_final_map(occupancy_map, CURRENT_POSITION)
+            except Exception as viz_error:
+                print(f"⚠️ Error showing map: {viz_error}")
         
         return True
         
@@ -871,16 +888,16 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
                 fail += 1
                 
         except Exception as e:
-            print(f"⚠️ Camera read error: {e}")
+            safe_print(f"⚠️ Camera read error: {e}")
             fail += 1
             
             # เซฟ JSON เมื่อเกิด Camera read error (เฉพาะเมื่อ fail >= 2)
             if fail >= 2:
                 try:
-                    print("💾 Saving map data due to camera read error...")
+                    safe_print("💾 Saving map data due to camera read error...")
                     save_map_data_on_error(occupancy_map)
                 except Exception as save_error:
-                    print(f"⚠️ Error saving map data: {save_error}")
+                    safe_print(f"⚠️ Error saving map data: {save_error}")
 
         # Enhanced reconnection logic with better error handling and thread protection
         current_time = time.time()
@@ -889,10 +906,10 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             
             # เซฟ JSON เมื่อเกิด Camera error
             try:
-                print("💾 Saving map data due to camera error...")
+                safe_print("💾 Saving map data due to camera error...")
                 save_map_data_on_error(occupancy_map)
             except Exception as save_error:
-                print(f"⚠️ Error saving map data: {save_error}")
+                safe_print(f"⚠️ Error saving map data: {save_error}")
             
             try:
                 # Clear queue to prevent buildup before reconnection
@@ -1790,15 +1807,25 @@ class RealTimeVisualizer:
     def __init__(self, grid_size, target_dest=None):
         self.grid_size = grid_size
         self.target_dest = target_dest
-        plt.ion()
-        self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
         self.colors = {"robot": "#0000FF", "target": "#FFD700", "path": "#FFFF00", "wall": "#000000", "wall_prob": "#000080"}
         self.obj_color_map = {'Red': '#FF0000', 'Green': '#00FF00', 'Blue': '#0080FF', 'Yellow': '#FFFF00', 'Unknown': '#808080'}
         # เพิ่มตัวควบคุมความถี่การวาดกราฟ
         self.update_counter = 0
-        self.update_interval = 3  # อัปเดตทุก 3 โหนด
+        self.update_interval = VISUALIZATION_UPDATE_INTERVAL  # ใช้ตัวแปรควบคุม
+        self.enabled = ENABLE_REALTIME_VISUALIZATION
+        
+        # เฉพาะเมื่อเปิดใช้งานเท่านั้น
+        if self.enabled:
+            plt.ion()
+            self.fig, self.ax = plt.subplots(figsize=MAP_FIGURE_SIZE)
+        else:
+            self.fig, self.ax = None, None
 
     def update_plot(self, occupancy_map, robot_pos, path=None):
+        # ถ้าไม่ได้เปิดใช้งาน real-time visualization ให้ข้าม
+        if not self.enabled:
+            return
+            
         # เพิ่มตัวนับและข้ามการวาดบางครั้ง
         self.update_counter += 1
         if self.update_counter % self.update_interval != 0:
@@ -1956,6 +1983,110 @@ class RealTimeVisualizer:
         self.fig.tight_layout(rect=[0, 0, 0.75, 1])
         self.fig.canvas.draw(); self.fig.canvas.flush_events(); plt.pause(0.01)
 
+    def show_final_map(self, occupancy_map, robot_pos, path=None):
+        """แสดงแมพสุดท้ายเมื่อจบโปรแกรมหรือมีการ interrupt"""
+        print("🗺️ Generating final map visualization...")
+        
+        # สร้าง figure ใหม่สำหรับการแสดงผลสุดท้าย
+        plt.ioff()  # ปิด interactive mode
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        ax.set_title("Final Exploration Map", fontsize=16, fontweight='bold')
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_xlim(-0.5, self.grid_size - 0.5)
+        ax.set_ylim(self.grid_size - 0.5, -0.5)
+        
+        # วาดแมพเต็มรูปแบบ
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                prob = occupancy_map.grid[r][c].get_node_probability()
+                if prob > OCCUPANCY_THRESHOLD: color = '#8B0000'
+                elif prob < FREE_THRESHOLD: color = '#D3D3D3'
+                else: color = '#90EE90'
+                ax.add_patch(plt.Rectangle((c - 0.5, r - 0.5), 1, 1, facecolor=color, edgecolor='k', lw=0.5))
+                
+                # แสดงตัวเลขความน่าจะเป็นสำหรับเซลล์ที่สำคัญ
+                if abs(prob - 0.5) > 0.1:
+                    ax.text(c, r, f"{prob:.2f}", ha="center", va="center", color="black", fontsize=8)
+        
+        # วาดกำแพง
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                cell = occupancy_map.grid[r][c]
+                if cell.walls['N'].is_occupied(): 
+                    ax.plot([c - 0.5, c + 0.5], [r - 0.5, r - 0.5], color=self.colors['wall'], linewidth=4)
+                if cell.walls['W'].is_occupied(): 
+                    ax.plot([c - 0.5, c - 0.5], [r - 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
+                if r == self.grid_size - 1 and cell.walls['S'].is_occupied(): 
+                    ax.plot([c - 0.5, c + 0.5], [r + 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
+                if c == self.grid_size - 1 and cell.walls['E'].is_occupied(): 
+                    ax.plot([c + 0.5, c + 0.5], [r - 0.5, r + 0.5], color=self.colors['wall'], linewidth=4)
+        
+        # วาดวัตถุที่พบ
+        for r in range(self.grid_size):
+            for c in range(self.grid_size):
+                cell = occupancy_map.grid[r][c]
+                if hasattr(cell, 'objects') and cell.objects:
+                    for i, obj in enumerate(cell.objects):
+                        # Position objects in different zones
+                        if obj['zone'] == 'Left':
+                            obj_x, obj_y = c - 0.3, r
+                        elif obj['zone'] == 'Right':
+                            obj_x, obj_y = c + 0.3, r
+                        elif obj['zone'] == 'Center':
+                            obj_x, obj_y = c, r
+                        else:
+                            obj_x, obj_y = c, r
+                        
+                        # Shape-based marker
+                        shape = obj.get('shape', 'Uncertain')
+                        if shape == 'Circle':
+                            marker = 'o'
+                        elif shape == 'Square':
+                            marker = 's'
+                        elif 'Rectangle' in shape:
+                            marker = 's'
+                        else:
+                            marker = 'D'
+                        
+                        # Color based on detected color
+                        obj_color = obj.get('color', 'Unknown')
+                        color = self.obj_color_map.get(obj_color, '#808080')
+                        
+                        # Highlight target with red border
+                        edge_color = '#FF0000' if obj.get('is_target', False) else 'black'
+                        edge_width = 3 if obj.get('is_target', False) else 1
+                        
+                        ax.scatter(obj_x, obj_y, c=color, marker=marker, s=120, edgecolors=edge_color, linewidth=edge_width)
+                        
+                        # Display ID below the marker
+                        obj_id = obj.get('id', 'Unknown')
+                        ax.text(obj_x, obj_y + 0.35, f"ID:{obj_id}", ha="center", va="top", fontsize=7, 
+                                fontweight='bold', bbox=dict(facecolor='white', alpha=0.8, boxstyle='round,pad=0.2', edgecolor='none'))
+        
+        # วาดหุ่นยนต์และเส้นทาง
+        if robot_pos:
+            ax.plot(robot_pos[1], robot_pos[0], 'o', color=self.colors['robot'], markersize=15, markeredgecolor='white', markeredgewidth=3)
+            ax.text(robot_pos[1], robot_pos[0] - 0.3, 'ROBOT', ha="center", va="top", fontsize=10, fontweight='bold', color='white')
+        
+        if path:
+            ax.plot([p[1] for p in path], [p[0] for p in path], color=self.colors['path'], linewidth=4, alpha=0.8)
+        
+        # เพิ่ม legend
+        legend_elements = [ 
+            plt.Rectangle((0,0),1,1, facecolor='#8B0000', label=f'Node Occupied (P>{OCCUPANCY_THRESHOLD})'), 
+            plt.Rectangle((0,0),1,1, facecolor='#90EE90', label=f'Node Unknown'), 
+            plt.Rectangle((0,0),1,1, facecolor='#D3D3D3', label=f'Node Free (P<{FREE_THRESHOLD})'), 
+            plt.Line2D([0], [0], color=self.colors['wall'], lw=4, label='Wall Occupied'), 
+            plt.Rectangle((0,0),1,1, facecolor=self.colors['robot'], label='Robot'), 
+            plt.Rectangle((0,0),1,1, facecolor=self.colors['target'], label='Target') 
+        ]
+        ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1.0, 1.0), fontsize=10)
+        
+        plt.tight_layout()
+        plt.show()
+        print("✅ Final map displayed!")
+
 # =============================================================================
 # ===== CORE ROBOT CONTROL CLASSES ============================================
 # =============================================================================
@@ -2051,7 +2182,7 @@ class MovementController:
             speed = max(-1.0, min(1.0, output * ramp_multiplier))
             yaw_correction = self._calculate_yaw_correction(attitude_handler, get_compensated_target_yaw()) # MODIFIED
             self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=1)
-            print(f"Moving... Dist: {relative_position:.3f}/{target_distance:.2f} m", end='\r')
+            print(f"Moving... Dist: {relative_position:.3f}/{target_distance:.2f} m", end='\r', flush=True)
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.15)
 
     def adjust_position_to_wall(self, sensor_adaptor, attitude_handler, side, sensor_config, target_distance_cm, direction_multiplier):
@@ -2073,7 +2204,7 @@ class MovementController:
             slide_speed = max(min(direction_multiplier * KP_SLIDE * dist_error, MAX_SLIDE_SPEED), -MAX_SLIDE_SPEED)
             yaw_correction = self._calculate_yaw_correction(attitude_handler, compensated_yaw) # MODIFIED
             self.chassis.drive_speed(x=0, y=slide_speed, z=yaw_correction)
-            print(f"Adjusting {side}... Current: {current_dist:5.2f}cm, Target: {target_distance_cm:4.1f}cm, Error: {dist_error:5.2f}cm, Speed: {slide_speed:5.3f}", end='\r')
+            print(f"Adjusting {side}... Current: {current_dist:5.2f}cm, Target: {target_distance_cm:4.1f}cm, Error: {dist_error:5.2f}cm, Speed: {slide_speed:5.3f}", end='\r', flush=True)
             time.sleep(0.02)
         else:
             print(f"\n[{side}] Movement timed out!")
@@ -2124,7 +2255,7 @@ class MovementController:
             current_tof = scanner.last_tof_distance_cm
             if current_tof is None or math.isinf(current_tof):
                 continue
-            print(f"[ToF] Adjusting... Current Distance: {current_tof:.2f} cm", end="\r")
+            print(f"[ToF] Adjusting... Current Distance: {current_tof:.2f} cm", end="\r", flush=True)
             if abs(current_tof - target_cm) <= tol_cm:
                 print(f"\n[ToF] ✅ Centering complete. Final distance: {current_tof:.2f} cm")
                 break
@@ -3496,12 +3627,20 @@ if __name__ == '__main__':
         print("💾 Saving data before exit...")
         if occupancy_map:
             save_all_data(occupancy_map)
+        
+        # แสดงแมพเมื่อมีการ interrupt
+        if SHOW_MAP_ON_INTERRUPT and 'visualizer' in locals() and 'occupancy_map' in locals():
+            visualizer.show_final_map(occupancy_map, CURRENT_POSITION)
     except Exception as e: 
         print(f"\n⚌ An error occurred: {e}")
         traceback.print_exc()
         print("💾 Saving data before exit...")
         if occupancy_map:
             save_all_data(occupancy_map)
+        
+        # แสดงแมพเมื่อเกิด error
+        if SHOW_MAP_ON_INTERRUPT and 'visualizer' in locals() and 'occupancy_map' in locals():
+            visualizer.show_final_map(occupancy_map, CURRENT_POSITION)
     finally:
         # Stop object detection threads
         stop_event.set()
@@ -3537,6 +3676,8 @@ if __name__ == '__main__':
             except Exception as cleanup_error:
                 print(f"⚠️ Error during cleanup: {cleanup_error}")
         
-        print("... You can close the plot window now ...")
-        plt.ioff()
-        plt.show()
+        print("✅ Cleanup completed.")
+        
+        # แสดงแมพสุดท้ายเมื่อจบโปรแกรมปกติ
+        if SHOW_FINAL_MAP and 'visualizer' in locals() and 'occupancy_map' in locals():
+            visualizer.show_final_map(occupancy_map, CURRENT_POSITION)
