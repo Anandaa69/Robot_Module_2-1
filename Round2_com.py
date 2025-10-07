@@ -28,9 +28,9 @@ import cv2
 # =============================================================================
 
 SHOW_WINDOW = True
-DATA_FOLDER = r"./Assignment/dude/data"
+DATA_FOLDER = r"./Assignment/Jame_path/data_final"
 
-CURRENT_POSITION = (4, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
+CURRENT_POSITION = (2, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
 IMU_DRIFT_COMPENSATION_DEG = 0.0
 
 PID_AIM_KP = -0.15; PID_AIM_KI = -0.005; PID_AIM_KD = -0.02; DERIV_LPF_ALPHA = 0.25; I_CLAMP = 2000.0
@@ -38,7 +38,9 @@ PIX_ERR_DEADZONE = 8; LOCK_TOL_X = 12; LOCK_TOL_Y = 12; LOCK_STABLE_COUNT = 6
 MAX_YAW_SPEED = 120; MAX_PITCH_SPEED = 100
 
 TOF_ADJUST_SPEED = 0.08; TOF_CALIBRATION_SLOPE = 0.0894; TOF_CALIBRATION_Y_INTERCEPT = 3.8409
-TOF_TARGET_CM = 20.0
+TOF_TARGET_CM_FRONT = 19.0  # ระยะห่างเป้าหมายด้านหน้า
+TOF_TARGET_CM_SIDE = 17.5   # ระยะห่างเป้าหมายด้านซ้าย-ขวา
+TOF_TARGET_CM_BACK = 17.0   # ระยะห่างเป้าหมายด้านหลัง
 
 FRAME_W, FRAME_H = 960, 540; VERTICAL_FOV_DEG = 54.0; PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
 PITCH_BIAS_DEG = 2; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
@@ -46,7 +48,7 @@ PITCH_BIAS_DEG = 2; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
 ROI_SHIFT_PER_DEG = 6.0; ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
 
-SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 5
+SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 3
 
 is_tracking_mode = False; is_detecting_flag = {"v": True}; fired_targets = set()
 shots_fired = 0; gimbal_angle_lock = threading.Lock(); gimbal_angles = (0.0, 0.0, 0.0, 0.0)
@@ -252,61 +254,53 @@ class EnvironmentScanner:
     def cleanup(self): self.tof_sensor.unsub_distance()
 
 class AttitudeHandler:
-    def __init__(self): self.current_yaw,self.yaw_tolerance,self.is_monitoring=0.0,2.0,False # ลด Tolerance
-    def attitude_handler(self, info): self.current_yaw=info[0]
-    def start_monitoring(self, chassis): self.is_monitoring=True; chassis.sub_attitude(freq=20,callback=self.attitude_handler) # เพิ่ม Freq
+    def __init__(self): 
+        self.current_yaw, self.yaw_tolerance, self.is_monitoring = 0.0, 3.0, False
+    def attitude_handler(self, attitude_info):
+        if self.is_monitoring: self.current_yaw = attitude_info[0]
+    def start_monitoring(self, chassis): 
+        self.is_monitoring = True; chassis.sub_attitude(freq=20, callback=self.attitude_handler)
     def stop_monitoring(self, chassis):
         self.is_monitoring = False
         try: chassis.unsub_attitude()
         except Exception: pass
     def normalize_angle(self, angle):
-        while angle>180: angle-=360
-        while angle<=-180: angle+=360
+        while angle > 180: angle -= 360
+        while angle <= -180: angle += 360
         return angle
-
-    # --- NEW: Precision Turning with Real-time Feedback ---
+    
     def correct_yaw_to_target(self, chassis, target_yaw=0.0):
-        norm_target = self.normalize_angle(target_yaw)
-        print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {norm_target:.1f}°")
+        normalized_target = self.normalize_angle(target_yaw); time.sleep(0.05)
+        robot_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
+        print(f"\n🔧 Correcting Yaw: {self.current_yaw:.1f}° -> {target_yaw:.1f}°. Rotating: {robot_rotation:.1f}°")
         
-        start_time = time.time()
-        timeout = 4.0 # 4 second timeout for turning
+        if abs(robot_rotation) > self.yaw_tolerance:
+            # ปรับปรุงการหมุนให้แม่นยำขึ้น
+            if abs(robot_rotation) > 45:  # สำหรับการหมุน 90 องศา
+                chassis.move(x=0, y=0, z=robot_rotation, z_speed=80).wait_for_completed(timeout=2)
+            else:  # สำหรับการปรับแต่งเล็กน้อย
+                chassis.move(x=0, y=0, z=robot_rotation, z_speed=60).wait_for_completed(timeout=1)
+            time.sleep(0.1)  # เพิ่มเวลารอให้การหมุนเสถียร
         
-        # P-Controller for turning
-        KP_TURN = 4.5  # Proportional gain for turning speed
-        MIN_SPEED = 15 # Minimum speed to overcome static friction
-        MAX_SPEED = 120 # Maximum speed
+        final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
+        if final_error <= self.yaw_tolerance: 
+            print(f"✅ Yaw Correction Success: {self.current_yaw:.1f}°"); 
+            return True
         
-        while time.time() - start_time < timeout:
-            current_error = self.normalize_angle(norm_target - self.current_yaw)
-
-            if abs(current_error) <= self.yaw_tolerance:
-                print(f"✅ Yaw OK: {self.current_yaw:.1f}° (Error: {current_error:.2f}°)")
-                chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-                time.sleep(0.2) # Wait for stability
-                return True
-            
-            # Calculate speed using P-Controller
-            z_speed = KP_TURN * current_error
-            
-            # Apply minimum speed if error is small but not zero
-            if 0 < abs(z_speed) < MIN_SPEED:
-                z_speed = MIN_SPEED if z_speed > 0 else -MIN_SPEED
-            
-            # Clamp to max speed
-            z_speed = max(min(z_speed, MAX_SPEED), -MAX_SPEED)
-
-            chassis.drive_speed(x=0, y=0, z=z_speed)
-            print(f"   Turning... Target: {norm_target:.1f}°, Current: {self.current_yaw:.1f}°, Speed: {z_speed:.1f} dps", end='\r')
-            time.sleep(0.02)
-
-        chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
-        final_error = abs(self.normalize_angle(norm_target - self.current_yaw))
-        if final_error <= self.yaw_tolerance:
-            print(f"✅ Yaw OK after loop: {self.current_yaw:.1f}°")
+        print(f"⚠️ First attempt incomplete. Current: {self.current_yaw:.1f}°. Fine-tuning...")
+        remaining_rotation = -self.normalize_angle(normalized_target - self.current_yaw)
+        
+        # ปรับปรุงการปรับแต่งให้แม่นยำขึ้น
+        if abs(remaining_rotation) > 0.5 and abs(remaining_rotation) < 30:
+            chassis.move(x=0, y=0, z=remaining_rotation, z_speed=30).wait_for_completed(timeout=3)
+            time.sleep(0.15)  # เพิ่มเวลารอ
+        
+        final_error = abs(self.normalize_angle(normalized_target - self.current_yaw))
+        if final_error <= self.yaw_tolerance: 
+            print(f"✅ Yaw Fine-tuning Success: {self.current_yaw:.1f}°"); 
             return True
         else:
-            print(f"\n🔥🔥 Yaw FAIL. Timeout reached. Final Yaw: {self.current_yaw:.1f}°, Error: {final_error:.2f}°")
+            print(f"❌ Yaw Correction Failed. Final error: {final_error:.2f}°")
             return False
 
 class MovementController:
@@ -315,17 +309,19 @@ class MovementController:
         self.current_x_pos,self.current_y_pos=0.0,0.0
         self.chassis.sub_position(freq=20,callback=self.position_handler)
     def position_handler(self,p_info): self.current_x_pos,self.current_y_pos=p_info[0],p_info[1]
-    def _calculate_yaw_correction(self,t_yaw):
-        YAW_KP=0.8; MAX_YAW_SPEED=25; yaw_err=self.attitude_handler.normalize_angle(t_yaw-self.attitude_handler.current_yaw)
-        speed=YAW_KP*yaw_err; return max(min(speed,MAX_YAW_SPEED),-MAX_YAW_SPEED)
+    def _calculate_yaw_correction(self, attitude_handler, target_yaw):
+        KP_YAW = 1.8; MAX_YAW_SPEED = 25
+        yaw_error = attitude_handler.normalize_angle(target_yaw - attitude_handler.current_yaw)
+        speed = KP_YAW * yaw_error
+        return max(min(speed, MAX_YAW_SPEED), -MAX_YAW_SPEED)
     
     def move_forward_one_grid(self, axis, target_yaw):
         self.attitude_handler.correct_yaw_to_target(self.chassis, target_yaw)
-        pid = PID(Kp=0.7, Ki=0.15, Kd=0.4, setpoint=0.6)
+        pid = PID(Kp=1.0, Ki=0.25, Kd=8, setpoint=0.6)
         start_time, last_time = time.time(), time.time()
         start_position = self.current_x_pos if axis == 'x' else self.current_y_pos
         print(f"🚀 Moving 0.6m, AXIS '{axis}'")
-        while time.time() - start_time < 4.0:
+        while time.time() - start_time < 3.5:  # Increased timeout
             now = time.time(); dt = now - last_time; last_time = now
             if dt <= 0: continue
             current_position = self.current_x_pos if axis == 'x' else self.current_y_pos
@@ -334,103 +330,168 @@ class MovementController:
             output = pid.compute(relative_position, dt)
             ramp_multiplier = min(1.0, 0.1 + ((now - start_time) / 1.0) * 0.9)
             speed = max(-1.0, min(1.0, output * ramp_multiplier))
-            yaw_correction = self._calculate_yaw_correction(target_yaw)
-            self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=0.2)
+            yaw_correction = self._calculate_yaw_correction(self.attitude_handler, target_yaw)
+            self.chassis.drive_speed(x=speed, y=0, z=yaw_correction, timeout=1)
             print(f"Dist: {relative_position:.3f}/0.60 m", end='\r')
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.25)
         
-<<<<<<< HEAD
-    def perform_3_way_tof_centering(self):
-        """
-        ปรับตำแหน่งหุ่นยนต์ให้อยู่ตรงกลางช่องโดยเช็ค ToF 3 ทิศทาง
-        ใช้การเคลื่อนที่แบบ single move command ตามระยะที่วัดได้
-        """
-=======
-    def perform_3_way_tof_centering(self, wall_threshold_cm=50.0, target_dist_cm=20.0, tol_cm=1.5, max_adjust_time=2.5):
->>>>>>> 0e34ca2c025784d49e4d6d8ae8806cf6ebbefc24
-        print("\n--- Performing 3-Way ToF Centering ---")
+    def perform_3_way_tof_centering(self, wall_threshold_cm=50.0, tol_cm=2.0, max_adjust_time=3.0):
+        print("\n--- Performing 4-Way ToF Centering (Front-Left-Right-Back) ---")
+        comp_yaw = get_compensated_target_yaw()
         
-        # 1️⃣ เช็คด้านหน้า (Front) - Target: 23cm
+        # ตรวจสอบด้านหน้า
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3)
-        front_distance = self.scanner.get_tof_distance_cm()
-        print(f"[Front] Distance: {front_distance:.2f} cm")
+        time.sleep(0.3); front_dist = self.scanner.get_tof_distance_cm()
+        print(f"[Front] Initial: {front_dist:.1f} cm")
         
-        if front_distance <= 19.0:  # ถ้าใกล้เกิน 19cm
-            move_distance = -(23 - front_distance)  # คำนวณระยะถอยหลัง
-            print(f"⚠️ FRONT too close ({front_distance:.2f}cm)! Moving back {abs(move_distance):.2f}cm")
-            self.chassis.move(x=move_distance/100, y=0, xy_speed=0.2).wait_for_completed()
-            time.sleep(0.2)
-        else:
-            print("[Front] ✅ Distance OK")
+        if front_dist < wall_threshold_cm: 
+            self._adjust_axis('x', front_dist, TOF_TARGET_CM_FRONT, tol_cm, max_adjust_time, comp_yaw)
+        else: 
+            print("[Front] ✅ Open space. Checking back side...")
+            # ถ้าไม่มีด้านหน้า ให้ตรวจสอบด้านหลัง
+            self.gimbal.moveto(pitch=0, yaw=180, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            time.sleep(0.3); back_dist = self.scanner.get_tof_distance_cm()
+            print(f"[Back] Initial: {back_dist:.1f} cm")
+            if back_dist < wall_threshold_cm:
+                self._adjust_axis('x', back_dist, TOF_TARGET_CM_BACK, tol_cm, max_adjust_time, comp_yaw)
+            else:
+                print("[Back] ✅ Open space. Skipping back adjustment.")
+            # กลับมาด้านหน้า
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            time.sleep(0.3)
         
-        # 2️⃣ เช็คด้านซ้าย (Left) - Target: 20cm
+        # ตรวจสอบด้านซ้าย
         self.gimbal.moveto(pitch=0, yaw=-90, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3)
-        left_distance = self.scanner.get_tof_distance_cm()
-        print(f"[Left] Distance: {left_distance:.2f} cm")
+        time.sleep(0.3); left_dist = self.scanner.get_tof_distance_cm()
+        print(f"[Left] Initial: {left_dist:.1f} cm")
+        if left_dist < wall_threshold_cm: 
+            self._adjust_axis('y', left_dist, TOF_TARGET_CM_SIDE, tol_cm, max_adjust_time, comp_yaw)
+        else: 
+            print("[Left] ✅ Open space. Skipping.")
         
-        if left_distance < 15:  # ถ้าใกล้เกิน 15cm
-            move_distance = 20 - left_distance  # คำนวณระยะเคลื่อนที่ไปทางขวา
-            print(f"⚠️ LEFT too close ({left_distance:.2f}cm)! Moving right {move_distance:.2f}cm")
-            self.chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-            time.sleep(0.3)
-        else:
-            print("[Left] ✅ Distance OK")
-        
-        # 3️⃣ เช็คด้านขวา (Right) - Target: 21cm
+        # ตรวจสอบด้านขวา
         self.gimbal.moveto(pitch=0, yaw=90, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        time.sleep(0.3)
-        right_distance = self.scanner.get_tof_distance_cm()
-        print(f"[Right] Distance: {right_distance:.2f} cm")
+        time.sleep(0.3); right_dist = self.scanner.get_tof_distance_cm()
+        print(f"[Right] Initial: {right_dist:.1f} cm")
+        if right_dist < wall_threshold_cm: 
+            self._adjust_axis('y', right_dist, TOF_TARGET_CM_SIDE, tol_cm, max_adjust_time, comp_yaw, is_right_side=True)
+        else: 
+            print("[Right] ✅ Open space. Skipping.")
         
-        if right_distance < 15:  # ถ้าใกล้เกิน 15cm
-            move_distance = -(21 - right_distance)  # คำนวณระยะเคลื่อนที่ไปทางซ้าย
-            print(f"⚠️ RIGHT too close ({right_distance:.2f}cm)! Moving left {abs(move_distance):.2f}cm")
-            self.chassis.move(x=0.01, y=move_distance/100, xy_speed=0.5).wait_for_completed()
-            time.sleep(0.3)
-        else:
-            print("[Right] ✅ Distance OK")
-        
-        # กลับมาหันหน้าตรง
+        # กลับมาด้านหน้า
         self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
-        print("--- 3-Way ToF Centering Complete ---\n")
+        print("--- 4-Way ToF Centering Complete ---")
 
     def _adjust_axis(self, axis, initial_dist, target_cm, tol_cm, max_time, comp_yaw, is_right_side=False):
         start_t = time.time(); error = initial_dist - target_cm
         if abs(error) <= tol_cm: print(f"✅ Already centered."); return
-        if axis == 'x': direction = abs(TOF_ADJUST_SPEED) if error < 0 else -abs(TOF_ADJUST_SPEED)
+        
+        # แก้ไขการคำนวณทิศทางการเคลื่อนที่
+        if axis == 'x': 
+            # สำหรับแกน X (หน้า-หลัง): ถ้าไกลเกินไป (error > 0) ให้เข้าใกล้ (direction > 0)
+            # ถ้าใกล้เกินไป (error < 0) ให้ถอยออก (direction < 0)
+            direction = TOF_ADJUST_SPEED if error > 0 else -TOF_ADJUST_SPEED
         else:
-            direction_multiplier = -1 if is_right_side else 1
-            direction = abs(TOF_ADJUST_SPEED) if error < 0 else -abs(TOF_ADJUST_SPEED)
-            direction *= direction_multiplier
+            # สำหรับแกน Y (ซ้าย-ขวา): ต้องคำนึงถึงทิศทางของหุ่นยนต์
+            # เมื่อหุ่นยนต์หันหน้าไปทางทิศเหนือ (yaw=0°):
+            # - ซ้าย (yaw=-90°): ถ้าไกลเกินไป ให้เข้าใกล้กำแพงซ้าย (y=-)
+            # - ขวา (yaw=+90°): ถ้าไกลเกินไป ให้เข้าใกล้กำแพงขวา (y=+)
+            if is_right_side:
+                # ด้านขวา: ถ้าไกลเกินไป (error > 0) ให้เข้าใกล้กำแพงขวา (y=+)
+                # ถ้าใกล้เกินไป (error < 0) ให้ถอยออกจากกำแพงขวา (y=-)
+                direction = TOF_ADJUST_SPEED if error > 0 else -TOF_ADJUST_SPEED
+            else:
+                # ด้านซ้าย: ถ้าไกลเกินไป (error > 0) ให้เข้าใกล้กำแพงซ้าย (y=-)
+                # ถ้าใกล้เกินไป (error < 0) ให้ถอยออกจากกำแพงซ้าย (y=+)
+                direction = -TOF_ADJUST_SPEED if error > 0 else TOF_ADJUST_SPEED
+        
+        print(f"🎯 Target: {target_cm}cm, Current: {initial_dist:.1f}cm, Error: {error:.1f}cm, Direction: {direction:.3f}")
+        print(f"   📍 Axis: {axis.upper()}, Side: {'Right' if is_right_side else 'Left'}")
+        if axis == 'y':
+            if is_right_side:
+                direction_text = "Toward Right Wall" if direction > 0 else "Away from Right Wall"
+            else:
+                direction_text = "Toward Left Wall" if direction < 0 else "Away from Left Wall"
+            print(f"   🚀 Moving: {direction_text} (y={direction:.3f})")
+        else:
+            direction_text = "Toward Front Wall" if direction > 0 else "Away from Front Wall"
+            print(f"   🚀 Moving: {direction_text} (x={direction:.3f})")
+        
         while time.time() - start_t < max_time:
             cur_dist = self.scanner.get_tof_distance_cm()
             if cur_dist is None or math.isinf(cur_dist): time.sleep(0.05); continue
             error = cur_dist - target_cm
+            
+            # ตรวจสอบความปลอดภัย - ห้ามเข้าใกล้กำแพงเกินไป
+            if cur_dist < 10.0:  # ถ้าใกล้กำแพงเกิน 10cm ให้หยุด
+                print(f"\n⚠️ Too close to wall ({cur_dist:.1f}cm)! Stopping for safety.")
+                break
+            
             print(f"Adjusting {axis.upper()}-axis... Cur:{cur_dist:.1f} cm, Err:{error:.1f} cm", end="\r")
             if abs(error) <= tol_cm: print(f"\n✅ Centered OK. Final: {cur_dist:.1f} cm"); break
-            yaw_cor = self._calculate_yaw_correction(comp_yaw)
+            
+            yaw_cor = self._calculate_yaw_correction(self.attitude_handler, comp_yaw)
             if axis == 'x': self.chassis.drive_speed(x=direction, y=0, z=yaw_cor, timeout=0.2)
             else: self.chassis.drive_speed(x=0, y=direction, z=yaw_cor, timeout=0.2)
             time.sleep(0.1)
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0); time.sleep(0.1)
 
-    def rotate_to_direction(self,t_dir):
+    def rotate_to_direction(self, target_direction):
         global CURRENT_DIRECTION
-        if CURRENT_DIRECTION==t_dir: return
-        diff=(t_dir-CURRENT_DIRECTION+4)%4
-        if diff==1: self.rotate_90_degrees_right()
-        elif diff==3: self.rotate_90_degrees_left()
-        elif diff==2: self.rotate_90_degrees_right(); self.rotate_90_degrees_right()
+        if CURRENT_DIRECTION == target_direction: return
+        
+        diff = (target_direction - CURRENT_DIRECTION + 4) % 4
+        if diff == 1: 
+            self.rotate_90_degrees_right()
+        elif diff == 3: 
+            self.rotate_90_degrees_left()
+        elif diff == 2: 
+            self.rotate_90_degrees_right(); 
+            self.rotate_90_degrees_right()
+        
+        # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
+        print("   -> Waiting for robot rotation to complete...")
+        time.sleep(0.2)  # รอให้การเลี้ยวเสร็จสิ้นและเสถียร
+        
+        # ปรับ gimbal ให้ตรงกับทิศทางใหม่หลังจากหุ่นหมุนเสร็จ
+        try:
+            print("   -> Adjusting gimbal to match new robot direction...")
+            self.gimbal.moveto(pitch=0, yaw=0, yaw_speed=SPEED_ROTATE).wait_for_completed()
+            time.sleep(0.2)  # เพิ่มเวลารอให้ gimbal settle
+            print("   -> Gimbal adjusted to match robot direction")
+        except Exception as e:
+            print(f"⚠️ Gimbal centering error: {e}")
+            time.sleep(0.3)  # รอให้ gimbal settle หลัง error
+            print("   -> Continuing without gimbal adjustment...")
+
     def rotate_90_degrees_right(self):
-        global CURRENT_TARGET_YAW,CURRENT_DIRECTION,ROBOT_FACE
-        print("🔄 Rotating 90° R..."); CURRENT_TARGET_YAW=self.attitude_handler.normalize_angle(CURRENT_TARGET_YAW+90)
-        self.attitude_handler.correct_yaw_to_target(self.chassis,get_compensated_target_yaw()); CURRENT_DIRECTION=(CURRENT_DIRECTION+1)%4; ROBOT_FACE+=1
+        global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
+        print("🔄 Rotating 90° RIGHT...")
+        CURRENT_TARGET_YAW = self.attitude_handler.normalize_angle(CURRENT_TARGET_YAW + 90)
+        
+        # ปรับปรุงการหมุนให้แม่นยำขึ้น
+        success = self.attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw())
+        if not success:
+            print("⚠️ Primary rotation failed, attempting alternative method...")
+            # ลองใช้วิธีหมุนแบบอื่น
+            self.attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw())
+        
+        CURRENT_DIRECTION = (CURRENT_DIRECTION + 1) % 4; ROBOT_FACE += 1
+
     def rotate_90_degrees_left(self):
-        global CURRENT_TARGET_YAW,CURRENT_DIRECTION,ROBOT_FACE
-        print("🔄 Rotating 90° L..."); CURRENT_TARGET_YAW=self.attitude_handler.normalize_angle(CURRENT_TARGET_YAW-90)
-        self.attitude_handler.correct_yaw_to_target(self.chassis,get_compensated_target_yaw()); CURRENT_DIRECTION=(CURRENT_DIRECTION-1+4)%4; ROBOT_FACE-=1
+        global CURRENT_TARGET_YAW, CURRENT_DIRECTION, ROBOT_FACE
+        print("🔄 Rotating 90° LEFT...")
+        CURRENT_TARGET_YAW = self.attitude_handler.normalize_angle(CURRENT_TARGET_YAW - 90)
+        
+        # ปรับปรุงการหมุนให้แม่นยำขึ้น
+        success = self.attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw())
+        if not success:
+            print("⚠️ Primary rotation failed, attempting alternative method...")
+            # ลองใช้วิธีหมุนแบบอื่น
+            self.attitude_handler.correct_yaw_to_target(self.chassis, get_compensated_target_yaw())
+        
+        CURRENT_DIRECTION = (CURRENT_DIRECTION - 1 + 4) % 4; ROBOT_FACE -= 1
+        if ROBOT_FACE < 1: ROBOT_FACE += 4
     def cleanup(self):
         try: self.chassis.unsub_position()
         except: pass
@@ -515,8 +576,8 @@ def execute_shooting_mission(grid,width,height,target_sequence,movement_controll
             axis='x' if ROBOT_FACE%2!=0 else 'y'
             movement_controller.move_forward_one_grid(axis,get_compensated_target_yaw())
             
-            # --- MODIFIED: Call the single, unified centering function ---
-            movement_controller.perform_3_way_tof_centering(target_dist_cm=TOF_TARGET_CM)
+            # --- MODIFIED: Call the 4-way centering function ---
+            movement_controller.perform_3_way_tof_centering()
             
             CURRENT_POSITION=next_pos
             print(f"📍 Arrived at {CURRENT_POSITION}")
