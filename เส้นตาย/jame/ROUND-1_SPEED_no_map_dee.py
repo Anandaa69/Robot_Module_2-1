@@ -44,7 +44,7 @@ LOCK_STABLE_COUNT = 6
 FRAME_W, FRAME_H = 960, 540
 VERTICAL_FOV_DEG = 54.0
 PIXELS_PER_DEG_V = FRAME_H / VERTICAL_FOV_DEG
-PITCH_BIAS_DEG = 1.5
+PITCH_BIAS_DEG = 2
 PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 
 # ROI Configuration
@@ -80,8 +80,8 @@ TOF_TIME_CHECK = 0.5
 GRID = 6
 
 # --- Logical state for the grid map (from map_suay.py) ---
-CURRENT_POSITION = (2,0)  # (แถว, คอลัมน์) here
-CURRENT_DIRECTION =  1  # 0:North, 1:East, 2:South, 3:West here
+CURRENT_POSITION = (3,2)  # (แถว, คอลัมน์) here
+CURRENT_DIRECTION =  2  # 0:North, 1:East, 2:South, 3:West here
 TARGET_DESTINATION =CURRENT_POSITION #(1, 0)#here
 
 # --- Physical state for the robot ---
@@ -860,8 +860,8 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             gimbal_moving = False
             
         try:
-            # Optimize timeout for better responsiveness
-            timeout = 0.15 if gimbal_moving else 0.1  # ลด timeout จาก 0.2/0.15 เป็น 0.15/0.1
+            # Optimize timeout for 30 FPS target
+            timeout = 0.2 if gimbal_moving else 0.15
             frame = cam.read_cv2_image(timeout=timeout)
             if frame is not None and frame.size > 0:
                 if q.full():
@@ -957,7 +957,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail = max(0, fail - 1)  # Gradually reduce fail counter
             
         # Optimize sleep time for 30 FPS target (33.33ms per frame)
-        sleep_time = 0.02 if gimbal_moving else 0.015  # เพิ่ม FPS จาก 40/50 เป็น 50/66
+        sleep_time = 0.025 if gimbal_moving else 0.02  # 40 FPS / 50 FPS
         time.sleep(sleep_time)
     print("🛑 Capture thread stopped")
 
@@ -972,11 +972,11 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
 
     while not stop_event.is_set():
         if not is_detecting_func():
-            time.sleep(0.1)  # ลด sleep time จาก 0.15 เป็น 0.1
+            time.sleep(0.15)  # Increased sleep when not detecting
             continue
             
         try:
-            frame_to_process = q.get(timeout=0.2)  # ลด timeout จาก 0.3 เป็น 0.2
+            frame_to_process = q.get(timeout=0.3)  # ลด timeout กลับเป็น 0.3
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
@@ -2252,7 +2252,7 @@ class MovementController:
         self.chassis.drive_wheels(w1=0, w2=0, w3=0, w4=0)
         time.sleep(0.1)
 
-    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=17, tol_cm=1.0, max_adjust_time=6.0):
+    def center_in_node_with_tof(self, scanner, attitude_handler, target_cm=18, tol_cm=1.0, max_adjust_time=6.0):
         """
         REVISED: Now respects the global activity lock from the scanner.
         It will not run if a side-scan operation is in progress.
@@ -2961,7 +2961,7 @@ def explore_with_ogm(scanner, movement_controller, attitude_handler, occupancy_m
                 print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
         # --- END OF NEW CODE ---
         
-        priority_dirs = [(CURRENT_DIRECTION - 1 + 4) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION + 1) % 4]
+        priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
         moved = False
         dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
         
@@ -3231,7 +3231,7 @@ if __name__ == '__main__':
             while not stop_event.is_set():
                 try:
                     # Get frame with shorter timeout to prevent blocking
-                    display_frame = frame_queue.get(timeout=0.3)  # ลด timeout จาก 0.5 เป็น 0.3
+                    display_frame = frame_queue.get(timeout=0.5)
                     frame_count += 1
                     last_frame_time = time.time()
                     
@@ -3461,7 +3461,7 @@ if __name__ == '__main__':
                         print(f"🔩 IMU Drift Compensation Updated: Visited {nodes_visited} nodes. New offset is {IMU_DRIFT_COMPENSATION_DEG:.1f}°")
                 
                 # Continue with normal exploration logic
-                priority_dirs = [(CURRENT_DIRECTION - 1 + 4) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION + 1) % 4]
+                priority_dirs = [(CURRENT_DIRECTION + 1) % 4, CURRENT_DIRECTION, (CURRENT_DIRECTION - 1 + 4) % 4]
                 moved = False
                 dir_vectors = [(-1, 0), (0, 1), (1, 0), (0, -1)]
                 

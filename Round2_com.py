@@ -28,9 +28,9 @@ import cv2
 # =============================================================================
 
 SHOW_WINDOW = True
-DATA_FOLDER = r"./Assignment/data_2"
+DATA_FOLDER = r"./Assignment/Jame_path/data_final"
 
-CURRENT_POSITION = (5, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
+CURRENT_POSITION = (2, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
 IMU_DRIFT_COMPENSATION_DEG = 0.0
 
 PID_AIM_KP = -0.15; PID_AIM_KI = -0.005; PID_AIM_KD = -0.02; DERIV_LPF_ALPHA = 0.25; I_CLAMP = 2000.0
@@ -48,7 +48,7 @@ PITCH_BIAS_DEG = 2; PITCH_BIAS_PIX = +PITCH_BIAS_DEG * PIXELS_PER_DEG_V
 ROI_Y0, ROI_H0, ROI_X0, ROI_W0 = 264, 270, 10, 911
 ROI_SHIFT_PER_DEG = 6.0; ROI_Y_MIN, ROI_Y_MAX = 0, FRAME_H - 10
 
-SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 5
+SPEED_ROTATE = 480; FIRE_SHOTS_COUNT = 3
 
 is_tracking_mode = False; is_detecting_flag = {"v": True}; fired_targets = set()
 shots_fired = 0; gimbal_angle_lock = threading.Lock(); gimbal_angles = (0.0, 0.0, 0.0, 0.0)

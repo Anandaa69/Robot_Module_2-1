@@ -25,7 +25,7 @@ SPEED_ROTATE = 480
 # --- PID Target Tracking & Firing Configuration ---
 TARGET_SHAPE = "Rectangle_V"  # Shape to track
 TARGET_COLOR = "Blue"     # Color to track
-FIRE_SHOTS_COUNT = 5     # Number of shots to fire (adjustable global variable)
+FIRE_SHOTS_COUNT = 4     # Number of shots to fire (adjustable global variable)
 
 # PID Parameters (from fire_target.py) - Reduced for stability
 PID_KP = -0.15  # Reduced from -0.25 for more stable control
@@ -860,8 +860,8 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             gimbal_moving = False
             
         try:
-            # Optimize timeout for better responsiveness
-            timeout = 0.15 if gimbal_moving else 0.1  # ลด timeout จาก 0.2/0.15 เป็น 0.15/0.1
+            # Optimize timeout for 30 FPS target
+            timeout = 0.2 if gimbal_moving else 0.15
             frame = cam.read_cv2_image(timeout=timeout)
             if frame is not None and frame.size > 0:
                 if q.full():
@@ -957,7 +957,7 @@ def capture_thread_func(manager: RMConnection, q: queue.Queue):
             fail = max(0, fail - 1)  # Gradually reduce fail counter
             
         # Optimize sleep time for 30 FPS target (33.33ms per frame)
-        sleep_time = 0.02 if gimbal_moving else 0.015  # เพิ่ม FPS จาก 40/50 เป็น 50/66
+        sleep_time = 0.025 if gimbal_moving else 0.02  # 40 FPS / 50 FPS
         time.sleep(sleep_time)
     print("🛑 Capture thread stopped")
 
@@ -972,11 +972,11 @@ def processing_thread_func(tracker: ObjectTracker, q: queue.Queue,
 
     while not stop_event.is_set():
         if not is_detecting_func():
-            time.sleep(0.1)  # ลด sleep time จาก 0.15 เป็น 0.1
+            time.sleep(0.15)  # Increased sleep when not detecting
             continue
             
         try:
-            frame_to_process = q.get(timeout=0.2)  # ลด timeout จาก 0.3 เป็น 0.2
+            frame_to_process = q.get(timeout=0.3)  # ลด timeout กลับเป็น 0.3
             processing_count += 1
 
             # เลื่อน ROI ตาม pitch ปัจจุบัน (จาก fire_target.py)
@@ -3231,7 +3231,7 @@ if __name__ == '__main__':
             while not stop_event.is_set():
                 try:
                     # Get frame with shorter timeout to prevent blocking
-                    display_frame = frame_queue.get(timeout=0.3)  # ลด timeout จาก 0.5 เป็น 0.3
+                    display_frame = frame_queue.get(timeout=0.5)
                     frame_count += 1
                     last_frame_time = time.time()
                     
