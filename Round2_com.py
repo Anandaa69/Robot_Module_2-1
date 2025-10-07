@@ -28,7 +28,7 @@ import cv2
 # =============================================================================
 
 SHOW_WINDOW = True
-DATA_FOLDER = r"./Assignment/Jame_path/data_final"
+DATA_FOLDER = r"./Assignment/data_3"
 
 CURRENT_POSITION = (2, 0); CURRENT_DIRECTION = 1; CURRENT_TARGET_YAW = 0.0; ROBOT_FACE = 1
 IMU_DRIFT_COMPENSATION_DEG = 0.0

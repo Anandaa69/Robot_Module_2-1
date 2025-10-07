@@ -1,0 +1,490 @@
+{
+  "session_info": {
+    "total_objects_detected": 33,
+    "detection_timestamp": 1759815743.0080347,
+    "grid_size": "6x6"
+  },
+  "detected_objects": [
+    {
+      "color": "Yellow",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815387.8684301,
+      "detected_from_node": [
+        1,
+        0
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 0
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815387.8684301,
+      "detected_from_node": [
+        1,
+        0
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 0
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759815387.8684301,
+      "detected_from_node": [
+        1,
+        0
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 0
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815387.8684301,
+      "detected_from_node": [
+        1,
+        0
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 0
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815509.9148262,
+      "detected_from_node": [
+        0,
+        4
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 3
+      }
+    },
+,
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_V",
+      "zone": "Left",
+      "is_target": false,
+      "timestamp": 1759815493.4589002,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 5
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815493.4589002,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 5
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815493.4589002,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 5
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815493.4589002,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 0,
+        "col": 5
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815529.5972745,
+      "detected_from_node": [
+        1,
+        3
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815529.5972745,
+      "detected_from_node": [
+        1,
+        3
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815529.5972745,
+      "detected_from_node": [
+        1,
+        3
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815529.5972745,
+      "detected_from_node": [
+        1,
+        3
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 3
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815573.9921746,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 5
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759815573.9921746,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 5
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815573.9921746,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 5
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815573.9921746,
+      "detected_from_node": [
+        1,
+        5
+      ],
+      "cell_position": {
+        "row": 2,
+        "col": 5
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815682.387513,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 0
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815682.387513,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 0
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815682.387513,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 0
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Uncertain",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815682.387513,
+      "detected_from_node": [
+        4,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 0
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815691.1677072,
+      "detected_from_node": [
+        3,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815691.1677072,
+      "detected_from_node": [
+        3,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_V",
+      "zone": "Center",
+      "is_target": true,
+      "timestamp": 1759815691.1677072,
+      "detected_from_node": [
+        3,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815691.1677072,
+      "detected_from_node": [
+        3,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Green",
+      "shape": "Circle",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815691.1677072,
+      "detected_from_node": [
+        3,
+        0
+      ],
+      "cell_position": {
+        "row": 3,
+        "col": 1
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_H",
+      "zone": "Right",
+      "is_target": false,
+      "timestamp": 1759815738.0841582,
+      "detected_from_node": [
+        4,
+        2
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 3
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_V",
+      "zone": "Right",
+      "is_target": false,
+      "timestamp": 1759815738.0841582,
+      "detected_from_node": [
+        4,
+        2
+      ],
+      "cell_position": {
+        "row": 4,
+        "col": 3
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Rectangle_V",
+      "zone": "Left",
+      "is_target": false,
+      "timestamp": 1759815634.1087391,
+      "detected_from_node": [
+        4,
+        5
+      ],
+      "cell_position": {
+        "row": 5,
+        "col": 5
+      }
+    },
+    {
+      "color": "Red",
+      "shape": "Square",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815634.1087391,
+      "detected_from_node": [
+        4,
+        5
+      ],
+      "cell_position": {
+        "row": 5,
+        "col": 5
+      }
+    },
+    {
+      "color": "Blue",
+      "shape": "Rectangle_H",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815634.1087391,
+      "detected_from_node": [
+        4,
+        5
+      ],
+      "cell_position": {
+        "row": 5,
+        "col": 5
+      }
+    },
+    {
+      "color": "Yellow",
+      "shape": "Uncertain",
+      "zone": "Center",
+      "is_target": false,
+      "timestamp": 1759815634.1087391,
+      "detected_from_node": [
+        4,
+        5
+      ],
+      "cell_position": {
+        "row": 5,
+        "col": 5
+      }
+    }
+  ]
+}

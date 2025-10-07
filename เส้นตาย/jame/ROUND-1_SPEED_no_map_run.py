@@ -25,7 +25,7 @@ SPEED_ROTATE = 480
 # --- PID Target Tracking & Firing Configuration ---
 TARGET_SHAPE = "Rectangle_V"  # Shape to track
 TARGET_COLOR = "Blue"     # Color to track
-FIRE_SHOTS_COUNT = 4     # Number of shots to fire (adjustable global variable)
+FIRE_SHOTS_COUNT = 3     # Number of shots to fire (adjustable global variable)
 
 # PID Parameters (from fire_target.py) - Reduced for stability
 PID_KP = -0.15  # Reduced from -0.25 for more stable control
